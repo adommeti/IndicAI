@@ -1,0 +1,18 @@
+.env
+.codex-runs/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+platform/eval/golden/**/audio/*.wav
+
+# AI harness config — local only, never committed
+CLAUDE.md
+AGENTS.md
+.codex/
+.agents/
+.codex-runs/
+EOF
