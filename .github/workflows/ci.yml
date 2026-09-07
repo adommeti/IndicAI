@@ -1,0 +1,29 @@
+name: scaffold
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      LIVE_API_TESTS: '0'
+      LANGFUSE_TRACING_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: '3.12'
+      - run: uv sync --frozen --all-packages
+      - run: make lint typecheck test
+      - run: make eval-uc1 eval-uc2 eval-uc3
+      - run: uv run pip-audit --skip-editable --format cyclonedx-json --output sbom.json
+      - run: uv run detect-secrets scan --all-files --exclude-files 'uv.lock|\.git/|\.venv/' > secrets.json
+      - run: python -c 'import json; assert not json.load(open("secrets.json"))["results"], "Secret scan failed"'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scaffold-evals-and-sbom
+          path: |
+            docs/eval/
+            sbom.json
