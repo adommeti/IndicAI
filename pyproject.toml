@@ -1,0 +1,37 @@
+[project]
+name = "indic-ai-workspace"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["indic-platform", "helpdesk-agent", "training-localizer", "comms-surveillance"]
+
+[tool.uv.workspace]
+members = ["platform", "apps/*"]
+
+[tool.uv.sources]
+indic-platform = { workspace = true }
+helpdesk-agent = { workspace = true }
+training-localizer = { workspace = true }
+comms-surveillance = { workspace = true }
+
+[dependency-groups]
+dev = ["ruff", "mypy", "pytest", "pytest-asyncio", "pre-commit", "pip-audit", "detect-secrets", "types-PyYAML"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+explicit_package_bases = true
+
+[tool.pytest.ini_options]
+testpaths = ["platform/tests"]
+asyncio_mode = "auto"
+markers = ["slow: live vendor calls; requires LIVE_API_TESTS=1"]

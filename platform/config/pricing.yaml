@@ -1,0 +1,11 @@
+# PRD planning rates; model identifiers are explicit and unknown models fail closed.
+fx_inr_per_usd: 94.5
+models:
+  'saaras:v3': {currency: INR, seconds: 0.008333333333333333}
+  'saaras:v3:diarized': {currency: INR, seconds: 0.0125}
+  'bulbul:v3': {currency: INR, characters: 0.003}
+  'mayura:v1': {currency: INR, characters: 0.002}
+  'sarvam-dubbing': {currency: INR, seconds: 0.6666666666666666}
+  'claude-sonnet-5': {currency: USD, input_tokens: 0.000002, output_tokens: 0.000010, cache_read_input_tokens: 0.0000002, cache_creation_input_tokens: 0.0000025}
+  'claude-haiku-4-5': {currency: USD, input_tokens: 0.000001, output_tokens: 0.000005, cache_read_input_tokens: 0.0000001, cache_creation_input_tokens: 0.00000125}
+  'claude-haiku-4-5-20251001': {currency: USD, input_tokens: 0.000001, output_tokens: 0.000005, cache_read_input_tokens: 0.0000001, cache_creation_input_tokens: 0.00000125}

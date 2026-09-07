@@ -1,0 +1,19 @@
+[project]
+name = "indic-platform"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "alembic", "sqlalchemy", "psycopg[binary]", "pydantic>=2,<3", "pydantic-settings",
+  "fastapi", "uvicorn", "langgraph", "langchain-anthropic", "langchain-community",
+  "celery[redis]", "qdrant-client", "minio", "httpx", "jiwer", "langfuse>=3,<4",
+  "prometheus-client", "indic-transliteration", "sarvamai", "anthropic", "python-dotenv",
+  "PyYAML", "websockets"
+]
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools]
+packages = ["indic_platform", "indic_platform.adapters", "indic_platform.security", "indic_platform.eval", "indic_platform.eval.runners", "indic_platform.obs", "indic_platform.config", "indic_platform.db"]
+package-dir = { indic_platform = "." }
+[tool.setuptools.package-data]
+indic_platform = ["config/*.yaml", "eval/golden/**/*.jsonl"]

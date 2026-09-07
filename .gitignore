@@ -16,3 +16,9 @@ AGENTS.md
 .agents/
 .codex-runs/
 EOF
+.env.stack
+*.egg-info/
+build/
+dist/
+docs/eval/
+.DS_Store

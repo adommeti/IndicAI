@@ -1,0 +1,20 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        exclude: uv.lock
+  - repo: local
+    hooks:
+      - id: pip-audit
+        name: pip-audit locked environment
+        entry: uv run pip-audit --skip-editable
+        language: system
+        pass_filenames: false
+        files: (^uv.lock$|pyproject.toml$)

@@ -1,0 +1,7 @@
+sip_port: 5060
+rtp_port: 50200-50220
+use_external_ip: false
+health_port: 8080
+prometheus_port: 6789
+redis:
+  address: redis:6379

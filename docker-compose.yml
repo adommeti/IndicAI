@@ -1,0 +1,205 @@
+name: indic-ai-platform
+x-health: &health
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 30s
+x-langfuse-env: &langfuse-env
+  HOSTNAME: 0.0.0.0
+  DATABASE_URL: postgresql://langfuse:${STACK_PASSWORD:?Run make bootstrap}@langfuse-postgres:5432/langfuse
+  NEXTAUTH_URL: http://localhost:3002
+  NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+  SALT: ${SALT}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+  TELEMETRY_ENABLED: 'false'
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_USER: langfuse
+  CLICKHOUSE_PASSWORD: ${STACK_PASSWORD}
+  CLICKHOUSE_CLUSTER_ENABLED: 'false'
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_AUTH: ''
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${STACK_PASSWORD}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: 'true'
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${STACK_PASSWORD}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: 'true'
+x-langfuse-depends: &langfuse-depends
+  langfuse-postgres: {condition: service_healthy}
+  clickhouse: {condition: service_healthy}
+  redis: {condition: service_healthy}
+  minio: {condition: service_healthy}
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_DB: platform
+      POSTGRES_PASSWORD: ${STACK_PASSWORD}
+    ports: ['127.0.0.1:5433:5432']
+    volumes: ['postgres-data:/var/lib/postgresql/data']
+    healthcheck:
+      <<: *health
+      test: ['CMD-SHELL', 'pg_isready -U platform -d platform']
+  qdrant:
+    build:
+      context: .
+      dockerfile: infra/docker/probe.Dockerfile
+      args: {SERVICE_IMAGE: 'qdrant/qdrant:v1.15.5'}
+    ports: ['127.0.0.1:6333:6333', '127.0.0.1:6334:6334']
+    volumes: ['qdrant-data:/qdrant/storage']
+    healthcheck:
+      <<: *health
+      test: ['CMD', 'healthcheck', 'http://localhost:6333/healthz']
+  redis:
+    image: redis:7.4-alpine
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    ports: ['127.0.0.1:6380:6379']
+    volumes: ['redis-data:/data']
+    healthcheck:
+      <<: *health
+      test: ['CMD', 'redis-cli', 'ping']
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    entrypoint: /bin/sh
+    command: -c 'mkdir -p /data/langfuse && minio server /data --console-address :9001'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: ${STACK_PASSWORD}
+    ports: ['127.0.0.1:9000:9000', '127.0.0.1:9001:9001']
+    volumes: ['minio-data:/data']
+    healthcheck:
+      <<: *health
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+  livekit:
+    build:
+      context: .
+      dockerfile: infra/docker/probe.Dockerfile
+      args: {SERVICE_IMAGE: 'livekit/livekit-server:v1.9.0'}
+    command: ['--config', '/etc/livekit.yaml', '--bind', '0.0.0.0']
+    environment:
+      LIVEKIT_KEYS: 'devkey: ${STACK_PASSWORD}'
+    volumes: ['./infra/livekit.yaml:/etc/livekit.yaml:ro']
+    depends_on:
+      redis: {condition: service_healthy}
+    ports:
+      - '127.0.0.1:7880:7880'
+      - '127.0.0.1:7881:7881'
+      - '127.0.0.1:50100-50120:50100-50120/udp'
+    healthcheck:
+      <<: *health
+      test: ['CMD', 'healthcheck', 'http://localhost:7880/']
+  livekit-sip:
+    build:
+      context: .
+      dockerfile: infra/docker/probe.Dockerfile
+      args: {SERVICE_IMAGE: 'livekit/sip:latest'}
+    command: ['--config', '/etc/sip.yaml']
+    environment:
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_API_KEY: devkey  # pragma: allowlist secret - public local key identifier
+      LIVEKIT_API_SECRET: ${STACK_PASSWORD}
+    volumes: ['./infra/sip.yaml:/etc/sip.yaml:ro']
+    depends_on:
+      livekit: {condition: service_healthy}
+    ports:
+      - '127.0.0.1:5060:5060/tcp'
+      - '127.0.0.1:5060:5060/udp'
+      - '127.0.0.1:50200-50220:50200-50220/udp'
+    healthcheck:
+      <<: *health
+      test: ['CMD', 'healthcheck', 'http://localhost:8080/']
+  tei:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: infra/docker/probe.Dockerfile
+      args: {SERVICE_IMAGE: 'ghcr.io/huggingface/text-embeddings-inference:cpu-1.8'}
+    command: ['--model-id', 'BAAI/bge-m3', '--port', '80', '--auto-truncate', '--max-batch-tokens', '512', '--max-concurrent-requests', '2', '--tokenization-workers', '2']
+    ports: ['127.0.0.1:8080:80']
+    volumes: ['tei-data:/data']
+    healthcheck:
+      <<: *health
+      start_period: 15m
+      test: ['CMD', 'healthcheck', 'http://localhost:80/health']
+  langfuse-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_DB: langfuse
+      POSTGRES_PASSWORD: ${STACK_PASSWORD}
+    volumes: ['langfuse-postgres-data:/var/lib/postgresql/data']
+    healthcheck:
+      <<: *health
+      test: ['CMD-SHELL', 'pg_isready -U langfuse -d langfuse']
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    environment:
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: ${STACK_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+    volumes: ['clickhouse-data:/var/lib/clickhouse']
+    healthcheck:
+      <<: *health
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:8123/ping']
+  langfuse:
+    image: langfuse/langfuse:3
+    environment:
+      <<: *langfuse-env
+      LANGFUSE_INIT_ORG_ID: indic
+      LANGFUSE_INIT_ORG_NAME: Indic Platform
+      LANGFUSE_INIT_PROJECT_ID: indic-platform
+      LANGFUSE_INIT_PROJECT_NAME: Indic Platform
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: admin@localhost.test
+      LANGFUSE_INIT_USER_NAME: Local Admin
+      LANGFUSE_INIT_USER_PASSWORD: ${STACK_PASSWORD}
+    ports: ['127.0.0.1:3002:3000']
+    depends_on: *langfuse-depends
+    healthcheck:
+      <<: *health
+      start_period: 120s
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/api/public/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    environment: *langfuse-env
+    depends_on: *langfuse-depends
+    healthcheck:
+      <<: *health
+      start_period: 120s
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3030/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    ports: ['127.0.0.1:9090:9090']
+    volumes: ['./infra/prometheus.yaml:/etc/prometheus/prometheus.yml:ro', 'prometheus-data:/prometheus']
+    healthcheck:
+      <<: *health
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:9090/-/healthy']
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${STACK_PASSWORD}
+    ports: ['127.0.0.1:3001:3000']
+    volumes: ['grafana-data:/var/lib/grafana']
+    healthcheck:
+      <<: *health
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/api/health']
+volumes:
+  postgres-data:
+  qdrant-data:
+  redis-data:
+  minio-data:
+  tei-data:
+  langfuse-postgres-data:
+  clickhouse-data:
+  prometheus-data:
+  grafana-data:
