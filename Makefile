@@ -16,7 +16,9 @@ typecheck:
 	$(UV) run mypy platform apps infra
 test:
 	$(UV) run pytest -m 'not slow'
-eval-uc1 eval-uc2 eval-uc3:
+eval-uc1:
+	$(UV) run python -m indic_platform.eval.runners.run_uc1 --baseline --retrieval --compare-translate
+eval-uc2 eval-uc3:
 	$(UV) run python -m indic_platform.eval.runners.run --app $(@:eval-%=%)
 ingest-kb:
 	$(UV) run python -m indic_platform.cli ingest-kb

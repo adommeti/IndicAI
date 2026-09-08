@@ -137,6 +137,21 @@ class SarvamSTT(SarvamAdapter):
         key = hashlib.sha256(data + f"{language}:{diarize}:saaras:v3".encode()).hexdigest()
         api = self.client.speech_to_text_job
         options = {**OPTIONS, "additional_headers": {"Idempotency-Key": key}}
+        # Sarvam recommends REST for short clips; retain jobs for long/diarized media.
+        if duration < 30 and not diarize:
+            result = await self.runtime.call(
+                lambda: self.client.speech_to_text.transcribe(
+                    file=(path.name, data),
+                    model="saaras:v3",
+                    mode="transcribe",
+                    language_code="unknown" if language == "auto" else language,
+                    with_timestamps=True,
+                    request_options=options,
+                ),
+                model=model,
+                units={"seconds": duration},
+            )
+            return segments(result.model_dump(), language, duration)
         job = await self.runtime.call(
             lambda: api.initialise(
                 job_parameters={

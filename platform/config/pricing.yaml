@@ -1,6 +1,8 @@
 # PRD planning rates; model identifiers are explicit and unknown models fail closed.
 fx_inr_per_usd: 94.5
 models:
+  'BAAI/bge-m3': {currency: INR, tokens: 0}
+  'qdrant-local': {currency: INR, operations: 0}
   'saaras:v3': {currency: INR, seconds: 0.008333333333333333}
   'saaras:v3:diarized': {currency: INR, seconds: 0.0125}
   'bulbul:v3': {currency: INR, characters: 0.003}

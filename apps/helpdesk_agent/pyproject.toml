@@ -11,3 +11,5 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["helpdesk_agent"]
 package-dir = { helpdesk_agent = "." }
+[tool.setuptools.package-data]
+helpdesk_agent = ["sample_kb/*.md"]

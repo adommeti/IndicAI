@@ -11,6 +11,8 @@ class Report(BaseModel):
     metrics: dict[str, float]
     gates: dict[str, bool]
     unmeasured: list[str]
+    quality_gates: dict[str, bool] = Field(default_factory=dict)
+    details: list[dict[str, object]] = Field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -26,18 +28,46 @@ class Report(BaseModel):
             "",
             f"Items: {self.items}",
             "",
-            "| Metric | Value |",
-            "|---|---:|",
         ]
+        if "hit_at_3_off" in self.metrics and "hit_at_3_on" in self.metrics:
+            lines.extend(
+                ["| Hit@3 | Translate off | Translate on | Eligible |", "|---|---:|---:|---:|"]
+            )
+            for label, suffix in [
+                ("Overall", ""),
+                ("Hindi", "_hi-IN"),
+                ("Telugu", "_te-IN"),
+                ("Tamil", "_ta-IN"),
+            ]:
+                off = self.metrics.get(f"hit_at_3_off{suffix}")
+                on = self.metrics.get(f"hit_at_3_on{suffix}")
+                if off is not None and on is not None:
+                    eligible = self.metrics[f"retrieval_eligible{suffix}"]
+                    lines.append(f"| {label} | {off:.2%} | {on:.2%} | {eligible:g} |")
+            lines.extend(
+                [
+                    "",
+                    "Translation spend is an attempted-request estimate; "
+                    "timed-out requests may still be billed.",
+                    "",
+                ]
+            )
+        lines.extend(["| Metric | Value |", "|---|---:|"])
         lines.extend(f"| {key} | {value:g} |" for key, value in self.metrics.items())
         lines.extend(
             [
                 "",
-                f"P0 checks: {'PASS' if self.passed else 'FAIL'}",
+                f"Harness checks: {'PASS' if self.passed else 'FAIL'}",
                 "",
                 "Unmeasured B6 gates: " + ", ".join(self.unmeasured),
             ]
         )
+        if self.quality_gates:
+            lines.extend(["", "| B6 quality gate | Result |", "|---|---|"])
+            lines.extend(
+                f"| {key} | {'PASS' if passed else 'FAIL'} |"
+                for key, passed in self.quality_gates.items()
+            )
         (directory / f"{self.app}.md").write_text("\n".join(lines) + "\n")
 
 

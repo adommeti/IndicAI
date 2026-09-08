@@ -123,13 +123,24 @@ services:
       context: .
       dockerfile: infra/docker/probe.Dockerfile
       args: {SERVICE_IMAGE: 'ghcr.io/huggingface/text-embeddings-inference:cpu-1.8'}
-    command: ['--model-id', 'BAAI/bge-m3', '--port', '80', '--auto-truncate', '--max-batch-tokens', '512', '--max-concurrent-requests', '2', '--tokenization-workers', '2']
+    command: ['--model-id', 'BAAI/bge-m3', '--revision', '5617a9f61b028005a4858fdac845db406aefb181', '--port', '80', '--auto-truncate', '--max-batch-tokens', '512', '--max-concurrent-requests', '2', '--tokenization-workers', '2']
     ports: ['127.0.0.1:8080:80']
     volumes: ['tei-data:/data']
     healthcheck:
       <<: *health
       start_period: 15m
       test: ['CMD', 'healthcheck', 'http://localhost:80/health']
+  bge-sparse:
+    profiles: ['retrieval']
+    build:
+      context: .
+      dockerfile: infra/sparse/Dockerfile
+    ports: ['127.0.0.1:8081:80']
+    volumes: ['tei-data:/data']
+    healthcheck:
+      <<: *health
+      start_period: 15m
+      test: ['CMD', 'python', '-c', 'import urllib.request; urllib.request.urlopen("http://localhost/health")']
   langfuse-postgres:
     image: postgres:16-alpine
     environment:

@@ -24,9 +24,12 @@ def media(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("diarize", [False, True])
 async def test_batch_http_job_flow(
-    media: Path, monkeypatch: pytest.MonkeyPatch, failed: bool
+    media: Path, monkeypatch: pytest.MonkeyPatch, failed: bool, diarize: bool
 ) -> None:
+    duration = 1 if diarize else 31
+    monkeypatch.setattr("indic_platform.adapters.sarvam_stt.media_duration", lambda _: duration)
     requests: list[httpx.Request] = []
     init_keys: list[str] = []
     uploads = 0
@@ -90,14 +93,37 @@ async def test_batch_http_job_flow(
         )
         if failed:
             with pytest.raises(RuntimeError, match="batch job failed"):
-                await adapter.batch(media.as_uri(), language="hi-IN", diarize=True)
+                await adapter.batch(media.as_uri(), language="hi-IN", diarize=diarize)
         else:
-            result = await adapter.batch(media.as_uri(), language="hi-IN", diarize=True)
+            result = await adapter.batch(media.as_uri(), language="hi-IN", diarize=diarize)
             assert result[0].text == "नमस्ते"
-            assert result[0].end_ms == 1000
+            assert result[0].end_ms == duration * 1000
     assert len(init_keys) == 2 and init_keys[0] == init_keys[1]
     assert uploads == 2
-    assert sum(r["cost_inr"] for r in sink.records) == pytest.approx(45 / 3600)
+    rate = 45 if diarize else 30
+    assert sum(r["cost_inr"] for r in sink.records) == pytest.approx(rate * duration / 3600)
+
+
+async def test_short_batch_uses_rest_with_observability(media: Path) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/speech-to-text"
+        assert b"saaras:v3" in request.content
+        assert b"hi-IN" in request.content
+        assert request.headers["Idempotency-Key"]
+        return httpx.Response(
+            200, json={"transcript": "नमस्ते", "language_code": "hi-IN", "request_id": "mock"}
+        )
+
+    sink = MemorySink()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        adapter = SarvamSTT(
+            client=AsyncSarvamAI(api_subscription_key="mock", httpx_client=http),
+            runtime=AdapterRuntime("sarvam", "stt", sink=sink),
+        )
+        result = await adapter.batch(str(media), language="hi-IN")
+    assert result[0].text == "नमस्ते"
+    assert result[0].end_ms == 1000
+    assert sum(r["cost_inr"] for r in sink.records) == pytest.approx(30 / 3600)
 
 
 async def test_dubbing_http_submission_status_fetch(
