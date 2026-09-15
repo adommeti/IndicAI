@@ -3,7 +3,18 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Numeric, String, Text, func, text
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -137,4 +148,16 @@ class QuizAttempt(Base):
     employee_id: Mapped[str] = mapped_column(String(128))
     score: Mapped[int]
     max_score: Mapped[int]
+    # D10 needs the arm and the time-on-task, neither recoverable afterwards. 0005.
+    cohort: Mapped[str] = mapped_column(String(16), default="native", server_default="native")
+    duration_ms: Mapped[int] = mapped_column(default=0, server_default="0")
+    pilot_id: Mapped[str] = mapped_column(
+        String(64), default="unassigned", server_default="unassigned"
+    )
     taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("cohort in ('native','control')", name="ck_quiz_attempts_cohort"),
+        CheckConstraint("score >= 0 and score <= max_score", name="ck_quiz_attempts_score"),
+        Index("ix_quiz_attempts_report", "pilot_id", "language", "cohort"),
+    )

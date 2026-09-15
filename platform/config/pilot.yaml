@@ -1,0 +1,32 @@
+# Pilot cohort assignment for the UC2 comprehension measurement (PRD D10).
+#
+# The business metric is "pass rate by language vs an English-only control", so
+# every employee in the pilot is in exactly one cohort and the assignment must be
+# stable: an employee who is reassigned between attempts would appear in both
+# arms and quietly bias the comparison.
+#
+# Assignment is therefore deterministic — a hash of (employee_id, pilot_id) —
+# rather than random at enrolment. The same employee always lands in the same
+# arm for the same pilot, with no table to keep in sync, and a different pilot
+# reshuffles cleanly.
+
+pilot_id: uc2-pilot-2026Q3
+
+# Share of employees assigned to the English-only control arm. The rest take the
+# module in their own language. 0.25 keeps the control small enough that the
+# pilot is mostly delivering value and large enough to compare against.
+control_fraction: 0.25
+
+# Pass mark for a module's quiz, as a fraction of the items answered correctly.
+# PRD D6 has five items per module, so 0.6 is three of five.
+pass_mark: 0.6
+
+languages:
+  - hi-IN
+  - te-IN
+  - ta-IN
+
+# Employees who must never be assigned to the control arm: they have a
+# compliance obligation to take the module in a language they actually read.
+# Empty in the POC; the pilot owner fills it before enrolment.
+control_exempt: []
