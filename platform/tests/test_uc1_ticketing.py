@@ -786,3 +786,18 @@ async def test_a_rolled_back_turn_does_not_file_a_second_ticket(
     assert len(fake.created) == 1, "the retry filed a second ticket for one request"
     assert second.ticket_number == first.ticket_number
     assert not second.pending
+
+
+async def test_a_lost_race_does_not_promise_an_email_nobody_owes() -> None:
+    """`TicketingRaced`, not `TicketingUnavailable`.
+
+    If the other attempt's transaction rolls back between our constraint
+    violation and our read, there is no row and nothing was enqueued. Raising
+    `TicketingUnavailable` here would reach the act node's handler and tell the
+    employee their ticket number will be emailed -- a promise with no record
+    behind it and no worker that will ever settle it.
+    """
+    assert not issubclass(ticketing.TicketingRaced, ticketing.TicketingUnavailable)
+    assert not issubclass(ticketing.TicketingUnavailable, ticketing.TicketingRaced)
+    # And the act node must let it through rather than absorbing it.
+    assert ticketing.TicketingRaced not in ticketing.RETRY_ON

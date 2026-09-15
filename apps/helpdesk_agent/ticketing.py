@@ -81,6 +81,18 @@ class TicketingUnavailable(RuntimeError):
     """Zammad is unreachable or returned 429/5xx. Retry later; fall back to pending."""
 
 
+class TicketingRaced(RuntimeError):
+    """The reservation was taken and then released before it could be read.
+
+    Deliberately NOT a `TicketingUnavailable`: that class means "queued, the
+    number will follow by email", and the act node says exactly that to the
+    employee. Here nothing is queued and no row exists -- the other attempt's
+    transaction rolled back between our constraint violation and our read -- so
+    promising an email would be promising what nobody owes. Raising instead
+    fails the turn loudly and leaves the key free for a retry that can succeed.
+    """
+
+
 class TicketingRejected(RuntimeError):
     """Zammad refused the request permanently. A defect or a misconfiguration."""
 
@@ -352,7 +364,7 @@ async def create_ticket(
         await savepoint.rollback()
         existing = await _load(session, session_id, turn_index)
         if existing is None:
-            raise TicketingUnavailable("the concurrent filing attempt left no row") from None
+            raise TicketingRaced("the concurrent filing attempt left no row") from None
         log.info("helpdesk ticket filing replayed for turn %s", key)
         return Filed(existing.ticket_number, existing.ticket_number is None, True)
 
