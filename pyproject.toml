@@ -34,4 +34,7 @@ explicit_package_bases = true
 [tool.pytest.ini_options]
 testpaths = ["platform/tests"]
 asyncio_mode = "auto"
-markers = ["slow: live vendor calls; requires LIVE_API_TESTS=1"]
+markers = [
+  "slow: live vendor calls; requires LIVE_API_TESTS=1",
+  "integration: needs the local Docker stack (postgres, redis, qdrant, minio, tei)",
+]

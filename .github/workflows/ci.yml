@@ -1,13 +1,46 @@
-name: scaffold
-on: [push, pull_request]
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  LIVE_API_TESTS: '0'
+  LANGFUSE_TRACING_ENABLED: 'false'
+  PYTHONDONTWRITEBYTECODE: '1'
 jobs:
-  checks:
+  attribution:
+    name: commit attribution
     runs-on: ubuntu-latest
-    env:
-      LIVE_API_TESTS: '0'
-      LANGFUSE_TRACING_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: verify authorship and message hygiene
+        env:
+          INDICAI_ALLOWED_EMAILS: ${{ vars.ALLOWED_AUTHOR_EMAILS || 'anantha.dommeti@users.noreply.github.com' }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            bash scripts/attribution-check.sh "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          else
+            bash scripts/attribution-check.sh "${{ github.event.before }}..${{ github.sha }}"
+          fi
+      - name: pull request body hygiene
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s\n' "$PR_BODY" | grep -Eiq 'Co-Authored-By|Claude-Session|Generated with|🤖|claude\.ai/code'; then
+            echo "PR body contains a tool-attribution line"; exit 1; fi
+          echo "PR body clean"
+
+  checks:
+    name: lint · typecheck · unit · offline evals
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -18,13 +51,77 @@ jobs:
       - run: make lint typecheck test
       - run: uv run python -m indic_platform.eval.runners.run --app uc1
       - run: make eval-uc2 eval-uc3
+      - name: ui packages (when present)
+        run: |
+          for pkg in apps/*/ui; do
+            [ -f "$pkg/package.json" ] || continue
+            echo "== $pkg"; (cd "$pkg" && npm ci --no-audit --no-fund && npm run lint --if-present && npm run typecheck --if-present && npm run build --if-present && npm test --if-present -- --run)
+          done
       - run: uv run pip-audit --skip-editable --format cyclonedx-json --output sbom.json
-      - run: uv run detect-secrets scan --all-files --exclude-files 'uv.lock|\.git/|\.venv/' > secrets.json
-      - run: python -c 'import json; assert not json.load(open("secrets.json"))["results"], "Secret scan failed"'
+      - name: secret scan against baseline
+        run: uv run detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: scaffold-evals-and-sbom
+          name: evals-and-sbom
           path: |
             docs/eval/
             sbom.json
+
+  integration:
+    name: integration (postgres · redis · qdrant · minio)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_DB: platform
+          POSTGRES_PASSWORD: ci  # pragma: allowlist secret
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U platform -d platform" --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6380:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
+      qdrant:
+        image: qdrant/qdrant:v1.15.5
+        ports: ['6333:6333', '6334:6334']
+      minio:
+        image: bitnami/minio:2025
+        env:
+          MINIO_ROOT_USER: minio
+          MINIO_ROOT_PASSWORD: ci-minio-password  # pragma: allowlist secret
+        ports: ['9000:9000']
+    env:
+      DATABASE_URL: postgresql+psycopg://platform:ci@localhost:5433/platform  # pragma: allowlist secret
+      REDIS_URL: redis://localhost:6380/0
+      QDRANT_URL: http://localhost:6333
+      MINIO_ENDPOINT: localhost:9000
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: ci-minio-password  # pragma: allowlist secret
+      TEI_URL: http://localhost:8080
+      SPARSE_URL: http://localhost:8081
+      STACK_PASSWORD: ci  # pragma: allowlist secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: '3.12'
+      - run: uv sync --frozen --all-packages
+      - name: wait for qdrant
+        run: for i in $(seq 1 30); do curl -fsS localhost:6333/healthz && break; sleep 2; done
+      - name: migrations round-trip
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+      - name: integration tests
+        run: |
+          set +e
+          uv run pytest -m integration -q -p no:cacheprovider
+          rc=$?
+          # 5 = no tests collected (allowed until the first integration test exists)
+          [ "$rc" = "0" ] || [ "$rc" = "5" ] || exit "$rc"

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# pre-push: never push the base branch directly; every pushed range must pass
+# the attribution check. Args/stdin follow git's pre-push contract.
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+BASE="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"; BASE="${BASE:-main}"
+ZERO="0000000000000000000000000000000000000000"
+STATUS=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_ref:-}" ] || continue
+  if [ "$remote_ref" = "refs/heads/$BASE" ] && [ "${INDICAI_ALLOW_BASE_PUSH:-}" != "1" ]; then
+    echo "pre-push: direct pushes to $BASE are disabled; open a PR with scripts/ship.sh" >&2
+    STATUS=1; continue
+  fi
+  [ "$local_sha" != "$ZERO" ] || continue
+  if [ "$remote_sha" = "$ZERO" ]; then RANGE="origin/$BASE..$local_sha"; else RANGE="$remote_sha..$local_sha"; fi
+  bash "$ROOT/scripts/attribution-check.sh" "$RANGE" || STATUS=1
+done
+exit $STATUS

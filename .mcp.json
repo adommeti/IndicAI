@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "sarvam": {
+      "command": "uvx",
+      "args": ["sarvam-mcp"],
+      "env": {
+        "SARVAM_API_KEY": "${SARVAM_API_KEY}"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    }
+  }
+}

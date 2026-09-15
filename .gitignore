@@ -1,5 +1,6 @@
 .env
-.codex-runs/
+.env.stack
+.venv
 .venv/
 __pycache__/
 *.pyc
@@ -8,17 +9,19 @@ __pycache__/
 .ruff_cache/
 node_modules/
 platform/eval/golden/**/audio/*.wav
-
-# AI harness config — local only, never committed
-CLAUDE.md
-AGENTS.md
-.codex/
-.agents/
-.codex-runs/
-EOF
-.env.stack
 *.egg-info/
-build/
+/build/
 dist/
 docs/eval/
 .DS_Store
+
+# Per-session agent state (logs, gate cache, prompt marker) — never committed.
+.claude/run/
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Other tools' local harness config
+.codex/
+.codex-runs/
+.agents/
+AGENTS.md

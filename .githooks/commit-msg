@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# commit-msg: strip tool-attribution trailers and footers; reject if a
+# forbidden line survives. Installed via `git config core.hooksPath .githooks`
+# (done automatically by .claude/hooks/session-start.sh and scripts/dev-setup.sh).
+set -uo pipefail
+MSG_FILE="$1"
+ROOT="$(git rev-parse --show-toplevel)"
+# shellcheck source=/dev/null
+source "$ROOT/.claude/hooks/_lib.sh" 2>/dev/null || FORBIDDEN_TRAILER_RE='^(Co-Authored-By|Co-authored-by|Claude-Session):|Generated with \[?Claude|🤖|noreply@anthropic\.com'
+
+python3 - "$MSG_FILE" "$FORBIDDEN_TRAILER_RE" <<'PY'
+import re, sys
+path, pattern = sys.argv[1], sys.argv[2]
+rx = re.compile(pattern, re.IGNORECASE)
+with open(path, encoding="utf-8") as fh:
+    lines = fh.read().splitlines()
+kept = [l for l in lines if not rx.search(l)]
+# drop trailing blank lines left behind by removed trailers
+while kept and not kept[-1].strip():
+    kept.pop()
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(kept) + "\n")
+if not any(l.strip() and not l.lstrip().startswith("#") for l in kept):
+    print("commit-msg: message is empty after removing attribution lines", file=sys.stderr)
+    sys.exit(1)
+PY

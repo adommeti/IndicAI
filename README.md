@@ -27,6 +27,15 @@ from `.env.stack`). Grafana: http://localhost:3001 (`admin`, same local stack pa
 Traces contain metadata only: vendor/model, prompt version, latency, usage and INR/USD cost.
 No content, credentials, request headers, signed URLs or exception messages are traced.
 
+## Build workflow
+
+The remaining work is an ordered prompt series under `prompts/`, tracked in
+[docs/build/PROMPT-PLAN.md](docs/build/PROMPT-PLAN.md) and executed one PR per prompt:
+`bash scripts/run-prompt.sh <uc> <Pn>` starts a prompt on a fresh branch, `make check` is the
+quality gate, and `bash scripts/ship.sh` pushes, opens the PR, waits for CI and squash-merges.
+Operating procedure for cloud sessions: [docs/build/RUNBOOK.md](docs/build/RUNBOOK.md).
+Working agreement for the coding agent: [CLAUDE.md](CLAUDE.md).
+
 ## Package and interfaces
 
 Source lives in `platform/`; import it as `indic_platform` to avoid shadowing Python's
