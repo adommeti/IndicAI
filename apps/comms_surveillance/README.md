@@ -14,23 +14,48 @@ call has been or may be processed (E10). Retention is whatever Compliance
 specifies in answer to Gate 0 question 3; until then the pilot runs on the
 synthetic golden set and nothing is retained beyond it.
 
-## Redaction
+## Redaction — this app has a documented override
 
-No override is enabled. The platform default (`indic_platform.security.redact`)
-applies to every vendor call this app makes.
+**Redaction is deliberately OFF for transcript text sent to Claude**, as PRD E9
+requires: an off-channel-comms finding can turn on the phone number itself, and
+a reviewer handed `[PHONE]` as the evidence cannot act on it. Evidence has to be
+verbatim or it is not evidence.
 
-One consequence worth stating, because it is invisible otherwise: the default
-transliteration backend runs **offline**, so no transcript text leaves the
-process and no redaction question arises. Setting `SARVAM_TRANSLITERATE=true`
-sends segment text to Sarvam, where the default redactor rewrites identifiers
-first — so the stored Roman copy can differ from the native text wherever a
-phone number or email appears. The native `text` column remains the record of
-what was said and is what evidence spans are quoted from.
+The override is an explicit policy object, not a monkeypatch
+(`.claude/rules/adapters.md`): `detector.claude()` constructs the adapter with
+`redactor=lambda text: text` and `wrapper=` the `<transcript>` delimiter E6's
+system prompt names. The platform default — full redaction — remains in force
+everywhere else, including:
 
-PRD E's threat table anticipates this app needing an evidence-preserving
-override (an off-channel-comms flag may hinge on the phone number itself).
-Enabling one is a security decision that belongs with the P7 review, not with
-ingestion, so it is deliberately not enabled here.
+- anything reaching a log or a Langfuse trace (spans are metadata-only);
+- the Sarvam transliteration path, if `SARVAM_TRANSLITERATE=true`. The default
+  transliteration backend is offline, so no transcript text leaves the process
+  at all; with Sarvam enabled the stored Roman copy can differ from the native
+  text wherever an identifier appears. The native `text` column remains the
+  record of what was said and is what evidence spans are quoted from.
+
+What the override does **not** relax: the transcript is still wrapped in
+`<transcript>` tags and HTML-escaped so it cannot close its own tag, both system
+prompts state it is data rather than instructions, neither stage is given tools,
+and every evidence span is verified to be an exact substring before it reaches a
+reviewer.
+
+## The analysis harness
+
+Three stages (PRD E5): a deterministic lexicon floor, Haiku triage on every
+call, and Sonnet deep analysis on the escalated share. Claude never reaches a
+verdict — Stage 2 produces candidate findings and a person decides.
+
+| control | where |
+|---|---|
+| transcript as untrusted data | `wrap_untrusted(text, "transcript")`, escaped |
+| no exfiltration channel | neither stage is passed tools; JSON output only |
+| evidence verified | `detector.verify` drops any span that is not an exact substring, and counts it |
+| canary | per-process secret in the system prompt; any output containing it discards the **whole** response |
+| manipulation as signal | `instruction_like_content` is a flag category, and is additive — it never suppresses another finding |
+| deterministic floor | a high-severity lexicon hit survives whatever Stage 2 returns |
+
+`policy.md` is a **DRAFT** owned by Compliance, as are the lexicon YAMLs.
 
 ## Configuration
 

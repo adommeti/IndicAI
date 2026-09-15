@@ -219,6 +219,20 @@ def score_detection(
     }
     for transcript_id in sorted(noisy):
         details.append({"check": "noise:clean_flagged", "id": transcript_id})
+
+    # The confusion matrix by category, as a detail rather than a metric: it is
+    # a table, and flattening it into metric keys would make it unreadable in
+    # exactly the place a reviewer wants to read it.
+    for category, counts in sorted(per_category.items()):
+        details.append(
+            {
+                "check": "confusion",
+                "category": category,
+                "true_positive": counts["tp"],
+                "false_negative": counts["fn"],
+                "false_positive": counts["fp"],
+            }
+        )
     # Precision over zero flags is undefined, not 1.0. A detector that flags
     # nothing must not look perfectly precise -- but "undefined" has to be said
     # out loud, not left as a missing key nobody notices.
@@ -764,6 +778,14 @@ def main() -> None:
     if args.detect:
         module, function = args.detect.split(":", 1)
         detect = getattr(importlib.import_module(module), function)
+        # A detector that spends money says what it will cost before it does,
+        # and only runs when the caller has opted in (`.claude/rules/eval.md`).
+        estimate = getattr(importlib.import_module(module), "estimate_cost", None)
+        if estimate is not None:
+            line = estimate(len(load_transcripts()))
+            if os.environ.get("LIVE_API_TESTS") != "1":
+                raise SystemExit(f"{args.detect} makes live calls: set LIVE_API_TESTS=1.\n{line}")
+            print(line)
 
     transcribe = None
     if args.diarize:

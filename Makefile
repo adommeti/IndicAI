@@ -17,7 +17,7 @@ UC2_LIVE_ARGS ?= --translate training_localizer.eval_hook:full \
 UC2_SARVAM_ARGS ?= --translate training_localizer.eval_hook:translate_and_enforce \
 	--pre-edit training_localizer.eval_hook:translate_only --baseline
 COMPOSE = docker compose --env-file .env.stack
-.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-lexicon eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
+.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
         check check-quick check-full stack-core stack-obs stack-voice stack-sparse stack-status stack-logs ship plan
 bootstrap:
 	python3 infra/bootstrap.py
@@ -69,6 +69,10 @@ eval-uc3:
 # Stage 0 only: the lexicon's own recall floor, free and offline.
 eval-uc3-lexicon:
 	$(UV) run python -m indic_platform.eval.runners.run_uc3 --detect comms_surveillance.stage0:detect --baseline
+# The full three-stage detector against live Claude. Prints the estimate and
+# refuses to spend without LIVE_API_TESTS=1: about $1 for the 200-item set.
+eval-uc3-full:
+	LIVE_API_TESTS=1 $(UV) run python -m indic_platform.eval.runners.run_uc3 --detect comms_surveillance.detector:detect --strict
 eval-uc3-diarize:
 	$(UV) run python -m indic_platform.eval.runners.run_uc3 --diarize --baseline
 # Pushes the 20 golden WAVs through the real pipeline: MinIO, Postgres and live
