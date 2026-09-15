@@ -1,0 +1,20 @@
+{"module_id": "comp-201", "seg_id": 1, "start_ms": 0, "end_ms": 5100, "source_text": "This module covers market conduct: insider trading and conflicts of interest.", "locked": false}
+{"module_id": "comp-201", "seg_id": 2, "start_ms": 5300, "end_ms": 10000, "source_text": "It applies to every employee, not only to those on an investment desk.", "locked": false}
+{"module_id": "comp-201", "seg_id": 3, "start_ms": 10200, "end_ms": 16500, "source_text": "Material non-public information is information a reasonable investor would want before trading.", "locked": false}
+{"module_id": "comp-201", "seg_id": 4, "start_ms": 16700, "end_ms": 20600, "source_text": "It becomes material long before it becomes a press release.", "locked": false}
+{"module_id": "comp-201", "seg_id": 5, "start_ms": 20800, "end_ms": 28000, "source_text": "Never trade on material non-public information, and never pass it to anyone outside your need-to-know group.", "locked": true, "locked_id": "lock-mnpi-no-trade"}
+{"module_id": "comp-201", "seg_id": 6, "start_ms": 28200, "end_ms": 34000, "source_text": "Passing it on is called tipping, and it is an offence even if you never trade yourself.", "locked": false}
+{"module_id": "comp-201", "seg_id": 7, "start_ms": 34200, "end_ms": 38800, "source_text": "A conversation overheard in a lift is still information you now hold.", "locked": false}
+{"module_id": "comp-201", "seg_id": 8, "start_ms": 39000, "end_ms": 43000, "source_text": "If you receive it by accident, tell Compliance the same day.", "locked": false}
+{"module_id": "comp-201", "seg_id": 9, "start_ms": 43200, "end_ms": 48200, "source_text": "Personal account dealing must be pre-cleared through the approved workflow.", "locked": false}
+{"module_id": "comp-201", "seg_id": 10, "start_ms": 48400, "end_ms": 53700, "source_text": "Pre-clearance expires; an approval from last week does not cover a trade today.", "locked": false}
+{"module_id": "comp-201", "seg_id": 11, "start_ms": 53900, "end_ms": 60000, "source_text": "A conflict of interest is any situation where your interest could influence your judgement.", "locked": false}
+{"module_id": "comp-201", "seg_id": 12, "start_ms": 60200, "end_ms": 65000, "source_text": "It does not have to be financial, and it does not have to be deliberate.", "locked": false}
+{"module_id": "comp-201", "seg_id": 13, "start_ms": 65200, "end_ms": 70500, "source_text": "A family member working at a counterparty is a conflict to declare, not to hide.", "locked": false}
+{"module_id": "comp-201", "seg_id": 14, "start_ms": 70700, "end_ms": 76200, "source_text": "Gifts and hospitality above the threshold must be declared before you accept them.", "locked": false}
+{"module_id": "comp-201", "seg_id": 15, "start_ms": 76400, "end_ms": 80300, "source_text": "Declaring is routine; failing to declare is the misconduct.", "locked": false}
+{"module_id": "comp-201", "seg_id": 16, "start_ms": 80500, "end_ms": 85900, "source_text": "Do not discuss client holdings in public places, including office lifts and cabs.", "locked": false}
+{"module_id": "comp-201", "seg_id": 17, "start_ms": 86100, "end_ms": 91900, "source_text": "Confidential means the information stays inside the group that needs it to do its work.", "locked": false}
+{"module_id": "comp-201", "seg_id": 18, "start_ms": 92100, "end_ms": 96600, "source_text": "Our record retention rules also cover messages on approved channels.", "locked": false}
+{"module_id": "comp-201", "seg_id": 19, "start_ms": 96800, "end_ms": 101900, "source_text": "Violations may result in disciplinary action up to and including termination.", "locked": true, "locked_id": "lock-violation-consequence"}
+{"module_id": "comp-201", "seg_id": 20, "start_ms": 102100, "end_ms": 108600, "source_text": "When a situation is unclear, Compliance would rather answer a question than open an investigation.", "locked": false}

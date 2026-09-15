@@ -38,8 +38,10 @@ test:
 	$(UV) run pytest -m 'not slow and not integration'
 eval-uc1:
 	$(UV) run python -m indic_platform.eval.runners.run_uc1 --chat-only --decide helpdesk_agent.graph:decide $(UC1_EVAL_ARGS)
-eval-uc2 eval-uc3:
-	$(UV) run python -m indic_platform.eval.runners.run --app $(@:eval-%=%)
+eval-uc2:
+	$(UV) run python -m indic_platform.eval.runners.run_uc2 --baseline $(UC2_EVAL_ARGS)
+eval-uc3:
+	$(UV) run python -m indic_platform.eval.runners.run --app uc3
 ingest-kb:
 	$(UV) run python -m indic_platform.cli ingest-kb
 voice-test:

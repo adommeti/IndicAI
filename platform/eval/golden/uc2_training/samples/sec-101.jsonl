@@ -1,0 +1,20 @@
+{"module_id": "sec-101", "seg_id": 1, "start_ms": 0, "end_ms": 5000, "source_text": "Welcome to the annual security awareness module for GMO employees in India.", "locked": false}
+{"module_id": "sec-101", "seg_id": 2, "start_ms": 5200, "end_ms": 9700, "source_text": "This module takes about eight minutes and ends with five questions.", "locked": false}
+{"module_id": "sec-101", "seg_id": 3, "start_ms": 9900, "end_ms": 13500, "source_text": "Most breaches begin with one person clicking one link.", "locked": false}
+{"module_id": "sec-101", "seg_id": 4, "start_ms": 13700, "end_ms": 18000, "source_text": "Phishing is an email that tries to make you act before you think.", "locked": false}
+{"module_id": "sec-101", "seg_id": 5, "start_ms": 18200, "end_ms": 24500, "source_text": "It will claim something is urgent: an expiring password, a blocked payment, a missed delivery.", "locked": false}
+{"module_id": "sec-101", "seg_id": 6, "start_ms": 24700, "end_ms": 30000, "source_text": "Multi-factor authentication is mandatory for all systems that hold client data.", "locked": true, "locked_id": "lock-mfa-mandatory"}
+{"module_id": "sec-101", "seg_id": 7, "start_ms": 30200, "end_ms": 34500, "source_text": "MFA means a password alone is never enough to reach client data.", "locked": false}
+{"module_id": "sec-101", "seg_id": 8, "start_ms": 34700, "end_ms": 39100, "source_text": "Attackers know this, so they now target the second factor as well.", "locked": false}
+{"module_id": "sec-101", "seg_id": 9, "start_ms": 39300, "end_ms": 44500, "source_text": "If an OTP arrives that you did not request, someone already has your password.", "locked": false}
+{"module_id": "sec-101", "seg_id": 10, "start_ms": 44700, "end_ms": 49200, "source_text": "Do not approve it, and change that password from a device you trust.", "locked": false}
+{"module_id": "sec-101", "seg_id": 11, "start_ms": 49400, "end_ms": 54300, "source_text": "Report any suspected phishing email to the security team within 24 hours.", "locked": true, "locked_id": "lock-report-24h"}
+{"module_id": "sec-101", "seg_id": 12, "start_ms": 54500, "end_ms": 59300, "source_text": "Twenty-four hours matters because attackers move laterally within a day.", "locked": false}
+{"module_id": "sec-101", "seg_id": 13, "start_ms": 59500, "end_ms": 64400, "source_text": "A common local variant is a UPI payment request that looks like a refund.", "locked": false}
+{"module_id": "sec-101", "seg_id": 14, "start_ms": 64600, "end_ms": 69100, "source_text": "A refund never requires you to approve a payment or enter your PIN.", "locked": false}
+{"module_id": "sec-101", "seg_id": 15, "start_ms": 69300, "end_ms": 74800, "source_text": "Vishing is the same trick over a phone call, often from a spoofed helpdesk number.", "locked": false}
+{"module_id": "sec-101", "seg_id": 16, "start_ms": 75000, "end_ms": 79400, "source_text": "Our helpdesk will never ask for your password or an OTP on a call.", "locked": false}
+{"module_id": "sec-101", "seg_id": 17, "start_ms": 79600, "end_ms": 84000, "source_text": "Do not share your VPN credentials with anyone, including IT staff.", "locked": true, "locked_id": "lock-no-credential-sharing"}
+{"module_id": "sec-101", "seg_id": 18, "start_ms": 84200, "end_ms": 89300, "source_text": "Use the password manager rather than a spreadsheet or a note on your laptop.", "locked": false}
+{"module_id": "sec-101", "seg_id": 19, "start_ms": 89500, "end_ms": 94600, "source_text": "Violations may result in disciplinary action up to and including termination.", "locked": true, "locked_id": "lock-violation-consequence"}
+{"module_id": "sec-101", "seg_id": 20, "start_ms": 94800, "end_ms": 101500, "source_text": "If you are unsure whether a message is genuine, forward it and ask. Nobody is penalised for checking.", "locked": false}

@@ -1,0 +1,145 @@
+# UC2 terminology glossary — governs post_edit (PRD D7) and the eval runner's adherence check.
+#
+# Two kinds of entry:
+#   keep_english      — the term stays in Latin script, verbatim, in every language.
+#   approved_renderings — the term must appear exactly as given for that language.
+#
+# STATUS. Every approved rendering below is `status: draft`: authored here so the
+# pipeline and the eval harness can be wired and measured, NOT confirmed by a
+# bilingual reviewer. A reviewer replaces the string and flips `status: approved`;
+# nothing else about the entry changes. The runner counts draft renderings for
+# adherence (the check is exact-match either way) but reports terminology as
+# `provisional` while any entry is draft, so a green run cannot be mistaken for
+# a reviewed one.
+#
+# Versioned in git; every localization row records `glossary_version` in meta (D6).
+
+version: 1
+status: draft
+languages: [hi-IN, te-IN, ta-IN]
+
+# ---------------------------------------------------------------------------
+# keep_english: 25 entries. Security and product nouns that Indian employees
+# already use in English, plus vendor names. Translating these loses the term
+# of art and makes the audio harder to follow, not easier.
+# ---------------------------------------------------------------------------
+keep_english:
+  - term: MFA
+    note: also spoken as "multi-factor authentication"; keep the initialism
+  - term: VPN
+  - term: DLP
+  - term: phishing
+  - term: vishing
+  - term: smishing
+  - term: malware
+  - term: ransomware
+  - term: firewall
+  - term: password
+  - term: passphrase
+  - term: OTP
+  - term: SSO
+  - term: helpdesk
+  - term: laptop
+  - term: server
+  - term: email
+  - term: login
+  - term: logout
+  - term: Microsoft 365
+    note: product name
+  - term: Outlook
+    note: product name
+  - term: Teams
+    note: product name
+  - term: SharePoint
+    note: product name
+  - term: Zscaler
+    note: product name
+  - term: GMO
+    note: company name; never transliterated
+
+# ---------------------------------------------------------------------------
+# approved_renderings: 16 compliance terms x 3 languages = 48 strings.
+# These carry obligation or consequence, so the wording must not drift between
+# modules. All draft pending reviewer confirmation.
+# ---------------------------------------------------------------------------
+approved_renderings:
+  - term: mandatory
+    status: draft
+    hi-IN: अनिवार्य
+    te-IN: తప్పనిసరి
+    ta-IN: கட்டாயம்
+  - term: prohibited
+    status: draft
+    hi-IN: निषिद्ध
+    te-IN: నిషేధించబడింది
+    ta-IN: தடைசெய்யப்பட்டது
+  - term: confidential
+    status: draft
+    hi-IN: गोपनीय
+    te-IN: గోప్యమైన
+    ta-IN: ரகசியமான
+  - term: disciplinary action
+    status: draft
+    hi-IN: अनुशासनात्मक कार्रवाई
+    te-IN: క్రమశిక్షణా చర్య
+    ta-IN: ஒழுங்கு நடவடிக்கை
+  - term: termination
+    status: draft
+    hi-IN: सेवा समाप्ति
+    te-IN: సేవా రద్దు
+    ta-IN: பணிநீக்கம்
+  - term: compliance
+    status: draft
+    hi-IN: अनुपालन
+    te-IN: సమ్మతి
+    ta-IN: இணக்கம்
+  - term: policy
+    status: draft
+    hi-IN: नीति
+    te-IN: విధానం
+    ta-IN: கொள்கை
+  - term: client data
+    status: draft
+    hi-IN: ग्राहक डेटा
+    te-IN: క్లయింట్ డేటా
+    ta-IN: வாடிக்கையாளர் தரவு
+  - term: personal data
+    status: draft
+    hi-IN: व्यक्तिगत डेटा
+    te-IN: వ్యక్తిగత డేటా
+    ta-IN: தனிப்பட்ட தரவு
+  - term: report immediately
+    status: draft
+    hi-IN: तुरंत सूचित करें
+    te-IN: వెంటనే నివేదించండి
+    ta-IN: உடனடியாக தெரிவிக்கவும்
+  - term: security team
+    status: draft
+    hi-IN: सुरक्षा टीम
+    te-IN: భద్రతా బృందం
+    ta-IN: பாதுகாப்பு குழு
+  - term: unauthorised access
+    status: draft
+    hi-IN: अनधिकृत पहुँच
+    te-IN: అనధికార ప్రాప్యత
+    ta-IN: அங்கீகரிக்கப்படாத அணுகல்
+  - term: data breach
+    status: draft
+    hi-IN: डेटा उल्लंघन
+    te-IN: డేటా ఉల్లంఘన
+    ta-IN: தரவு மீறல்
+  - term: insider trading
+    status: draft
+    hi-IN: भेदिया व्यापार
+    te-IN: ఇన్‌సైడర్ ట్రేడింగ్
+    ta-IN: உள்நபர் வர்த்தகம்
+  - term: conflict of interest
+    status: draft
+    hi-IN: हितों का टकराव
+    te-IN: ప్రయోజన వైరుధ్యం
+    ta-IN: நலன் முரண்பாடு
+  - term: record retention
+    status: draft
+    hi-IN: अभिलेख प्रतिधारण
+    te-IN: రికార్డు నిలుపుదల
+    ta-IN: பதிவு தக்கவைப்பு

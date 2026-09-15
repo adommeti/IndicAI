@@ -1,0 +1,40 @@
+# Spoken pace per language, for the UC2 timing-fit estimate (PRD D10).
+#
+# `chars_per_second` is the rate at which Bulbul covers characters of the target
+# script at pace=1.0. Indic scripts pack more phonemes per character than Latin,
+# so the rate differs by script; one number for all languages mis-estimates
+# Telugu and Tamil in opposite directions.
+#
+# PROVENANCE: measured, not guessed. Derived from the three narration samples
+# rendered during uc2/P0-spike (`docs/adr/assets/0003/bulbul-*.mp3`, speaker
+# shreya, bulbul:v3, pace=1.0, 24 kHz) by parsing MP3 frame headers for the true
+# duration and dividing the known character count by it:
+#
+#   hi-IN  400 chars / 30.1 s = 13.3
+#   te-IN  372 chars / 30.2 s = 12.3
+#   ta-IN  450 chars / 32.2 s = 14.0
+#
+# CAVEAT: one voice, one pace, one sample per language, on compliance-register
+# prose. Good enough to make the timing check discriminate; `uc2/P4` measures
+# per-segment durations on real dubbed output and should widen this base.
+# The earlier hand-guessed values (11.5 / 10.0 / 10.5) were 14-33% low and made
+# every correct translation look like a timing failure.
+
+measured: true
+measured_from: docs/adr/assets/0003/bulbul-*.mp3 (uc2/P0-spike, bulbul:v3, speaker shreya, pace 1.0)
+tolerance: 0.15 # +/- 15% of the segment duration counts as fitting (D10)
+
+languages:
+  en-IN:
+    chars_per_second: 15.0
+    measured: false
+    note: source pace, used only to sanity-check the authored sample timings
+  hi-IN:
+    chars_per_second: 13.3
+    script: Devanagari
+  te-IN:
+    chars_per_second: 12.3
+    script: Telugu
+  ta-IN:
+    chars_per_second: 14.0
+    script: Tamil

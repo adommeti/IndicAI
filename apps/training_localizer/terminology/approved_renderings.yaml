@@ -1,0 +1,55 @@
+# UC2 LOCKED compliance statements.
+#
+# A locked segment is one whose wording Compliance has fixed. The pipeline must
+# return it VERBATIM: post_edit replaces any machine translation that differs
+# (PRD D7), and the reviewer UI blocks edits to it (uc2/P3). These are the
+# sentences where a softened rendering would change an obligation, so they are
+# not left to a translator per module.
+#
+# STATUS. All five are `status: draft`: authored so the LOCKED path can be built
+# and measured, NOT confirmed by a bilingual reviewer or by Compliance. A
+# reviewer replaces the string and flips `status: approved`. The eval runner
+# enforces exact match regardless, and reports terminology as `provisional`
+# while any statement is draft.
+#
+# `id` is stable and referenced by segments marked locked=true in a module script.
+
+version: 1
+status: draft
+languages: [hi-IN, te-IN, ta-IN]
+
+statements:
+  - id: lock-mfa-mandatory
+    status: draft
+    en: Multi-factor authentication is mandatory for all systems that hold client data.
+    hi-IN: ग्राहक डेटा रखने वाले सभी सिस्टम के लिए MFA अनिवार्य है।
+    te-IN: క్లయింట్ డేటా ఉన్న అన్ని సిస్టమ్‌లకు MFA తప్పనిసరి.
+    ta-IN: வாடிக்கையாளர் தரவு உள்ள அனைத்து சிஸ்டங்களுக்கும் MFA கட்டாயம்.
+
+  - id: lock-report-24h
+    status: draft
+    en: Report any suspected phishing email to the security team within 24 hours.
+    hi-IN: किसी भी संदिग्ध phishing email की सूचना 24 घंटे के भीतर सुरक्षा टीम को दें।
+    te-IN: ఏదైనా అనుమానాస్పద phishing email గురించి 24 గంటలలోపు భద్రతా బృందానికి నివేదించండి.
+    ta-IN: சந்தேகத்திற்குரிய phishing email பற்றி 24 மணி நேரத்திற்குள் பாதுகாப்பு குழுவிடம் தெரிவிக்கவும்.
+
+  - id: lock-no-credential-sharing
+    status: draft
+    en: Do not share your VPN credentials with anyone, including IT staff.
+    hi-IN: अपने VPN credentials किसी के साथ साझा न करें, IT कर्मचारियों के साथ भी नहीं।
+    te-IN: మీ VPN credentials ఎవరితోనూ పంచుకోవద్దు, IT సిబ్బందితో సహా.
+    ta-IN: உங்கள் VPN credentials யாருடனும் பகிர வேண்டாம், IT ஊழியர்கள் உட்பட.
+
+  - id: lock-violation-consequence
+    status: draft
+    en: Violations may result in disciplinary action up to and including termination.
+    hi-IN: उल्लंघन के परिणामस्वरूप अनुशासनात्मक कार्रवाई हो सकती है, जिसमें सेवा समाप्ति भी शामिल है।
+    te-IN: ఉల్లంఘనల ఫలితంగా క్రమశిక్షణా చర్య తీసుకోవచ్చు, సేవా రద్దుతో సహా.
+    ta-IN: மீறல்கள் ஒழுங்கு நடவடிக்கைக்கு வழிவகுக்கலாம், பணிநீக்கம் உட்பட.
+
+  - id: lock-mnpi-no-trade
+    status: draft
+    en: Never trade on material non-public information, and never pass it to anyone outside your need-to-know group.
+    hi-IN: भौतिक गैर-सार्वजनिक जानकारी पर कभी व्यापार न करें, और उसे अपने need-to-know समूह के बाहर किसी को न दें।
+    te-IN: మెటీరియల్ నాన్-పబ్లిక్ సమాచారంపై ఎప్పుడూ ట్రేడ్ చేయవద్దు, దానిని మీ need-to-know బృందం వెలుపల ఎవరికీ ఇవ్వవద్దు.
+    ta-IN: மெட்டீரியல் நான்-பப்ளிக் தகவலின் அடிப்படையில் ஒருபோதும் வர்த்தகம் செய்யாதீர்கள், அதை உங்கள் need-to-know குழுவிற்கு வெளியே யாருக்கும் தர வேண்டாம்.
