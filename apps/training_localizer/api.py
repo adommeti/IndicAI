@@ -2,19 +2,36 @@
 
 import os
 import uuid
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from indic_platform.db.models import Module, Segment
+from fastapi.staticfiles import StaticFiles
+from indic_platform.db.models import Module, QuizItem, Segment
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from starlette.authentication import AuthCredentials, BaseUser
 from starlette.concurrency import run_in_threadpool
 
-from training_localizer.pipeline import LANGUAGES, localize, module_status
+from training_localizer.pipeline import (
+    LANGUAGES,
+    approve_quiz_item,
+    approve_segment,
+    load_review,
+    localize,
+    module_status,
+)
+from training_localizer.review import OverrideRequired, review_rows, review_summary
 from training_localizer.terminology import load_glossary, resolve_locked_id
 
 app = FastAPI(title="training localizer")
+
+# The reviewer UI is a static bundle; `npm run build` in apps/training_localizer/ui
+# produces it. Mounted last (see the bottom of this module) so it cannot shadow an
+# API route, and skipped entirely when it has not been built -- a missing bundle
+# must not stop the API from serving.
+UI_DIST = Path(__file__).parent / "ui" / "dist"
 
 Language = Literal["hi-IN", "te-IN", "ta-IN"]
 
@@ -171,3 +188,146 @@ async def status(
         raise HTTPException(404, "Unknown module") from exc
     finally:
         await eng.dispose()
+
+
+class ApproveIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    language: Language
+    text: str = Field(min_length=1, max_length=8000)
+    # Only needed when the segment is LOCKED and `text` differs from its
+    # approved rendering; the API decides, the client cannot opt out.
+    override_reason: str | None = Field(default=None, max_length=2000)
+
+
+class QuizApproveIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    language: str = Field(min_length=2, max_length=16)
+    approved: bool = True
+
+
+@app.get("/modules/{module_id}/review")
+async def review(
+    module_id: uuid.UUID,
+    reviewer: Annotated[str, Depends(authenticated_owner)],
+    language: Language = "hi-IN",
+) -> dict[str, Any]:
+    """The reviewer table for one module-language, plus its quiz items."""
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db:
+            if await db.get(Module, module_id) is None:
+                raise HTTPException(404, "Unknown module")
+            segments, stages = await load_review(db, module_id, language)
+            quiz = (
+                await db.scalars(
+                    select(QuizItem)
+                    .where(QuizItem.module_id == module_id)
+                    .order_by(QuizItem.language, QuizItem.item_id)
+                )
+            ).all()
+    finally:
+        await eng.dispose()
+
+    rows = review_rows(
+        segments=segments,
+        post_edit=stages["post_edit"],
+        backtranslate=stages["backtranslate"],
+        approved=stages["approved"],
+        language=language,
+        glossary=load_glossary(),
+    )
+    return {
+        "module_id": str(module_id),
+        "language": language,
+        "reviewer": reviewer,
+        "summary": review_summary(rows),
+        "segments": [row.as_json() for row in rows],
+        "quiz_items": [
+            {
+                "item_id": q.item_id,
+                "language": q.language,
+                "seg_id": q.seg_id,
+                "question": q.question,
+                "options": q.options,
+                "answer": q.answer,
+                "rationale": q.rationale,
+                "approved": q.approved,
+            }
+            for q in quiz
+        ],
+    }
+
+
+@app.put("/modules/{module_id}/segments/{seg_id}/approve")
+async def approve(
+    module_id: uuid.UUID,
+    seg_id: int,
+    body: ApproveIn,
+    reviewer: Annotated[str, Depends(authenticated_owner)],
+) -> dict[str, Any]:
+    """Save a reviewer's text as the approved version of this segment.
+
+    A LOCKED segment that does not match its approved rendering is refused with
+    409 and the expected text, until the reviewer supplies an override reason.
+    """
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db, db.begin():
+            if await db.get(Module, module_id) is None:
+                raise HTTPException(404, "Unknown module")
+            try:
+                return await approve_segment(
+                    db,
+                    module_id=module_id,
+                    seg_id=seg_id,
+                    language=body.language,
+                    text=body.text,
+                    reviewer=reviewer,
+                    override_reason=body.override_reason,
+                )
+            except OverrideRequired as exc:
+                raise HTTPException(
+                    409,
+                    {
+                        "error": "locked_override_required",
+                        "locked_id": exc.locked_id,
+                        "expected": exc.expected,
+                        "hint": (
+                            "This is a LOCKED compliance statement. Restore the approved "
+                            "rendering, or supply override_reason of at least 10 characters "
+                            "explaining why it must differ."
+                        ),
+                    },
+                ) from exc
+            except LookupError as exc:
+                raise HTTPException(404, "Unknown segment") from exc
+    finally:
+        await eng.dispose()
+
+
+@app.put("/modules/{module_id}/quiz/{item_id}/approve")
+async def approve_quiz(
+    module_id: uuid.UUID,
+    item_id: int,
+    body: QuizApproveIn,
+    reviewer: Annotated[str, Depends(authenticated_owner)],
+) -> dict[str, Any]:
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db, db.begin():
+            try:
+                return await approve_quiz_item(
+                    db,
+                    module_id=module_id,
+                    language=body.language,
+                    item_id=item_id,
+                    approved=body.approved,
+                )
+            except LookupError as exc:
+                raise HTTPException(404, "Unknown quiz item") from exc
+    finally:
+        await eng.dispose()
+
+
+if UI_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="ui")

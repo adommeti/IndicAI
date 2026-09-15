@@ -26,6 +26,21 @@ stage unit-tests  uv run --frozen pytest -m 'not slow and not integration' -q -p
 stage eval-uc1-offline uv run --frozen python -m indic_platform.eval.runners.run --app uc1 || exit 1
 stage eval-uc2-offline uv run --frozen python -m indic_platform.eval.runners.run --app uc2 || exit 1
 stage eval-uc3-offline uv run --frozen python -m indic_platform.eval.runners.run --app uc3 || exit 1
+# UI packages join the gate once they exist (.claude/rules/ui.md). Skipped when
+# node_modules is absent so a Python-only checkout still passes `make check`;
+# CI installs them, so a lint error there cannot slip through.
+for ui in apps/*/ui; do
+  [ -f "$ui/package.json" ] || continue
+  if [ -d "$ui/node_modules" ]; then
+    stage "ui:$(basename "$(dirname "$ui")"):lint" npm --prefix "$ui" run --silent lint || exit 1
+    stage "ui:$(basename "$(dirname "$ui")"):typecheck" npm --prefix "$ui" run --silent typecheck || exit 1
+    stage "ui:$(basename "$(dirname "$ui")"):test" npm --prefix "$ui" run --silent test || exit 1
+  else
+    printf '\n=== ui:%s ===\n--- skipped: run `npm --prefix %s install` to include it\n' \
+      "$(basename "$(dirname "$ui")")" "$ui"
+  fi
+done
+
 stage attribution bash scripts/attribution-check.sh || exit 1
 stage secrets     bash -c 'uv run --frozen detect-secrets-hook --baseline .secrets.baseline $(git ls-files)' || exit 1
 

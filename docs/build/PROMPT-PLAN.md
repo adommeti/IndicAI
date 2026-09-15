@@ -24,7 +24,7 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc2 | P0-spike | partial | program/P0 | Vendor contract spike → docs/adr/0003 | L | see docs/build/BLOCKERS.md |
 | uc2 | P1 | done | uc2/P0-spike | Terminology files, golden set, eval runner | S,L | pending PR |
 | uc2 | P2 | partial | uc2/P1 | Celery pipeline: adapt → translate → post_edit → QA → quiz | S,C,K,L | see docs/build/BLOCKERS.md |
-| uc2 | P3 | pending | uc2/P2 | Reviewer UI with LOCKED enforcement | S,C | |
+| uc2 | P3 | partial | uc2/P2 | Reviewer UI with LOCKED enforcement | S,C | see docs/build/BLOCKERS.md |
 | uc2 | P4 | pending | uc2/P3 | Production: dubbing, TTS, VTT, packaging | S,K,L | |
 | uc2 | P5 | pending | uc2/P4 | Pilot delivery page, quiz, comprehension report | S,C,K | |
 | uc3 | P1 | pending | program/P0 | Synthetic golden set (200), audio subset, eval runner | S,L | |

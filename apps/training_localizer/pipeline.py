@@ -547,3 +547,91 @@ async def module_status(db: AsyncSession, module_id: uuid.UUID) -> dict[str, Any
         "languages": languages,
         "quiz_items_en": quiz_counts.get("en-IN", 0),
     }
+
+
+async def load_review(
+    db: AsyncSession, module_id: uuid.UUID, language: str
+) -> tuple[list[dict[str, Any]], dict[str, dict[int, dict[str, Any]]]]:
+    """Everything the reviewer view needs, in one pass over the stage rows."""
+    glossary = load_glossary()
+    segments = [
+        {
+            "seg_id": s.seg_id,
+            "start_ms": s.start_ms,
+            "end_ms": s.end_ms,
+            "source_text": s.source_text,
+            "locked": s.locked,
+            "locked_id": s.locked_id,
+        }
+        for s in await load_segments(db, module_id, glossary)
+    ]
+    stages_out: dict[str, dict[int, dict[str, Any]]] = {}
+    for stage in ("post_edit", "backtranslate", "approved"):
+        rows = await latest(db, module_id, language, stage)
+        stages_out[stage] = {
+            seg_id: {
+                "text": row.text,
+                "meta": row.meta,
+                "version": row.version,
+                "created_by": row.created_by,
+            }
+            for seg_id, row in rows.items()
+        }
+    return segments, stages_out
+
+
+async def approve_segment(
+    db: AsyncSession,
+    *,
+    module_id: uuid.UUID,
+    seg_id: int,
+    language: str,
+    text: str,
+    reviewer: str,
+    override_reason: str | None = None,
+) -> dict[str, Any]:
+    """Write an `approved` version for one segment, with who and when.
+
+    A reviewer edit produces a new row rather than mutating the machine output,
+    so the editorial history stays intact and `uc2/P4` can tell that only
+    production needs re-running (PRD D5).
+    """
+    from training_localizer.review import check_approval
+
+    glossary = load_glossary()
+    segment = next(
+        (s for s in await load_segments(db, module_id, glossary) if s.seg_id == seg_id), None
+    )
+    if segment is None:
+        raise LookupError(f"Unknown segment {seg_id}")
+    audit = check_approval(
+        text=text,
+        locked_id=segment.locked_id,
+        language=language,
+        glossary=glossary,
+        override_reason=override_reason,
+    )
+    version = await next_version(db, module_id, language, "approved")
+    db.add(
+        Localization(
+            module_id=module_id,
+            seg_id=seg_id,
+            language=language,
+            stage="approved",
+            version=version,
+            text=text,
+            meta={**audit, "reviewer": reviewer},
+            created_by=reviewer,
+        )
+    )
+    return {"seg_id": seg_id, "language": language, "version": version, **audit}
+
+
+async def approve_quiz_item(
+    db: AsyncSession, *, module_id: uuid.UUID, language: str, item_id: int, approved: bool
+) -> dict[str, Any]:
+    item = await db.get(QuizItem, (module_id, language, item_id))
+    if item is None:
+        raise LookupError(f"Unknown quiz item {item_id}")
+    item.approved = approved
+    return {"item_id": item_id, "language": language, "approved": approved}
