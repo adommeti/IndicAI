@@ -968,6 +968,57 @@ async def test_a_turn_after_a_failed_decide_still_answers() -> None:
     assert recorded[-1].time_to_first_audio_ms is not None
 
 
+async def test_two_turns_in_quick_succession_each_report_their_own_latency() -> None:
+    """Back-to-back turns must not share one synthesis stream.
+
+    The TTS stream stays open for 2 s after the last sentence, waiting for more of the same
+    reply. A second turn arriving inside that window used to have its sentences appended to
+    the first turn's stream, and the damage was invisible: the reply was still spoken
+    correctly, but the new turn never started its clock, never stopped it, and `on_turn`
+    fired a second time carrying the FIRST turn's index and latency. A dashboard would show
+    one turn twice and the other never.
+
+    So: two turns, no wait between them, and each must arrive once with its own index and
+    its own measured time-to-first-audio.
+    """
+    recorded: list[tuple[int, StageLatency]] = []
+
+    async def on_turn(index: int, latency: StageLatency) -> None:
+        recorded.append((index, latency))
+
+    tts = FakeTTS()
+    pipeline, parts = make_pipeline(tts=tts, on_turn=on_turn)
+    gate: GreetingGate = parts["GreetingGate"]
+    tail: Passthrough = parts["tail"]
+    stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
+
+    await drive(
+        pipeline,
+        [
+            *one_turn(gate, stt_processor, index=0),
+            # Wait only for the first turn to have been DECIDED -- which is when its
+            # synthesis stream opens -- and then start the second immediately. That is the
+            # window the bug lived in: the first turn's stream stays open for 2 s after its
+            # last sentence, so a second turn beginning now is exactly the collision case.
+            # Waiting any longer would let the stream close and the test would prove
+            # nothing.
+            until(lambda: bool(messages(tail.seen, "decision")), "the first turn to decide"),
+            *one_turn(gate, stt_processor, index=1),
+            until(lambda: len(recorded) >= 2, "both turns to report their latencies"),
+        ],
+    )
+
+    assert [index for index, _ in recorded] == [0, 1], (
+        f"each turn reports once, under its own index; got {[i for i, _ in recorded]}"
+    )
+    for index, latency in recorded:
+        assert latency.time_to_first_audio_ms is not None, (
+            f"turn {index} emitted audio but its clock was never stopped"
+        )
+        assert latency.tts_ms is not None, f"turn {index} synthesized but reported no tts_ms"
+    assert tts.spoken == sentences(REPLY) * 2, "both replies are spoken in full"
+
+
 # --------------------------------------------------------------------------------------
 # 4. Content hygiene: nothing about audio or transcripts reaches a log.
 # --------------------------------------------------------------------------------------

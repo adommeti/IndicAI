@@ -820,6 +820,9 @@ class SarvamTTSProcessor(FrameProcessor):
         self._decoder = decoder
         self._on_turn = on_turn
         self._queue: asyncio.Queue[str | None] | None = None
+        # Which turn the in-flight synthesis belongs to. Without it a second turn's
+        # sentences can join the first turn's stream; see `_speak`.
+        self._queue_turn: _Turn | None = None
         self._task: asyncio.Task[None] | None = None
         self.turn: _Turn | None = None
         self.audio_frames_emitted = 0
@@ -843,8 +846,19 @@ class SarvamTTSProcessor(FrameProcessor):
     async def _speak(self, text: str) -> None:
         if not text.strip():
             return
+        if self._queue is not None and self._queue_turn is not self.turn:
+            # A new turn's first sentence arrived while the previous turn's synthesis was
+            # still open -- which is any two turns less than the 2 s idle timeout apart.
+            # Appending would put this turn's speech on the previous turn's stream: the new
+            # turn's clock is never started, never stopped, and `on_turn` reports the old
+            # turn's index a second time. Nothing looks wrong, because the reply is still
+            # spoken correctly; the latency just quietly disappears. So close the old
+            # stream out and open this turn its own.
+            self._queue.put_nowait(None)
+            self._queue = None
         if self._queue is None:
             self._queue = asyncio.Queue()
+            self._queue_turn = self.turn
             if self.turn is not None and self.turn.tts_started_at is None:
                 self.turn.tts_started_at = time.perf_counter()
             self._task = self.create_task(self._synthesize(self._queue, self.turn))
@@ -888,7 +902,11 @@ class SarvamTTSProcessor(FrameProcessor):
             logger.warning(f"{self}: TTS unavailable ({type(error).__name__})")
         finally:
             await self.push_frame(TTSStoppedFrame())
-            self._queue = None
+            # Only if it is still OURS: `_speak` may already have replaced it for a newer
+            # turn, and clearing that one would strand the new turn's sentences.
+            if self._queue is queue:
+                self._queue = None
+                self._queue_turn = None
             if turn is not None and self._on_turn is not None:
                 await self._on_turn(turn.index, turn.latency)
 
@@ -903,6 +921,7 @@ class SarvamTTSProcessor(FrameProcessor):
     async def _close(self) -> None:
         if self._queue is not None:
             self._queue.put_nowait(None)
+        self._queue_turn = None
         task, self._task = self._task, None
         if task is not None:
             with contextlib.suppress(Exception):

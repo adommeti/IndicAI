@@ -233,8 +233,8 @@ and retention accordingly.
 
 The voice path is `apps/helpdesk_agent/voice_pipeline.py`: LiveKit audio in → Silero VAD →
 Saaras streaming STT → `graph.decide` → Bulbul streaming TTS → LiveKit audio out, with
-partial transcripts published to the room as data messages and per-stage timings merged into
-`turns.latency_ms`. LiveKit runs locally from `docker-compose.yml`
+partial transcripts published to the room as data messages. LiveKit runs locally from
+`docker-compose.yml`
 (`livekit/livekit-server:v1.9.0`, config `infra/livekit.yaml`, loopback-bound on 7880/7881
 plus UDP 50100-50120) and starts with `make stack-voice`. `make voice-test` is the latency
 harness; `apps/helpdesk_agent/voice_demo.md` is the manual browser demo.
@@ -244,12 +244,26 @@ daemon, so both are UNMEASURED and listed in `docs/build/BLOCKERS.md`.
 
 ### The greeting is the consent notice
 
-The short recording that plays at session start is not a nicety. It is the notice on which
-the lawfulness of recording and transcribing the call rests (PRD C8: "the greeting states the
-call is recorded and transcribed"). It has to play **before** the pipeline consumes any
-microphone audio, so an employee who does not want to be recorded can leave before anything
-reaches a vendor. A notice that plays after the first utterance has already been streamed to
-Saaras has notified nobody of anything. This is also why the greeting should be a recorded
+The short recording that plays when a participant joins is not a nicety. It is the notice on
+which the lawfulness of recording and transcribing the call rests (PRD C8: "the greeting
+states the call is recorded and transcribed"). It has to play **before** the pipeline
+consumes any microphone audio, so an employee who does not want to be recorded can leave
+before anything reaches a vendor. A notice that plays after the first utterance has already
+been streamed to Saaras has notified nobody of anything.
+
+Three behaviours follow from taking that seriously, all in `GreetingGate`:
+
+- **It plays on participant join, not on pipeline start.** The agent is dispatched into a
+  room rather than summoned into one, and the output transport acknowledges playback whether
+  or not anybody is subscribed — so a notice played at pipeline start can play to an empty
+  room, be "confirmed", and leave the gate open before the employee arrives.
+- **A late joiner gets it too.** Every join re-plays the notice and re-closes the gate. A
+  supervisor who joins a call in progress was not covered by a notice given before they
+  arrived.
+- **An unconfirmed notice fails closed.** If the transport never reports playback finishing,
+  the gate stays shut for the life of the session, publishes `notice: unconfirmed` to the
+  room after 30 seconds, and captures nothing. The cost of failing closed is one lost
+  session; the cost of failing open is recording someone who was never told. This is also why the greeting should be a recorded
 file rather than text synthesized per session: the wording is reviewed and approved once,
 and it does not drift, get retranslated, or fail to play because a TTS call errored.
 

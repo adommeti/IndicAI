@@ -274,11 +274,21 @@ prompt, the pinned contract or PRD C5 — **not something observed**.
 
 ### 5.1 The consent notice plays before any audio is consumed
 
-**Expected:** within a second of the agent joining, and *before* the pipeline starts feeding
-your microphone into Saaras, a short recorded notice plays saying the call is recorded and
-transcribed (PRD C8). You should be able to hang up during it and have nothing captured.
-That ordering is the whole point: a notice that plays after the first utterance has already
-been streamed to a vendor is not a notice.
+**Expected:** within a second of *you* joining — the notice is played from the transport's
+participant-joined event, not from pipeline start, so an agent sitting in an empty room
+plays nothing — and *before* the pipeline starts feeding your microphone into Saaras, a
+short recorded notice plays saying the call is recorded and transcribed (PRD C8). You
+should be able to hang up during it and have nothing captured. That ordering is the whole
+point: a notice that plays after the first utterance has already been streamed to a vendor
+is not a notice.
+
+Two consequences worth watching for. If a second participant joins mid-call, the notice
+plays again and the gate closes while it does — somebody who arrives late was not covered
+by a notice given before they got there. And if the transport never confirms the notice
+finished playing (a client that never subscribes), the gate **stays shut**: after 30 seconds
+the room gets a `notice: unconfirmed` data message and the session captures nothing at all.
+That is deliberate. A consent gate that opens because a confirmation failed to arrive is not
+a gate.
 
 **As shipped, this will not happen.** There is no consent-notice audio file in this
 repository — the only committed audio is the 155 golden WAVs under
@@ -323,10 +333,12 @@ docker compose --env-file .env.stack exec -T postgres \
   "select id, created_at, language, latency_ms from turns order by created_at desc limit 3;"
 ```
 
-**Expected:** the newest row is your turn, and `latency_ms` carries the per-stage keys the
-contract names — `vad_ms`, `stt_ms`, `decide_ms`, `tts_ms`, `time_to_first_audio_ms` — merged
-with the stage timings `graph.decide` already writes. Confirm the key names against
-`voice_pipeline.py`; the contract is a contract, not a measurement.
+**Expected:** the newest row is your turn. The voice stages are namespaced under `voice.`
+by `StageLatency.merge_into` — `voice.vad_ms`, `voice.stt_ms`, `voice.decide_ms`,
+`voice.tts_ms`, `voice.time_to_first_audio_ms` — so they cannot collide with the stage
+timings `graph.decide` already writes into the same JSONB. Confirm the key names against
+`voice_pipeline.py` before believing this paragraph; the contract is a contract, not a
+measurement.
 
 For scale, PRD C5's p50 budget: VAD 250 ms, Saaras final 300 ms, retrieval 150 ms, Claude
 first sentence 800 ms, Bulbul first audio 250 ms, transport 100 ms, ≈ 1.85 s to first audio.
@@ -345,8 +357,12 @@ and step 6 is what you are looking at.
 
 ## 6. What failure looks like
 
-The designed failure is **STT dies, the session switches to chat**. PRD C9: a Saaras stream
-error or 429 is retried once, then the session moves to chat mode with a visible notice.
+The designed failure is **STT dies, the session switches to chat**. PRD C9 asks for a
+Saaras stream error or 429 to be retried once before that. **As built there is no retry**:
+`indic_platform/adapters/sarvam_stt.py` does not retry, and `SarvamSTTProcessor._consume`
+latches chat mode on the first exception. The first error ends the listening half of the
+session. That is a deviation from C9, recorded in `docs/build/BLOCKERS.md` — not a
+behaviour to expect here.
 
 Force it without touching the code by making Saaras unreachable for one session — start the
 agent with a deliberately wrong `SARVAM_API_KEY`, or block `api.sarvam.ai` at the firewall
