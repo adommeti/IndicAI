@@ -1,0 +1,355 @@
+# DRAFT -- owned by Compliance, not by engineering. See guaranteed_returns.yaml
+# for the schema and the governance rule (PRD E7).
+category: mnpi_insider
+status: draft
+owner: compliance
+description: >
+  Possession or communication of material non-public information, and trading
+  or instructing a trade ahead of its publication. The signal is the pairing of
+  a non-public fact with an action or an audience.
+entries:
+  - id: mn-001
+    note: explicit statement that something is not yet public
+    severity: high
+    weight: 0.9
+    terms:
+      - not public yet
+      - not yet announced
+      - before it is announced
+      - before the announcement
+      - unpublished
+      - non public
+      - अभी सार्वजनिक नहीं
+      - अभी घोषणा नहीं हुई
+      - अप्रकाशित
+      - घोषणा से पहले
+      - ఇంకా బహిరంగం కాలేదు
+      - ప్రకటనకు ముందే
+      - ప్రచురించని
+      - இன்னும் பொதுவில் இல்லை
+      - அறிவிப்புக்கு முன்
+      - வெளியிடப்படாத
+      - abhi public nahi hua
+      - announcement se pehle
+      - unpublished results
+
+  - id: mn-002
+    note: pre-announcement corporate action
+    severity: high
+    weight: 0.85
+    terms:
+      - the board signs
+      - board meeting outcome
+      - acquisition on thursday
+      - merger terms
+      - takeover before
+      - अधिग्रहण गुरुवार को
+      - बोर्ड की बैठक का नतीजा
+      - विलय की शर्तें
+      - కొనుగోలు ప్రకటిస్తారు
+      - విలీన నిబంధనలు
+      - கையகப்படுத்துதல் அறிவிக்கப்படும்
+      - இணைப்பு விதிமுறைகள்
+      - board acquisition sign karega
+
+  - id: mn-003
+    note: unpublished earnings or results
+    severity: high
+    weight: 0.9
+    terms:
+      - unpublished results
+      - results before release
+      - earnings before announcement
+      - numbers are bad this quarter
+      - अप्रकाशित नतीजे
+      - नतीजे आने से पहले
+      - कमाई बहुत खराब
+      - ప్రచురించని ఫలితాలు
+      - ఆదాయం చాలా తక్కువ
+      - வெளியிடப்படாத முடிவுகள்
+      - வருவாய் மிகவும் மோசம்
+      - unpublished results dekhe
+
+  - id: mn-004
+    note: instruction to trade on the information
+    severity: high
+    weight: 0.9
+    terms:
+      - move the position before then
+      - sell today before
+      - buy before it goes out
+      - take the position now
+      - उससे पहले पोज़िशन बना लो
+      - आज ही बेच दो
+      - पहले खरीद लो
+      - అంతకుముందే పొజిషన్ తీసుకో
+      - ఈరోజే అమ్మేయ్
+      - அதற்கு முன் வாங்கிவிடு
+      - இன்றே விற்றுவிடு
+      - position le lo
+      - aaj hi bech do
+
+  - id: mn-005
+    note: source described as internal to the issuer
+    severity: high
+    weight: 0.85
+    terms:
+      - from inside the company
+      - someone on the inside
+      - our contact at the company
+      - a friend in the finance team
+      - कंपनी के अंदर से
+      - अंदर का आदमी
+      - कंपनी में एक जानकार
+      - కంపెనీ లోపలి నుండి
+      - లోపలి వ్యక్తి
+      - நிறுவனத்தின் உள்ளிருந்து
+      - உள்ளே ஒருவர்
+      - andar se pata chala
+
+  - id: mn-006
+    note: exclusivity claim about the information
+    severity: medium
+    weight: 0.7
+    terms:
+      - nobody else has this
+      - only we know
+      - before the street knows
+      - किसी और के पास नहीं
+      - सिर्फ़ हमें पता है
+      - बाज़ार को पता चलने से पहले
+      - ఇంకెవరికీ తెలియదు
+      - మనకే తెలుసు
+      - வேறு யாருக்கும் தெரியாது
+      - நமக்கு மட்டுமே தெரியும்
+      - kisi aur ko pata nahi
+
+  - id: mn-007
+    note: instruction to keep the information off the record
+    severity: high
+    weight: 0.8
+    terms:
+      - do not write this down
+      - keep this off email
+      - forget i told you
+      - इसे लिखना मत
+      - ईमेल पर मत डालना
+      - भूल जाओ मैंने कहा
+      - దీన్ని రాయవద్దు
+      - నేను చెప్పింది మర్చిపో
+      - இதை எழுத வேண்டாம்
+      - நான் சொன்னதை மறந்துவிடு
+
+  - id: mn-008
+    note: reference to a wall crossing or restricted list
+    severity: medium
+    weight: 0.65
+    terms:
+      - wall crossed
+      - over the wall
+      - restricted list
+      - grey list
+      - watch list name
+      - प्रतिबंधित सूची
+      - रेस्ट्रिक्टेड लिस्ट
+      - నిషేధిత జాబితా
+      - தடைசெய்யப்பட்ட பட்டியல்
+
+  - id: mn-009
+    note: trading window or blackout period
+    severity: medium
+    weight: 0.6
+    terms:
+      - trading window is closed
+      - blackout period
+      - window band hai
+      - ट्रेडिंग विंडो बंद है
+      - ట్రేడింగ్ విండో మూసివేయబడింది
+      - வர்த்தக சாளரம் மூடப்பட்டுள்ளது
+
+  - id: mn-010
+    note: pre-deal price talk
+    severity: high
+    weight: 0.8
+    terms:
+      - the price they will pay
+      - deal price is
+      - offer price will be
+      - कितने में सौदा होगा
+      - सौदे का भाव
+      - ఒప్పంద ధర
+      - ஒப்பந்த விலை
+
+  - id: mn-011
+    note: regulatory or investigative news not yet public
+    severity: high
+    weight: 0.8
+    terms:
+      - sebi is investigating
+      - notice has come but not public
+      - जाँच चल रही है
+      - नोटिस आया है
+      - దర్యాప్తు జరుగుతోంది
+      - விசாரணை நடக்கிறது
+
+  - id: mn-012
+    note: management change before announcement
+    severity: medium
+    weight: 0.7
+    terms:
+      - the ceo is leaving
+      - management change coming
+      - सीईओ जा रहे हैं
+      - प्रबंधन बदल रहा है
+      - సీఈఓ వెళ్లిపోతున్నారు
+      - தலைமை நிர்வாகி விலகுகிறார்
+
+  - id: mn-013
+    note: client order information passed on
+    severity: high
+    weight: 0.8
+    terms:
+      - a large order is coming
+      - big order about to hit
+      - बड़ा ऑर्डर आने वाला है
+      - పెద్ద ఆర్డర్ రాబోతోంది
+      - பெரிய ஆர்டர் வரவிருக்கிறது
+      - bada order aane wala hai
+
+  - id: mn-014
+    note: index inclusion or exclusion before publication
+    severity: medium
+    weight: 0.65
+    terms:
+      - index inclusion before announcement
+      - will be added to the index
+      - इंडेक्स में शामिल होगा
+      - సూచీలో చేరుతుంది
+      - குறியீட்டில் சேர்க்கப்படும்
+
+  - id: mn-015
+    note: instruction to route the trade through someone else
+    severity: high
+    weight: 0.75
+    terms:
+      - put it through another account
+      - kisi aur ke account se karo
+      - किसी और के खाते से करो
+      - వేరే ఖాతా ద్వారా చేయి
+      - வேறு கணக்கில் செய்
+
+  - id: mn-016
+    note: tipping a third party
+    severity: high
+    weight: 0.8
+    terms:
+      - tell your friend to buy
+      - pass it to him quietly
+      - अपने दोस्त को बता दो
+      - चुपचाप बता देना
+      - మీ స్నేహితుడికి చెప్పు
+      - உங்கள் நண்பரிடம் சொல்லுங்கள்
+
+  - id: mn-017
+    note: material contract win before disclosure
+    severity: medium
+    weight: 0.7
+    terms:
+      - they have won the contract
+      - order win not announced
+      - ठेका मिल गया है
+      - కాంట్రాక్ట్ వచ్చింది
+      - ஒப்பந்தம் கிடைத்துவிட்டது
+
+  - id: mn-018
+    note: explicit acknowledgement of insider status
+    severity: high
+    weight: 0.85
+    terms:
+      - this is insider information
+      - that would be insider trading
+      - यह अंदरूनी जानकारी है
+      - ఇది లోపలి సమాచారం
+      - இது உள்நபர் தகவல்
+      - insider info hai
+
+  - id: mn-019
+    note: urging speed because of the information
+    severity: medium
+    weight: 0.65
+    terms:
+      - do it before the news
+      - khabar se pehle kar do
+      - ख़बर से पहले कर दो
+      - వార్తకు ముందే చేయి
+      - செய்தி வருவதற்கு முன் செய்
+
+  - id: mn-020
+    note: dividend or buyback before announcement
+    severity: medium
+    weight: 0.65
+    terms:
+      - buyback is coming
+      - special dividend before announcement
+      - बायबैक आने वाला है
+      - బైబ్యాక్ రాబోతోంది
+      - பங்கு மீள்கொள்முதல் வரவிருக்கிறது
+
+  - id: mn-021
+    note: due diligence material referenced
+    severity: medium
+    weight: 0.6
+    terms:
+      - saw the data room
+      - due diligence file
+      - डेटा रूम देखा
+      - డేటా రూమ్ చూశాను
+      - தரவு அறையை பார்த்தேன்
+
+  - id: mn-022
+    note: instruction to delete the evidence
+    severity: high
+    weight: 0.85
+    terms:
+      - delete this message
+      - clear the chat
+      - मैसेज मिटा दो
+      - चैट साफ़ कर दो
+      - సందేశం తొలగించు
+      - செய்தியை நீக்கு
+
+  - id: mn-023
+    note: non-public credit or default news
+    severity: high
+    weight: 0.75
+    terms:
+      - they are about to default
+      - rating will be cut
+      - डिफ़ॉल्ट होने वाला है
+      - రేటింగ్ తగ్గుతుంది
+      - மதிப்பீடு குறைக்கப்படும்
+
+  - id: mn-024
+    note: any non-public marker within a short span of a trade verb
+    severity: high
+    weight: 0.8
+    terms: []
+    regex: '\b(?:not\s+public|unpublished|before\s+(?:the\s+)?(?:announcement|release|news))\b[^.!?]{0,60}\b(?:buy|sell|short|position|trade|exit)\b'
+
+  - id: mn-025
+    note: a trade verb followed closely by a non-public marker
+    severity: high
+    weight: 0.8
+    terms: []
+    regex: '\b(?:buy|sell|short|take\s+a\s+position|exit)\b[^.!?]{0,60}\b(?:not\s+public|unpublished|before\s+(?:the\s+)?(?:announcement|release|news))\b'
+
+  - id: mn-026
+    note: pre-publication research or rating change
+    severity: medium
+    weight: 0.6
+    terms:
+      - our note goes out tomorrow
+      - upgrade before the report
+      - रिपोर्ट से पहले
+      - నివేదికకు ముందు
+      - அறிக்கைக்கு முன்

@@ -1,0 +1,314 @@
+# DRAFT -- owned by Compliance, not by engineering. See guaranteed_returns.yaml
+# for the schema and the governance rule (PRD E7).
+#
+# This category is the one most likely to produce false positives on ordinary
+# speech, and the one where a false positive does the most harm to the person
+# named. Weights are deliberately lower than the other five: Stage 0 here is a
+# pointer for a human, never a finding.
+category: conduct
+status: draft
+owner: compliance
+description: >
+  Harassment, discrimination, retaliation and abusive behaviour towards
+  colleagues, including instructions to disadvantage someone for raising a
+  concern.
+entries:
+  - id: cd-001
+    note: retaliation through an appraisal or rating
+    severity: high
+    weight: 0.85
+    terms:
+      - make sure her appraisal reflects it
+      - put it in his appraisal
+      - fix her rating
+      - she will learn
+      - उसकी अप्रेज़ल में दिखा देना
+      - अप्रैज़ल में दिखा दूँगा
+      - समझ जाएगी
+      - అప్రైజల్‌లో చూపించు
+      - అర్థమవుతుంది
+      - அவளுடைய மதிப்பீட்டில் காட்டு
+      - புரிந்துகொள்வாள்
+      - appraisal mein dikha dena
+
+  - id: cd-002
+    note: retaliation for raising a concern
+    severity: high
+    weight: 0.9
+    terms:
+      - if she raises it again
+      - because she complained
+      - he escalated so now
+      - अगर उसने फिर से यह बात उठाई
+      - शिकायत की इसलिए
+      - మళ్ళీ ఈ విషయం లేవనెత్తితే
+      - ఫిర్యాదు చేసింది కాబట్టి
+      - மீண்டும் இதைக் கேட்டால்
+      - புகார் செய்ததால்
+
+  - id: cd-003
+    note: exclusion by community, caste, religion or region
+    severity: high
+    weight: 0.95
+    terms:
+      - not from that community
+      - do not put anyone from that community
+      - they do not fit here
+      - people like them
+      - उस समुदाय से किसी को मत रखो
+      - यहाँ फ़िट नहीं होते
+      - इस जाति के लोग
+      - ఆ వర్గం నుండి ఎవరినీ పెట్టవద్దు
+      - ఇక్కడ సరిపోరు
+      - அந்தச் சமூகத்திலிருந்து யாரையும் சேர்க்காதே
+      - இங்கு பொருந்த மாட்டார்கள்
+      - us community se kisi ko mat rakho
+
+  - id: cd-004
+    note: exclusion by gender or family status
+    severity: high
+    weight: 0.9
+    terms:
+      - do not hire a woman for this desk
+      - she will go on maternity
+      - married woman will not travel
+      - महिला को इस डेस्क पर मत रखो
+      - शादीशुदा है यात्रा नहीं करेगी
+      - మహిళను ఈ డెస్క్‌లో పెట్టవద్దు
+      - பெண்ணை இந்த மேசையில் வைக்காதே
+
+  - id: cd-005
+    note: shouting or verbal abuse
+    severity: high
+    weight: 0.8
+    terms:
+      - keep shouting at him
+      - shout until he stops
+      - चिल्लाते रहो
+      - डाँटते रहो
+      - అరుస్తూ ఉండు
+      - கத்திக்கொண்டே இரு
+
+  - id: cd-006
+    note: silencing questions in a meeting
+    severity: medium
+    weight: 0.7
+    terms:
+      - until he stops asking questions
+      - shut him up in the standup
+      - सवाल पूछना बंद कर दे
+      - ప్రశ్నలు అడగడం ఆపేలా
+      - கேள்வி கேட்பதை நிறுத்தும் வரை
+
+  - id: cd-007
+    note: age-based exclusion
+    severity: medium
+    weight: 0.75
+    terms:
+      - too old for this team
+      - we want young people only
+      - इस टीम के लिए बहुत बूढ़ा
+      - ఈ జట్టుకు చాలా వయసు
+      - இந்த அணிக்கு வயதானவர்
+
+  - id: cd-008
+    note: threatening someone's job
+    severity: high
+    weight: 0.85
+    terms:
+      - he will not have a job here
+      - i will make sure she leaves
+      - नौकरी नहीं रहेगी
+      - मैं उसे निकलवा दूँगा
+      - ఉద్యోగం ఉండదు
+      - வேலை இருக்காது
+
+  - id: cd-009
+    note: unwelcome personal remarks
+    severity: high
+    weight: 0.8
+    terms:
+      - comment on how she looks
+      - what she was wearing
+      - वह कैसी दिखती है
+      - क्या पहन कर आई थी
+      - ఆమె ఎలా కనిపిస్తుంది
+      - அவள் எப்படி இருக்கிறாள்
+
+  - id: cd-010
+    note: pressure to socialise or drink
+    severity: medium
+    weight: 0.6
+    terms:
+      - she has to come for drinks
+      - team dinner mein aana hi padega
+      - आना ही पड़ेगा
+      - రావాల్సిందే
+      - வரவேண்டும்
+
+  - id: cd-011
+    note: instruction to isolate a colleague
+    severity: high
+    weight: 0.8
+    terms:
+      - keep her out of the meetings
+      - do not include him
+      - मीटिंग से बाहर रखो
+      - సమావేశాల నుండి దూరంగా ఉంచు
+      - கூட்டங்களில் இருந்து விலக்கி வை
+
+  - id: cd-012
+    note: mocking language or accent
+    severity: medium
+    weight: 0.7
+    terms:
+      - his english is a joke
+      - accent ka mazaak
+      - उसकी अंग्रेज़ी का मज़ाक
+      - అతని ఇంగ్లీష్ గురించి ఎగతాళి
+      - அவரது ஆங்கிலத்தை கேலி
+
+  - id: cd-013
+    note: disability-based exclusion
+    severity: high
+    weight: 0.85
+    terms:
+      - cannot handle the pressure because of his condition
+      - उसकी हालत की वजह से
+      - అతని పరిస్థితి కారణంగా
+      - அவரது நிலை காரணமாக
+
+  - id: cd-014
+    note: discouraging a complaint to HR
+    severity: high
+    weight: 0.9
+    terms:
+      - do not go to hr
+      - hr tak mat jao
+      - एचआर तक मत जाओ
+      - హెచ్‌ఆర్ దగ్గరికి వెళ్లవద్దు
+      - எச்ஆரிடம் செல்ல வேண்டாம்
+
+  - id: cd-015
+    note: promising favour for silence
+    severity: high
+    weight: 0.85
+    terms:
+      - keep quiet and i will look after you
+      - chup raho main dekh loonga
+      - चुप रहो मैं देख लूँगा
+      - మౌనంగా ఉండు నేను చూసుకుంటాను
+      - அமைதியாக இரு நான் பார்த்துக்கொள்கிறேன்
+
+  - id: cd-016
+    note: assigning menial work as punishment
+    severity: medium
+    weight: 0.7
+    terms:
+      - give her the filing work now
+      - ab usse chhota kaam do
+      - अब उसे छोटा काम दो
+      - ఇప్పుడు చిన్న పని ఇవ్వు
+      - இப்போது சிறிய வேலை கொடு
+
+  - id: cd-017
+    note: spreading rumours about a colleague
+    severity: medium
+    weight: 0.65
+    terms:
+      - tell everyone what she did
+      - sabko bata do
+      - सबको बता दो
+      - అందరికీ చెప్పు
+      - எல்லோரிடமும் சொல்
+
+  - id: cd-018
+    note: blocking a transfer or promotion out of spite
+    severity: high
+    weight: 0.8
+    terms:
+      - block his transfer
+      - promotion rok do
+      - प्रमोशन रोक दो
+      - పదోన్నతి ఆపు
+      - பதவி உயர்வை நிறுத்து
+
+  - id: cd-019
+    note: threats of physical intimidation
+    severity: high
+    weight: 0.95
+    terms:
+      - i will deal with him outside
+      - bahar dekh loonga
+      - बाहर देख लूँगा
+      - బయట చూసుకుంటాను
+      - வெளியே பார்த்துக்கொள்கிறேன்
+
+  - id: cd-020
+    note: pressuring someone to withdraw a statement
+    severity: high
+    weight: 0.85
+    terms:
+      - make her take the complaint back
+      - shikayat wapas karwao
+      - शिकायत वापस करवाओ
+      - ఫిర్యాదు వెనక్కి తీసుకునేలా చేయి
+      - புகாரை திரும்பப் பெறச் செய்
+
+  - id: cd-021
+    note: derogatory reference to maternity or caregiving
+    severity: high
+    weight: 0.8
+    terms:
+      - she is always on leave for the child
+      - bacche ke liye chhutti
+      - बच्चे के लिए हमेशा छुट्टी
+      - పిల్లల కోసం ఎప్పుడూ సెలవు
+      - குழந்தைக்காக எப்போதும் விடுப்பு
+
+  - id: cd-022
+    note: retaliation marker near a person-directed consequence
+    severity: high
+    weight: 0.85
+    terms: []
+    regex: '\b(?:complain\w*|raise[sd]?\s+it|escalat\w+|report\w*\s+(?:it|me|us))\b[^.!?]{0,70}\b(?:apprais\w+|rating|bonus|promotion|transfer|fire[d]?|exit)\b'
+
+  - id: cd-023
+    note: group noun near an exclusion verb
+    severity: high
+    weight: 0.9
+    terms: []
+    regex: '\b(?:community|caste|religion|region|state|gender|women|muslims?|hindus?|christians?)\b[^.!?]{0,50}\b(?:do\s+not\s+(?:hire|put|take)|never\s+hire|not\s+suitable|do\s+not\s+fit)\b'
+
+  - id: cd-024
+    note: dismissing a concern as oversensitivity
+    severity: low
+    weight: 0.4
+    terms:
+      - she is too sensitive
+      - cannot take a joke
+      - मज़ाक भी नहीं समझती
+      - ఆమె చాలా సున్నితం
+      - அவள் மிகவும் உணர்ச்சிவசப்படுகிறாள்
+
+  - id: cd-025
+    note: instruction to document someone falsely
+    severity: high
+    weight: 0.9
+    terms:
+      - build a file on him
+      - uske khilaf file banao
+      - उसके ख़िलाफ़ फ़ाइल बनाओ
+      - అతనిపై ఫైల్ తయారు చేయి
+      - அவருக்கு எதிராக கோப்பு உருவாக்கு
+
+  - id: cd-026
+    note: excluding someone from client contact on a protected ground
+    severity: high
+    weight: 0.85
+    terms:
+      - client will not be comfortable with her
+      - client comfortable nahi hoga
+      - क्लाइंट सहज नहीं होगा
+      - క్లయింట్ సౌకర్యంగా ఉండరు
+      - வாடிக்கையாளர் வசதியாக இருக்க மாட்டார்
