@@ -486,48 +486,55 @@ async def test_ten_thousand_rows_verify_in_under_ten_seconds() -> None:
     """
     import time
 
+    from indic_platform.db.models import AnalysisRun
     from sqlalchemy import text
 
     _skip_without_db()
     engine, factory = await _engine()
+    rows: list[Any] = []
+    start_head = audit.GENESIS
     try:
         call_id = await _seed_call(factory)
         async with factory() as db:
             start_head = await audit.head(db, "analysis_runs")
 
+        # Build the rows through the same functions the verifier uses. A
+        # hand-written dict of "the columns that get hashed" is a second copy
+        # of `row_payload`, maintained by hand, and it has now been wrong twice:
+        # once binding {} while hashing {"flags": []}, and once omitting the
+        # `_hash_schema` key that pinning the hashed columns introduced. Both
+        # times the chain correctly reported tampering and the fixture was the
+        # thing at fault. Derive it instead, so the two cannot drift.
         rows = []
         prev = start_head
-        now = datetime.now(UTC)
         for _ in range(10_000):
-            row = {
-                "id": uuidlib.uuid4(),
-                "call_id": call_id,
-                "stage": "triage",
-                "model": "claude-haiku-4-5",
-                "policy_version": "p1",
-                "lexicon_version": "l1",
-                "prompt_version": "pr1",
-                "input_sha256": "0" * 64,
-                "output": {"flags": []},
-                "created_at": now,
-            }
-            digest = audit.row_hash(prev, row)
-            rows.append({**row, "prev_hash": prev, "row_hash": digest})
+            row = _run(call_id)
+            audit.materialise_defaults(row)
+            digest = audit.row_hash(prev, audit.row_payload(row))
+            row.prev_hash = prev
+            row.row_hash = digest
+            rows.append(row)
             prev = digest
 
+        columns = [c.name for c in AnalysisRun.__table__.columns if c.name != "seq"]
+        bound = [
+            {
+                name: (json.dumps(getattr(row, name)) if name == "output" else getattr(row, name))
+                for name in columns
+            }
+            for row in rows
+        ]
         async with factory() as db:
             await db.execute(
                 text(
-                    "insert into analysis_runs (id, call_id, stage, model, policy_version,"
-                    " lexicon_version, prompt_version, input_sha256, output, created_at,"
-                    " prev_hash, row_hash) values (:id, :call_id, :stage, :model, :policy_version,"
-                    " :lexicon_version, :prompt_version, :input_sha256, cast(:output as jsonb),"
-                    " :created_at, :prev_hash, :row_hash)"
+                    f"insert into analysis_runs ({', '.join(columns)}) values ("
+                    + ", ".join(
+                        f"cast(:{name} as jsonb)" if name == "output" else f":{name}"
+                        for name in columns
+                    )
+                    + ")"
                 ),
-                # Bind exactly what was hashed. An earlier version hashed
-                # {"flags": []} and inserted {}, which the chain correctly
-                # reported as tampering -- the fixture was wrong, not the code.
-                [{**r, "output": json.dumps(r["output"])} for r in rows],
+                bound,
             )
             await db.commit()
 
@@ -543,22 +550,22 @@ async def test_ten_thousand_rows_verify_in_under_ten_seconds() -> None:
         assert result.rows >= 10_000
         assert result.ok, result.reason
         assert elapsed < 10.0, f"{result.rows} rows took {elapsed:.2f}s"
-
-        # Remove exactly the rows this test appended, restoring the head it
-        # started from. Left behind, they accumulate on any database that is
-        # not thrown away after the run, and the measured number drifts upward
-        # until the criterion fails for a reason that has nothing to do with
-        # the code. Deleting the tail is safe precisely because it *is* the
-        # tail: the chain returns to the state it was in before.
-        async with factory() as db:
-            await db.execute(
-                text("delete from analysis_runs where id = any(:ids)"),
-                {"ids": [r["id"] for r in rows]},
-            )
-            await db.commit()
-        async with factory() as db:
-            assert (await audit.head(db, "analysis_runs")) == start_head
     finally:
+        # In the `finally`, not after the assertions. Ten thousand rows left
+        # behind are not a tidiness problem: they are the tail of a shared
+        # chain, so one failure here reappears as a break in every later test
+        # that walks `analysis_runs`. That is what turned a single wrong
+        # fixture into four red tests. Deleting exactly the rows this test
+        # added restores the head it started from.
+        if rows:
+            async with factory() as db:
+                await db.execute(
+                    text("delete from analysis_runs where id = any(:ids)"),
+                    {"ids": [row.id for row in rows]},
+                )
+                await db.commit()
+            async with factory() as db:
+                assert (await audit.head(db, "analysis_runs")) == start_head
         await engine.dispose()
 
 
@@ -773,3 +780,33 @@ async def test_the_nightly_job_only_moves_the_anchor_forward_on_a_clean_chain() 
             await db.commit()
     finally:
         await engine.dispose()
+
+
+def test_a_payload_built_by_hand_does_not_match_one_built_by_row_payload() -> None:
+    """Fixtures must hash through `row_payload`, never a hand-written dict.
+
+    Twice now a test has assembled "the columns that get hashed" itself, and
+    twice the chain has correctly called the result tampering: first when it
+    bound `{}` while hashing `{"flags": []}`, then when pinning the hashed
+    columns added `_hash_schema` and the hand-built copy did not have it. Both
+    cost a full integration run to find, because the disagreement only shows up
+    against a real database.
+
+    This is that failure made pure: if the payload ever grows a key a hand-built
+    dict would miss, this goes red in milliseconds rather than in CI.
+    """
+    from indic_platform.db.models import AnalysisRun
+
+    row = AnalysisRun(call_id=uuidlib.uuid4(), stage="triage", model="m")
+    audit.materialise_defaults(row)
+
+    derived = audit.row_payload(row)
+    by_hand = {
+        name: getattr(row, name)
+        for name in AnalysisRun.__table__.columns.keys()
+        if name not in audit.NOT_HASHED
+    }
+
+    assert "_hash_schema" in derived
+    assert "_hash_schema" not in by_hand
+    assert audit.row_hash("", derived) != audit.row_hash("", by_hand)
