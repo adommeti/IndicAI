@@ -549,3 +549,61 @@ async def decide(utterance: str, language: str, history: list[Any]) -> dict[str,
         "model": MODEL,
         "prompt_version": PROMPT_VERSION,
     }
+
+
+def _payload(result: TurnState) -> dict[str, Any]:
+    """The reply shape every decision stage returns; keep in step with `decide`."""
+    decision = result["decision"]
+    assert decision is not None
+    return {
+        "action": decision.action,
+        "reply": decision.reply_text,
+        "article_ids": [c.article_id for c in result["chunks"]],
+        "article_aliases": [c.aliases for c in result["chunks"]],
+        "model": MODEL,
+        "prompt_version": PROMPT_VERSION,
+    }
+
+
+def session_decide(
+    session_id: str, employee_id: str
+) -> Callable[[str, str, list[Any]], Awaitable[dict[str, Any]]]:
+    """A `decide`-shaped stage bound to a real session and a real employee.
+
+    `decide` is the *eval* entry point: it takes the `initial_state` defaults, which mint
+    a fresh `session_id` and attribute the turn to the literal employee ``"eval"``. That
+    is correct for the offline runner and wrong for a voice call -- used there, every
+    turn opens a brand new session row owned by nobody, `turn_index` is always 0, and the
+    session identity `voice_pipeline.run_session` was given is discarded. So a live call
+    binds its stage here instead, exactly as `api.chat_turn` binds a chat turn: build the
+    state with `initial_state`, then override the two identity fields.
+
+    The returned coroutine keeps `voice_pipeline.DecideCallable`'s contract
+    ``(utterance, language, history) -> dict`` and adds one key, ``turn_index``: the
+    0-based position of the row this turn just wrote, in the ordering
+    `persistence.run_turn` uses to rebuild history. That is the address a later voice
+    latency write needs (`persistence.record_voice_latency`), and it is returned rather
+    than looked up because only this closure knows which turn it just wrote.
+
+    The count lives in the closure, not in a query: `run_turn` has already committed by
+    the time it returns, so a count-back would race with any concurrent turn on the same
+    session and would cost a round trip to learn what the caller already knows. It
+    advances only when `run_turn` *returns*: a turn that raised wrote nothing (its
+    transaction rolled back, session row included), so the next turn is still the first.
+    """
+    turns = 0
+
+    async def bound(utterance: str, language: str, history: list[Any]) -> dict[str, Any]:
+        nonlocal turns
+        from helpdesk_agent.persistence import run_turn
+
+        normalized = [h if isinstance(h, dict) else {"utterance": str(h)} for h in history]
+        state = initial_state(utterance, language, normalized)
+        state["session_id"] = session_id
+        state["employee_id"] = employee_id
+        index = turns
+        result = await run_turn(state, existing=index > 0)
+        turns = index + 1
+        return {**_payload(result), "turn_index": index}
+
+    return bound

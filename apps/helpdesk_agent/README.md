@@ -228,3 +228,102 @@ numbers, email addresses or national IDs detected by
 those values are not expected to reach Zammad. That is a detector, not a proof —
 treat the Zammad instance as holding employee personal data and scope its access
 and retention accordingly.
+
+## Voice channel (P5)
+
+The voice path is `apps/helpdesk_agent/voice_pipeline.py`: LiveKit audio in → Silero VAD →
+Saaras streaming STT → `graph.decide` → Bulbul streaming TTS → LiveKit audio out, with
+partial transcripts published to the room as data messages.
+
+Per-stage timings are merged into that turn's `turns.latency_ms` under a `voice.` prefix
+(`voice.vad_ms`, `voice.stt_ms`, `voice.decide_ms`, `voice.tts_ms`,
+`voice.time_to_first_audio_ms`), so they cannot collide with the stage timings the graph
+already writes into the same JSONB. It is an UPDATE in its own transaction rather than part
+of the turn's insert, because `run_turn` commits the row while `decide` is still on the
+stack and the audio numbers do not exist until first audio has been emitted. It is also why
+`run_session` defaults its decision stage to `graph.session_decide(session_id, employee_id)`
+rather than `graph.decide`: the latter is the eval entry point, whose `initial_state`
+defaults mint a fresh session per turn attributed to the literal employee `eval`, leaving no
+row a latency could belong to. **None of this has been exercised against a live room** —
+the database half is covered by integration tests, the voice half is not. LiveKit runs
+locally from `docker-compose.yml`
+(`livekit/livekit-server:v1.9.0`, config `infra/livekit.yaml`, loopback-bound on 7880/7881
+plus UDP 50100-50120) and starts with `make stack-voice`. `make voice-test` is the latency
+harness; `apps/helpdesk_agent/voice_demo.md` is the manual browser demo.
+
+Neither the latency gates nor the browser demo has been run: the build session had no Docker
+daemon, so both are UNMEASURED and listed in `docs/build/BLOCKERS.md`.
+
+### The greeting is the consent notice
+
+The short recording that plays when a participant joins is not a nicety. It is the notice on
+which the lawfulness of recording and transcribing the call rests (PRD C8: "the greeting
+states the call is recorded and transcribed"). It has to play **before** the pipeline
+consumes any microphone audio, so an employee who does not want to be recorded can leave
+before anything reaches a vendor. A notice that plays after the first utterance has already
+been streamed to Saaras has notified nobody of anything.
+
+Three behaviours follow from taking that seriously, all in `GreetingGate`:
+
+- **It plays on participant join, not on pipeline start.** The agent is dispatched into a
+  room rather than summoned into one, and the output transport acknowledges playback whether
+  or not anybody is subscribed — so a notice played at pipeline start can play to an empty
+  room, be "confirmed", and leave the gate open before the employee arrives.
+- **A late joiner gets it too.** Every join re-plays the notice and re-closes the gate. A
+  supervisor who joins a call in progress was not covered by a notice given before they
+  arrived.
+- **An unconfirmed notice fails closed.** If the transport never reports playback finishing,
+  the gate stays shut for the life of the session, publishes `notice: unconfirmed` to the
+  room after 30 seconds, and captures nothing. The cost of failing closed is one lost
+  session; the cost of failing open is recording someone who was never told. This is also why the greeting should be a recorded
+file rather than text synthesized per session: the wording is reviewed and approved once,
+and it does not drift, get retranslated, or fail to play because a TTS call errored.
+
+**There is no greeting asset in this repository.** The only committed audio is the 155 golden
+WAVs under `platform/eval/golden/**` and three Bulbul voice samples under
+`docs/adr/assets/0003/`; none is a notice. `VoiceSettings.greeting_path` defaults to `None`,
+and `run_session` resolves that default the only safe way it can: `load_greeting(None)` raises
+`GreetingUnavailable` before a token is minted or a room is joined, so a session with no notice
+does not start at all rather than starting without one. The same refusal covers a path that is
+missing, undecodable, or decodes to silence. That is a guard, not a substitute for the asset:
+recording the notice — text approved by Legal/HR, in each pilot language — is outstanding work,
+tracked in `docs/build/BLOCKERS.md`, not a configuration detail. Until it exists, the voice
+channel cannot be run at all. A synthesized stand-in is acceptable for demonstrating the
+mechanism and must be labelled as a stand-in.
+
+### Data classification for a voice turn
+
+What exists, where it goes, and how long it lives:
+
+| Data | Where it goes | Lifetime as built |
+|---|---|---|
+| Employee microphone audio (PCM16, 16 kHz mono) | over the LiveKit WebRTC session to the agent process, then streamed to **Sarvam** (Saaras) over TLS | in memory for the turn by design: no LiveKit egress or recording service exists in `docker-compose.yml` and the helpdesk app uses no MinIO bucket. Confirm against `voice_pipeline.py` before assuming a deployment keeps no audio; if one does, PRD C8's 30-day rule applies and the notice has to say so |
+| Partial and final transcript text | published into the LiveKit room as data messages (every participant in the room sees them); the final transcript goes to `graph.decide` | in the room only for the session |
+| Final transcript, stored as `turns.utterance` | platform Postgres, with `decision_json`, `retrieval_json`, `latency_ms`, model and prompt versions | **indefinite** — see retention below |
+| Transcript text sent to Claude | **Anthropic** (`claude-sonnet-5`), redacted first by `platform/adapters/claude.py` | per Anthropic's API terms |
+| Reply text sent to Bulbul | **Sarvam**, redacted first by `platform/adapters/sarvam_tts.py` | per Sarvam's terms |
+| Synthesized reply audio | LiveKit room → the employee's browser | not persisted here |
+| Latency, units and INR/USD cost | `adapter_calls` rows and Langfuse spans, metadata only — never audio, never transcript text | per the Langfuse retention you configure |
+| LiveKit join tokens | minted locally, signed with `LIVEKIT_API_SECRET` from `.env.stack` | short TTL; a token is a credential to hear the call |
+
+**Sarvam receives the audio itself, unredacted.** `indic_platform.security.redact` is a text
+hook — its own docstring says audio is not transcribed by it — so it protects the Claude leg
+and the TTS leg but can do nothing about what the microphone captured. Anything an employee
+says aloud, including a phone number or a national ID, reaches Saaras exactly as spoken.
+
+What bounds that exposure is the VAD gate rather than redaction. `SarvamSTTProcessor` opens a
+Saaras stream on `VADUserStartedSpeakingFrame` and closes it on `VADUserStoppedSpeakingFrame`,
+so an open room that nobody is speaking into streams nothing: between utterances the audio
+goes into a bounded pre-roll ring buffer (`PREROLL_MS`, discarded as it overflows) and never
+leaves the process. That is a privacy property first and a cost property second — Saaras is
+billed on audio duration (₹30/h, about ₹0.50/min), so a pipeline that streamed the whole
+session would bill for every silence as well as sending it. Per
+PRD B4/§227 Sarvam states India-hosted processing with no training on customer content; the
+Claude leg is the cross-border one and carries redacted text only. No redaction override is
+enabled for this app.
+
+**Retention is specified but not implemented.** PRD C8 requires audio deleted after 30 days
+and transcripts after 90, by a scheduled job with logged deletions. That job is uc1/P7 and is
+still pending, so today nothing deletes a `turns` row: transcripts persist until someone
+removes them. Do not point this at real employees before that job exists — a surveillance-
+adjacent path with a consent notice and no deletion is precisely threat T5 (over-retention).

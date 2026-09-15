@@ -64,7 +64,12 @@ jobs:
             [ -f "$pkg/package.json" ] || continue
             echo "== $pkg"; (cd "$pkg" && npm ci --no-audit --no-fund && npm run lint --if-present && npm run typecheck --if-present && npm run build --if-present && npm test --if-present -- --run)
           done
-      - run: uv run pip-audit --skip-editable --format cyclonedx-json --output sbom.json
+      # Ignored findings are justified one by one in docs/security/audit-exceptions.md,
+      # each with the reachability argument that makes it an exception rather than a
+      # silencing. Adding an id here without an entry there is not allowed.
+      - run: >
+          uv run pip-audit --skip-editable --ignore-vuln PYSEC-2026-3740
+          --format cyclonedx-json --output sbom.json
       - name: secret scan against baseline
         run: uv run detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
       - uses: actions/upload-artifact@v4

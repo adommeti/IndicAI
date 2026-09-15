@@ -38,4 +38,10 @@ markers = [
   "slow: live vendor calls; requires LIVE_API_TESTS=1",
   "integration: needs the local Docker stack (postgres, redis, qdrant, minio, tei)",
   "ticketing: needs the `ticketing` compose profile (Zammad); not provisioned in CI",
+  # `voice` is deliberately NOT `integration`. CI provisions postgres/redis/qdrant but no
+  # LiveKit, and the integration job fails on ANY skip (uc3/P5's evidence guard), so a
+  # LiveKit-dependent test carrying `integration` would turn CI red for a service that was
+  # never going to be there. `make voice-test` is this marker's runner, and it must be
+  # deselected everywhere `integration` and `ticketing` are.
+  "voice: needs a running LiveKit room (`make stack-voice`); not provisioned in CI",
 ]

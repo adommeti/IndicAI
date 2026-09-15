@@ -2,7 +2,18 @@
 name = "helpdesk-agent"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["indic-platform", "fastapi", "langgraph", "langid", "sqlalchemy[asyncio]"]
+dependencies = [
+    "indic-platform",
+    "fastapi",
+    "langgraph",
+    "langid",
+    "sqlalchemy[asyncio]",
+    "pipecat-ai[silero]>=0.0.60",
+    "livekit>=1.1.18",
+    "livekit-api>=1.2.1",
+    "soundfile>=0.13.1",
+    "soxr>=1.0.0",
+]
 [tool.uv.sources]
 indic-platform = { workspace = true }
 [build-system]
