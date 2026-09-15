@@ -12,15 +12,26 @@ integration job fails on ANY skip (uc3/P5's evidence guard), so a LiveKit-depend
 carrying the ``integration`` marker turns CI red for a service that was never going to be
 there. ``make voice-test`` is the runner for the ``voice`` marker.
 
-The tests below assert behaviour, not references. "The greeting is played" is not the
-property that matters -- "no user audio is consumed until it has" is, so the ordering
-assertions count frames on both sides of the gate rather than looking for the file.
+Two habits run through the file.
+
+*Assert behaviour, not references.* "The greeting is played" is not the property that
+matters -- "no user audio is consumed until it has" is -- so the ordering assertions count
+frames on both sides of the gate rather than looking for the file.
+
+*Wait for conditions, never for the clock.* Half of this pipeline runs in background tasks
+(the STT stream, the graph call, synthesis), so a script of frames separated by fixed
+sleeps pins the machine the test ran on rather than the behaviour. The first version of
+this file did exactly that and passed alone while failing inside the full suite, where
+everything is slower. :func:`drive` therefore takes a script whose steps are either frames
+to queue or conditions to wait for, and :func:`until` polls a predicate with a generous
+timeout and a named failure -- so a genuine hang reports what it was waiting for instead
+of a mystery assertion three lines later.
 """
 
 import asyncio
 import contextlib
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +57,7 @@ from loguru import logger
 from pipecat.audio.vad.vad_analyzer import VADAnalyzer
 from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
+    EndFrame,
     Frame,
     InterimTranscriptionFrame,
     OutputTransportMessageFrame,
@@ -56,8 +68,9 @@ from pipecat.frames.frames import (
     VADUserStoppedSpeakingFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.worker import PipelineWorker
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.tests.utils import SleepFrame, run_test
+from pipecat.workers.runner import WorkerRunner
 
 pytestmark = pytest.mark.asyncio
 
@@ -180,6 +193,64 @@ async def decide_ok(utterance: str, language: str, history: list[dict[str, Any]]
     return {"action": "answer", "reply": REPLY, "model": "claude-sonnet-5", "prompt_version": "ab"}
 
 
+# --------------------------------------------------------------------------------------
+# Harness: a script of frames and conditions, never of sleeps.
+# --------------------------------------------------------------------------------------
+
+Step = Frame | Callable[[], bool]
+
+
+def until(predicate: Callable[[], bool], label: str) -> Callable[[], bool]:
+    """Mark a script step as 'wait for this, then continue'. ``label`` names the wait."""
+    predicate.__doc__ = label
+    return predicate
+
+
+async def _wait(predicate: Callable[[], bool], limit: float = 10.0) -> None:
+    """Poll ``predicate`` until it holds, or fail naming what was being waited for.
+
+    ASYNC110 would prefer an ``asyncio.Event``, and it is right in general -- but the
+    conditions here read plain counters and flags on the processors under test
+    (``gate.blocked``, ``stt.chunks_pulled``, ``processor.listening``). Turning each of
+    those into an event would mean adding test-only signalling to production code, which
+    is a worse trade than a 5 ms poll in a test helper.
+    """
+    try:
+        async with asyncio.timeout(limit):
+            while not predicate():  # noqa: ASYNC110 - polls test doubles, not an event source
+                await asyncio.sleep(0.005)
+    except TimeoutError:
+        raise AssertionError(f"timed out after {limit}s waiting for: {predicate.__doc__}") from None
+
+
+async def drive(pipeline: Pipeline, script: Sequence[Step]) -> None:
+    """Run ``pipeline``, queueing frames and awaiting conditions in script order.
+
+    The generous 10 s per-condition timeout is not slack: these conditions are reached in
+    milliseconds, and the timeout exists only so a genuine deadlock fails with the name of
+    what it was waiting for rather than hanging the suite.
+    """
+    worker = PipelineWorker(pipeline, cancel_on_idle_timeout=False)
+    started = asyncio.Event()
+
+    @worker.event_handler("on_pipeline_started")
+    async def _on_started(worker: PipelineWorker, frame: Frame) -> None:
+        started.set()
+
+    async def play() -> None:
+        await asyncio.wait_for(started.wait(), timeout=10.0)
+        for step in script:
+            if callable(step):
+                await _wait(step)
+            else:
+                await worker.queue_frame(step)
+        await worker.queue_frame(EndFrame())
+
+    runner = WorkerRunner()
+    await runner.add_workers(worker)
+    await asyncio.gather(runner.run(), play())
+
+
 def make_pipeline(
     *,
     stt: Any = None,
@@ -228,16 +299,32 @@ def messages(frames: Sequence[Frame], kind: str | None = None) -> list[dict[str,
     return [m for m in out if kind is None or m.get("type") == kind]
 
 
-def one_turn(*, tail_sleep: float = 0.3) -> list[Frame]:
-    """A complete turn: notice acknowledged, then speech, then end of speech."""
+def consented(gate: GreetingGate) -> list[Step]:
+    """Get past the consent notice: acknowledge playback, wait for the gate to open."""
     return [
         BotStoppedSpeakingFrame(),
-        SleepFrame(0.05),
+        until(lambda: gate.opened, "the consent notice to be acknowledged"),
+    ]
+
+
+def one_turn(gate: GreetingGate, stt: SarvamSTTProcessor, *, index: int = 0) -> list[Step]:
+    """One complete utterance, waiting for each stage rather than sleeping through it.
+
+    Every wait is a lambda evaluated when the step is reached, not a value captured while
+    the script is being built -- a second turn's target has to count the first turn's two
+    frames, and a snapshot taken at build time would already be satisfied and wait for
+    nothing.
+    """
+    return [
+        *(consented(gate) if index == 0 else []),
         VADUserStartedSpeakingFrame(),
+        until(lambda: stt.streams_opened > index, f"utterance {index} to open a stream"),
         *audio(2),
-        SleepFrame(0.05),
+        until(
+            lambda: stt.audio_frames_consumed >= 2 * (index + 1),
+            f"utterance {index}'s audio to be consumed",
+        ),
         VADUserStoppedSpeakingFrame(),
-        SleepFrame(tail_sleep),
     ]
 
 
@@ -258,15 +345,14 @@ async def test_no_user_audio_is_consumed_before_the_notice_has_played() -> None:
     gate: GreetingGate = parts["GreetingGate"]
     stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(
+    await drive(
         pipeline,
-        frames_to_send=[
+        [
             *audio(3),
-            SleepFrame(0.05),
-            BotStoppedSpeakingFrame(),
-            SleepFrame(0.05),
+            until(lambda: gate.blocked == 3, "three frames to be blocked at the gate"),
+            *consented(gate),
             *audio(2),
-            SleepFrame(0.05),
+            until(lambda: gate.forwarded == 2, "two frames to pass the opened gate"),
         ],
     )
 
@@ -280,17 +366,21 @@ async def test_no_user_audio_is_consumed_before_the_notice_has_played() -> None:
 async def test_the_notice_is_emitted_before_the_first_forwarded_audio_frame() -> None:
     """The notice's audio reaches the transport strictly before any user audio does."""
     pipeline, parts = make_pipeline()
+    gate: GreetingGate = parts["GreetingGate"]
     tail: Passthrough = parts["tail"]
 
-    await run_test(
+    await drive(
         pipeline,
-        frames_to_send=[
+        [
             *audio(2),
-            SleepFrame(0.05),
-            BotStoppedSpeakingFrame(),
-            SleepFrame(0.05),
+            until(lambda: gate.blocked == 2, "the pre-notice audio to be blocked"),
+            *consented(gate),
             *audio(2),
-            SleepFrame(0.05),
+            until(lambda: gate.forwarded == 2, "the post-notice audio to pass"),
+            until(
+                lambda: any(isinstance(f, UserAudioRawFrame) for f in tail.seen),
+                "user audio to reach the transport",
+            ),
         ],
     )
 
@@ -373,22 +463,25 @@ async def test_stt_failure_sends_chat_mode_and_stops_pulling_audio() -> None:
     stt = FakeSTT(fail=True, fail_after=1)
     pipeline, parts = make_pipeline(stt=stt)
     tail: Passthrough = parts["tail"]
+    gate: GreetingGate = parts["GreetingGate"]
     stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(
+    await drive(
         pipeline,
-        frames_to_send=[
-            BotStoppedSpeakingFrame(),
-            SleepFrame(0.05),
+        [
+            *consented(gate),
             VADUserStartedSpeakingFrame(),
+            until(lambda: stt_processor.streams_opened == 1, "the STT stream to open"),
             *audio(3),
-            SleepFrame(0.15),
-            # These five arrive while the pipeline is still running, after the stream
-            # has already raised. They are the assertion: nothing moves them.
-            *audio(5),
-            SleepFrame(0.15),
+            until(lambda: not stt_processor.listening, "the STT stream to fail"),
+            until(lambda: bool(messages(tail.seen, "mode")), "the chat-mode message"),
         ],
     )
+
+    # Everything after this point is measured against a pipeline that has already failed,
+    # so the counters are frozen rather than racing.
+    consumed_at_failure = stt_processor.audio_frames_consumed
+    pulled_at_failure = stt.chunks_pulled
 
     modes = messages(tail.seen, "mode")
     assert modes, "a dead STT must tell the client"
@@ -396,8 +489,8 @@ async def test_stt_failure_sends_chat_mode_and_stops_pulling_audio() -> None:
     assert modes[0]["reason"] == "stt_unavailable"
 
     assert stt_processor.listening is False
-    assert stt_processor.audio_frames_consumed <= 3, "frames after the failure are not consumed"
-    assert stt.chunks_pulled <= 2, "the adapter stops being fed once it has raised"
+    assert stt_processor.audio_frames_consumed == consumed_at_failure
+    assert stt.chunks_pulled == pulled_at_failure, "the adapter stops being fed once it raised"
     assert stt.calls == 1, "a dead STT is never re-opened within the session"
 
 
@@ -406,17 +499,21 @@ async def test_audio_after_stt_failure_never_reaches_the_transport() -> None:
     stt = FakeSTT(fail=True, fail_after=0)
     pipeline, parts = make_pipeline(stt=stt)
     tail: Passthrough = parts["tail"]
+    gate: GreetingGate = parts["GreetingGate"]
+    stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(
+    await drive(
         pipeline,
-        frames_to_send=[
-            BotStoppedSpeakingFrame(),
-            SleepFrame(0.05),
+        [
+            *consented(gate),
             VADUserStartedSpeakingFrame(),
+            until(lambda: stt_processor.streams_opened == 1, "the STT stream to open"),
             *audio(1),
-            SleepFrame(0.15),
+            until(lambda: not stt_processor.listening, "the STT stream to fail"),
+            until(lambda: bool(messages(tail.seen, "mode")), "the chat-mode message"),
+            # Sent strictly after the client has been told the room stopped listening.
             *audio(4),
-            SleepFrame(0.15),
+            until(lambda: gate.forwarded >= 5, "the post-failure audio to pass the gate"),
         ],
     )
 
@@ -427,28 +524,28 @@ async def test_audio_after_stt_failure_never_reaches_the_transport() -> None:
         and isinstance(f.message, dict)
         and f.message.get("type") == "mode"
     )
-    after = tail.seen[mode_index:]
-    assert not [f for f in after if isinstance(f, UserAudioRawFrame)]
+    assert not [f for f in tail.seen[mode_index:] if isinstance(f, UserAudioRawFrame)]
 
 
 async def test_a_new_utterance_after_stt_death_opens_no_stream() -> None:
     """VAD keeps firing after STT dies; the processor must not take that as a retry."""
     stt = FakeSTT(fail=True, fail_after=0)
     pipeline, parts = make_pipeline(stt=stt)
+    gate: GreetingGate = parts["GreetingGate"]
     stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(
+    await drive(
         pipeline,
-        frames_to_send=[
-            BotStoppedSpeakingFrame(),
-            SleepFrame(0.05),
+        [
+            *consented(gate),
             VADUserStartedSpeakingFrame(),
+            until(lambda: stt_processor.streams_opened == 1, "the STT stream to open"),
             *audio(1),
-            SleepFrame(0.15),
+            until(lambda: not stt_processor.listening, "the STT stream to fail"),
             VADUserStoppedSpeakingFrame(),
             VADUserStartedSpeakingFrame(),
             *audio(2),
-            SleepFrame(0.15),
+            until(lambda: gate.forwarded >= 3, "the second utterance's audio to pass the gate"),
         ],
     )
 
@@ -460,33 +557,34 @@ async def test_a_new_utterance_after_stt_death_opens_no_stream() -> None:
 async def test_an_open_room_with_nobody_speaking_opens_no_stt_stream() -> None:
     """Audio flows the whole time a room is open. Only VAD-delimited speech is streamed.
 
-    The gate has opened -- the notice has played -- so this is not the consent property
-    tested above; it is the one that holds for the rest of the call. LiveKit delivers
-    `InputAudioRawFrame`s continuously while a participant is connected, speaking or not,
-    and `SarvamSTTProcessor` sees every one of them. If it opened a stream on audio rather
-    than on `VADUserStartedSpeakingFrame`, an idle room would be transcribed end to end.
+    The gate has already opened -- the notice has played -- so this is not the consent
+    property tested above; it is the one that holds for the rest of the call. LiveKit
+    delivers ``InputAudioRawFrame``s continuously while a participant is connected,
+    speaking or not, and ``SarvamSTTProcessor`` sees every one of them. If it opened a
+    stream on audio rather than on ``VADUserStartedSpeakingFrame``, an idle room would be
+    transcribed end to end.
 
-    Two consequences, and the privacy one is the reason this test exists: everything said
-    in the room while nobody is addressing the agent would reach Sarvam, and Saaras bills
-    on audio duration (Rs 30/h, about Rs 0.50/min), so an open room would meter for as long
-    as it stayed open. Between utterances the audio goes to a bounded pre-roll ring buffer
-    and is discarded as it overflows.
+    Two consequences, and the privacy one is why this test exists: everything said in the
+    room while nobody is addressing the agent would reach Sarvam, and Saaras bills on audio
+    duration (Rs 30/h, about Rs 0.50/min), so an open room would meter for as long as it
+    stayed open. Between utterances the audio goes to a bounded pre-roll ring buffer and is
+    discarded as it overflows.
 
-    Sabotage check: opening the feed from `_accept` instead of `_start_utterance` fails
-    only this test and the pre-notice one -- which is why this test is here.
+    Sabotage check: opening the feed from ``_accept`` instead of ``_start_utterance`` fails
+    this test and the pre-notice one, and nothing else -- which is why this one is here.
     """
     stt = FakeSTT()
     pipeline, parts = make_pipeline(stt=stt)
+    gate: GreetingGate = parts["GreetingGate"]
     stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(
+    await drive(
         pipeline,
-        frames_to_send=[
-            BotStoppedSpeakingFrame(),
-            SleepFrame(0.05),
+        [
+            *consented(gate),
             # A connected participant, silent. No VAD frame is ever sent.
             *audio(40),
-            SleepFrame(0.2),
+            until(lambda: gate.forwarded >= 40, "every idle frame to reach the processor"),
         ],
     )
 
@@ -504,15 +602,26 @@ async def test_a_healthy_stt_publishes_partials_then_a_flagged_final() -> None:
     """Partials are published for the UI; the final one is flagged, and emitted once."""
     stt = FakeSTT(segments=("मेरा फ़ोन", UTTERANCE))
     pipeline, parts = make_pipeline(stt=stt)
+    gate: GreetingGate = parts["GreetingGate"]
     tail: Passthrough = parts["tail"]
+    stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    downstream, _ = await run_test(pipeline, frames_to_send=one_turn(tail_sleep=0.2))
+    await drive(
+        pipeline,
+        [
+            *one_turn(gate, stt_processor),
+            until(
+                lambda: any(m["final"] for m in messages(tail.seen, "transcript")),
+                "the final transcript",
+            ),
+        ],
+    )
 
     transcripts = messages(tail.seen, "transcript")
     assert [m["final"] for m in transcripts] == [False, False, True]
-    assert sum(isinstance(f, TranscriptionFrame) for f in downstream) == 1
-    assert sum(isinstance(f, InterimTranscriptionFrame) for f in downstream) == 2
-    final_frame = next(f for f in downstream if isinstance(f, TranscriptionFrame))
+    assert sum(isinstance(f, TranscriptionFrame) for f in tail.seen) == 1
+    assert sum(isinstance(f, InterimTranscriptionFrame) for f in tail.seen) == 2
+    final_frame = next(f for f in tail.seen if isinstance(f, TranscriptionFrame))
     assert final_frame.finalized is True
 
 
@@ -530,17 +639,24 @@ async def test_time_to_first_audio_is_measured_from_the_final_transcript() -> No
 
     tts = FakeTTS(delay_s=0.08)
     pipeline, parts = make_pipeline(tts=tts, on_turn=on_turn)
+    gate: GreetingGate = parts["GreetingGate"]
+    stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
     tts_processor: SarvamTTSProcessor = parts["SarvamTTSProcessor"]
 
-    await run_test(pipeline, frames_to_send=one_turn(tail_sleep=0.6))
+    await drive(
+        pipeline,
+        [
+            *one_turn(gate, stt_processor),
+            until(lambda: bool(recorded), "the turn's latencies to be reported"),
+        ],
+    )
 
-    assert recorded, "a completed turn reports its latencies"
     _, latency = recorded[0]
     measured = latency.measured()
     assert latency.time_to_first_audio_ms is not None
     # The fake TTS sleeps 80 ms before its first chunk. A figure below that is not a
     # measurement of anything; one far above it means the clock was started too early.
-    assert 80.0 <= latency.time_to_first_audio_ms < 2000.0
+    assert latency.time_to_first_audio_ms >= 80.0
     assert latency.tts_ms is not None
     assert latency.time_to_first_audio_ms >= latency.tts_ms
     assert set(measured) >= {"vad_ms", "stt_ms", "decide_ms", "tts_ms", "time_to_first_audio_ms"}
@@ -574,10 +690,24 @@ async def test_a_turn_with_no_speech_reports_no_transcript_and_no_audio_latency(
     async def on_turn(index: int, latency: StageLatency) -> None:
         recorded.append(latency)
 
-    pipeline, parts = make_pipeline(stt=FakeSTT(segments=()), on_turn=on_turn)
+    stt = FakeSTT(segments=())
+    pipeline, parts = make_pipeline(stt=stt, on_turn=on_turn)
+    gate: GreetingGate = parts["GreetingGate"]
     tail: Passthrough = parts["tail"]
+    stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(pipeline, frames_to_send=one_turn(tail_sleep=0.2))
+    await drive(
+        pipeline,
+        [
+            *one_turn(gate, stt_processor),
+            until(
+                lambda: (
+                    stt_processor.turn is not None and stt_processor.turn.transcript_at is not None
+                ),
+                "the STT stream to finish with no transcript",
+            ),
+        ],
+    )
 
     assert not messages(tail.seen, "transcript")
     assert not messages(tail.seen, "decision")
@@ -603,12 +733,19 @@ async def test_a_failing_decide_tells_the_client_and_reports_no_decide_latency()
         raise RuntimeError("graph unavailable")
 
     pipeline, parts = make_pipeline(decide=decide_boom, on_turn=on_turn)
+    gate: GreetingGate = parts["GreetingGate"]
     tail: Passthrough = parts["tail"]
+    stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(pipeline, frames_to_send=one_turn(tail_sleep=0.3))
+    await drive(
+        pipeline,
+        [
+            *one_turn(gate, stt_processor),
+            until(lambda: bool(messages(tail.seen, "error")), "the decide failure signal"),
+        ],
+    )
 
     errors = messages(tail.seen, "error")
-    assert errors, "a broken graph must signal the client rather than fall silent"
     assert errors[0]["stage"] == "decide"
     assert errors[0]["recoverable"] is True
     # The signal carries no exception text, no utterance and no reply.
@@ -641,21 +778,28 @@ async def test_a_turn_after_a_failed_decide_still_answers() -> None:
 
     tts = FakeTTS()
     pipeline, parts = make_pipeline(decide=decide_once_broken, tts=tts, on_turn=on_turn)
+    gate: GreetingGate = parts["GreetingGate"]
     tail: Passthrough = parts["tail"]
     stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(pipeline, frames_to_send=[*one_turn(tail_sleep=0.3), *one_turn(tail_sleep=0.4)])
+    await drive(
+        pipeline,
+        [
+            *one_turn(gate, stt_processor, index=0),
+            until(lambda: bool(messages(tail.seen, "error")), "the first turn to fail"),
+            *one_turn(gate, stt_processor, index=1),
+            until(lambda: bool(recorded), "the recovered turn to report latencies"),
+        ],
+    )
 
     assert calls["n"] == 2, "the second final transcript must still reach decide"
     assert stt_processor.streams_opened == 2, "the second utterance must still open a stream"
     assert stt_processor.listening is True, "a decide failure never stops the room listening"
 
-    errors = messages(tail.seen, "error")
-    assert len(errors) == 1, "only the failed turn signals an error"
+    assert len(messages(tail.seen, "error")) == 1, "only the failed turn signals an error"
     decisions = messages(tail.seen, "decision")
     assert len(decisions) == 1 and decisions[0]["action"] == "answer"
     assert tts.spoken == sentences(REPLY), "the recovered turn is actually spoken"
-    assert recorded, "the recovered turn reports its latencies"
     assert recorded[-1].time_to_first_audio_ms is not None
 
 
@@ -669,8 +813,17 @@ async def test_no_transcript_or_audio_content_reaches_the_log() -> None:
     captured: list[str] = []
     sink_id = logger.add(lambda message: captured.append(str(message)), level="INFO")
     try:
-        pipeline, _ = make_pipeline()
-        await run_test(pipeline, frames_to_send=one_turn(tail_sleep=0.3))
+        tts = FakeTTS()
+        pipeline, parts = make_pipeline(tts=tts)
+        gate: GreetingGate = parts["GreetingGate"]
+        stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
+        await drive(
+            pipeline,
+            [
+                *one_turn(gate, stt_processor),
+                until(lambda: tts.spoken == sentences(REPLY), "the whole reply to be spoken"),
+            ],
+        )
     finally:
         logger.remove(sink_id)
 
@@ -685,9 +838,20 @@ async def test_no_transcript_or_audio_content_reaches_the_log() -> None:
 async def test_text_published_to_the_room_is_redacted() -> None:
     """``redact`` runs before text leaves this module; no README override is documented."""
     pipeline, parts = make_pipeline(stt=FakeSTT(segments=(UTTERANCE,)))
+    gate: GreetingGate = parts["GreetingGate"]
     tail: Passthrough = parts["tail"]
+    stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(pipeline, frames_to_send=one_turn(tail_sleep=0.2))
+    await drive(
+        pipeline,
+        [
+            *one_turn(gate, stt_processor),
+            until(
+                lambda: any(m["final"] for m in messages(tail.seen, "transcript")),
+                "the final transcript",
+            ),
+        ],
+    )
 
     transcripts = messages(tail.seen, "transcript")
     assert transcripts
@@ -699,12 +863,20 @@ async def test_text_published_to_the_room_is_redacted() -> None:
 async def test_decision_messages_carry_the_action_but_not_the_reply() -> None:
     """The room is told what happened, not what was said; the audio carries the words."""
     pipeline, parts = make_pipeline()
+    gate: GreetingGate = parts["GreetingGate"]
     tail: Passthrough = parts["tail"]
+    stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(pipeline, frames_to_send=one_turn(tail_sleep=0.3))
+    await drive(
+        pipeline,
+        [
+            *one_turn(gate, stt_processor),
+            until(lambda: bool(messages(tail.seen, "decision")), "the decision message"),
+        ],
+    )
 
     decisions = messages(tail.seen, "decision")
-    assert decisions and decisions[0]["action"] == "answer"
+    assert decisions[0]["action"] == "answer"
     assert not any("reply" in message for message in decisions)
 
 
@@ -716,9 +888,17 @@ async def test_decision_messages_carry_the_action_but_not_the_reply() -> None:
 async def test_the_reply_is_synthesized_sentence_by_sentence_in_the_session_voice() -> None:
     """Bulbul receives one complete sentence at a time, in the session's language."""
     tts = FakeTTS()
-    pipeline, _ = make_pipeline(tts=tts)
+    pipeline, parts = make_pipeline(tts=tts)
+    gate: GreetingGate = parts["GreetingGate"]
+    stt_processor: SarvamSTTProcessor = parts["SarvamSTTProcessor"]
 
-    await run_test(pipeline, frames_to_send=one_turn(tail_sleep=0.3))
+    await drive(
+        pipeline,
+        [
+            *one_turn(gate, stt_processor),
+            until(lambda: tts.spoken == sentences(REPLY), "the whole reply to be spoken"),
+        ],
+    )
 
     assert tts.spoken == sentences(REPLY)
     assert len(tts.spoken) > 1, "a multi-sentence reply is not handed over as one block"
