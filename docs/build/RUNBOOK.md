@@ -137,6 +137,7 @@ overrides.
 | `Unknown command: /run-prompt` | The session's branch has no `.claude/skills/`. Merge this harness to `main` (or start the session from the branch that carries it). |
 | `run-prompt: prerequisite <x> is 'pending', not done` | Working as intended. Run `<x>` first, or `/run-prompt` with no argument to let the plan choose. |
 | Session ends without shipping, message says "STOP GATE allowed after 4 blocks" | The gate kept failing; read `.claude/run/gate.log` in the PR branch, or re-open the session and say "fix the gate and ship". |
+| `ship: gh CLI is required` | The environment has no `gh` CLI, so `scripts/ship.sh` cannot open the PR, wait for CI or merge. Push the branch with `git push -u origin <branch>` and open the PR through the GitHub MCP server; the merge stays with the owner until `gh` is installed or `ship.sh` grows an MCP/REST fallback. Recorded in `docs/build/BLOCKERS.md`. |
 | `ship: no CI checks registered` | Actions disabled, or the workflow file changed in this PR and the token lacks the `workflow` scope. |
 | Push rejected: refusing to allow … workflow | Reconnect GitHub with a token that has `workflow` scope (`/web-setup` after `gh auth refresh -s workflow`). |
 | `attribution-check` FAIL: author is not an allowed identity | `INDICAI_GIT_EMAIL` in the cloud environment is a placeholder or an address outside the allowlist. Set it to an address from §4 (or unset it and take the `_lib.sh` default), then re-commit — `git reset --soft origin/main` and commit again; `--amend` is blocked by the Bash guard. |
