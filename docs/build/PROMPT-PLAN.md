@@ -17,7 +17,7 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | program | P1-golden-audio | partial | uc1/P2 | Golden WAVs committed and hash-verified; regeneration tool still to build | S,K,L | pending PR |
 | uc1 | P3-eval | blocked | uc1/P3 | Measure the UC1 P3 B6 gates (action accuracy, hit@3, adversarial, language match) | K,L | see docs/build/BLOCKERS.md |
 | uc1 | P3 | done | uc1/P2 | LangGraph agent (chat-only) with deterministic guard | S,C,K,L | pending PR |
-| uc1 | P4 | pending | uc1/P3 | Zammad ticketing, idempotent, Celery fallback | S,C,K | |
+| uc1 | P4 | partial | uc1/P3 | Zammad ticketing, idempotent, Celery fallback | S,C,K | idempotency proven on Postgres; no live Zammad (no Docker), see BLOCKERS |
 | uc1 | P5 | pending | uc1/P4 | Voice pipeline: LiveKit + Pipecat + Saaras + Bulbul | S,K,L | |
 | uc1 | P6 | pending | uc1/P5 | React widget, replay endpoint, Grafana dashboard | S,C,K | |
 | uc1 | P7 | pending | uc1/P6 | Security + retention + spend caps; docs/security/uc1-review.md | S,C | |
