@@ -1,7 +1,9 @@
 """Serialize turns per session and commit the guarded decision atomically."""
 
+import logging
 import os
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
 from indic_platform.adapters.claude import Claude
@@ -144,3 +146,69 @@ async def run_turn(state: TurnState, *, existing: bool = False) -> TurnState:
         await client.close()
         await engine.dispose()
         sink.flush()
+
+
+def merge_latency(current: Mapping[str, Any] | None, voice: Mapping[str, float]) -> dict[str, Any]:
+    """Merge measured voice stages onto a turn's existing `latency_ms` payload.
+
+    Pure, so the arithmetic is provable without a database. The graph's own node timings
+    (`retrieve`, `decide`, `guard`, `act`, `total`) are already in `current` and survive:
+    the voice stages arrive namespaced under `voice.` by
+    `voice_pipeline.StageLatency.merge_into`, which is why nothing here re-prefixes them.
+    A stage that did not run is absent from `voice` and stays absent -- never 0.0.
+    """
+    return {**(current or {}), **{name: float(value) for name, value in voice.items()}}
+
+
+async def record_voice_latency(
+    session_id: str, turn_index: int, voice: Mapping[str, float]
+) -> bool:
+    """Merge one voice turn's stage latencies into its already-committed `turns` row.
+
+    This is an UPDATE, in its own transaction, because of when the numbers exist.
+    `run_turn` commits the turn while the graph's `decide` is still on the stack, but
+    `tts_ms` and `time_to_first_audio_ms` are only known once first audio has actually
+    been emitted -- strictly later than that commit. There is no moment at which a single
+    INSERT could carry both halves, so the voice half lands afterwards.
+
+    `turn_index` addresses the ``turn_index``-th turn of the session under
+    ``order_by(Turn.created_at, Turn.id)`` -- literally the ordering `run_turn` uses to
+    rebuild a session's history. The two must match: under any other ordering, index *n*
+    here and index *n* there are different rows, and a latency would be filed against
+    someone else's turn. `created_at` defaults to Postgres ``now()``, the *transaction*
+    timestamp, and every turn commits in its own transaction, so the order is the order
+    the turns were taken; `Turn.id` only breaks a tie that real turns cannot produce.
+
+    Returns True when a row was updated, False when the session has no such turn. Absent
+    is a legitimate answer, not an error: the eval path runs the graph without a voice
+    session, so a caller can hold an index that was never persisted.
+
+    A latency write must never fail the turn it describes -- the employee has already
+    been answered, and losing a metric is not worth losing a reply. Every failure is
+    swallowed and logged by exception class only: no utterance, no reply, no identifiers.
+    """
+    log = logging.getLogger(__name__)
+    if turn_index < 0:
+        return False
+    try:
+        engine = create_async_engine(os.environ["DATABASE_URL"])
+        try:
+            async with AsyncSession(engine) as db, db.begin():
+                turn = await db.scalar(
+                    select(Turn)
+                    .where(Turn.session_id == uuid.UUID(session_id))
+                    .order_by(Turn.created_at, Turn.id)
+                    .offset(turn_index)
+                    .limit(1)
+                    .with_for_update()
+                )
+                if turn is None:
+                    log.info("no turn %d for this voice session; latency not recorded", turn_index)
+                    return False
+                turn.latency_ms = merge_latency(turn.latency_ms, voice)
+            return True
+        finally:
+            await engine.dispose()
+    except Exception as error:
+        log.warning("voice latency not recorded (%s)", type(error).__name__)
+        return False

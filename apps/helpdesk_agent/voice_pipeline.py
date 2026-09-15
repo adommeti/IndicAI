@@ -1012,7 +1012,7 @@ def _access_token(settings: VoiceSettings) -> str:
 async def run_session(
     settings: VoiceSettings,
     *,
-    decide: DecideCallable,
+    decide: DecideCallable | None = None,
     session_id: str,
     employee_id: str,
     on_turn: TurnCallback | None = None,
@@ -1024,20 +1024,47 @@ async def run_session(
 
     Args:
         settings: room, URL, identity, language and the consent notice path.
-        decide: the helpdesk graph entry point; ``helpdesk_agent.graph.decide`` in
-            production, a stub in tests.
+        decide: the decision stage. Defaults to ``graph.session_decide(session_id,
+            employee_id)``, which writes this call's turns into *this* session owned by
+            *this* employee. Passing ``graph.decide`` instead gets the eval stage, whose
+            ``initial_state`` defaults mint a fresh session per turn attributed to the
+            literal employee ``"eval"`` -- right for ``make eval-uc1`` and wrong for a
+            real call, which is why it is no longer the default here.
         session_id: helpdesk session this call belongs to.
-        employee_id: the authenticated employee; carried for attribution only, and
-            never sent to a vendor or written to a log by this module.
-        on_turn: receives ``(turn_index, StageLatency)`` when a turn's first audio has
-            been emitted. ``StageLatency.merge_into`` produces the ``turns.latency_ms``
-            payload; the write itself belongs to the caller's transaction, which is why
-            this is a hook rather than a database call here.
+        employee_id: the authenticated employee. Written to the session row through the
+            default stage; never sent to a vendor or written to a log by this module.
+        on_turn: receives ``(turn_index, StageLatency)`` once a turn's first audio has
+            been emitted. Defaults to merging those stages into that turn's
+            ``turns.latency_ms``. It stays a hook because the numbers exist strictly
+            after ``run_turn`` has committed the row, so the voice half is an update in
+            its own transaction rather than part of the turn's.
 
     Raises:
         GreetingUnavailable: no readable consent notice; nothing is started.
     """
     greeting_audio = load_greeting(settings.greeting_path)
+
+    from helpdesk_agent.graph import session_decide
+    from helpdesk_agent.persistence import record_voice_latency
+
+    if decide is None:
+        decide = session_decide(session_id, employee_id)
+
+    async def write_latency(index: int, latency: StageLatency) -> None:
+        # Never allowed to fail a turn: the employee has already been answered, and a
+        # missing latency is a gap in a dashboard, not a broken call. A row that is not
+        # there -- which is every turn when an eval `decide` was injected -- comes back as
+        # False rather than as an exception.
+        # `merge_into(None)`, not `measured()`: the writer merges what it is handed
+        # straight into the row and deliberately does not re-prefix, so the `voice.`
+        # namespace has to be applied here. `measured()` would file `decide_ms` and
+        # `stt_ms` next to the graph's own `decide` and `total` un-namespaced -- not a
+        # collision today, but not what the README, the demo script and both docstrings
+        # tell an operator to look for either.
+        await record_voice_latency(session_id, index, latency.merge_into(None))
+
+    if on_turn is None:
+        on_turn = write_latency
 
     from indic_platform.adapters.sarvam_stt import SarvamSTT
     from indic_platform.adapters.sarvam_tts import SarvamTTS

@@ -233,8 +233,20 @@ and retention accordingly.
 
 The voice path is `apps/helpdesk_agent/voice_pipeline.py`: LiveKit audio in → Silero VAD →
 Saaras streaming STT → `graph.decide` → Bulbul streaming TTS → LiveKit audio out, with
-partial transcripts published to the room as data messages. LiveKit runs locally from
-`docker-compose.yml`
+partial transcripts published to the room as data messages.
+
+Per-stage timings are merged into that turn's `turns.latency_ms` under a `voice.` prefix
+(`voice.vad_ms`, `voice.stt_ms`, `voice.decide_ms`, `voice.tts_ms`,
+`voice.time_to_first_audio_ms`), so they cannot collide with the stage timings the graph
+already writes into the same JSONB. It is an UPDATE in its own transaction rather than part
+of the turn's insert, because `run_turn` commits the row while `decide` is still on the
+stack and the audio numbers do not exist until first audio has been emitted. It is also why
+`run_session` defaults its decision stage to `graph.session_decide(session_id, employee_id)`
+rather than `graph.decide`: the latter is the eval entry point, whose `initial_state`
+defaults mint a fresh session per turn attributed to the literal employee `eval`, leaving no
+row a latency could belong to. **None of this has been exercised against a live room** —
+the database half is covered by integration tests, the voice half is not. LiveKit runs
+locally from `docker-compose.yml`
 (`livekit/livekit-server:v1.9.0`, config `infra/livekit.yaml`, loopback-bound on 7880/7881
 plus UDP 50100-50120) and starts with `make stack-voice`. `make voice-test` is the latency
 harness; `apps/helpdesk_agent/voice_demo.md` is the manual browser demo.
