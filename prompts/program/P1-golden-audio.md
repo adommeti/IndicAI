@@ -9,6 +9,14 @@ Read CLAUDE.md, platform/eval/README.md and platform/eval/golden/uc1_helpdesk/RE
 4. Run `make eval-uc1` end to end on the restored audio (baseline decision, retrieval on with `make stack-core` + `make stack-sparse` + `make ingest-kb`) and paste the WER-per-language and hit@3 tables into the report.
 Acceptance: all 135 WAVs present and hash-verified; WAVs committed; `make eval-uc1` runs without manual steps in a fresh clone; WER and hit@3 numbers reported.
 
+## Status (2026-09-15)
+Steps 2 and 3 are already done on `main`: all 135 WAVs are committed (19 MB, every file
+hash-verified against `audio_manifest.jsonl`) and `platform/tests/test_golden_audio.py` fails on a
+missing or drifted file. What remains is step 1 — `platform/eval/golden/tools/synthesize_audio.py`,
+so the set can be rebuilt from the manifest when a vendor voice changes or a new language is added —
+and step 4, the first end-to-end `make eval-uc1` on the restored audio (now tracked separately as
+`uc1/P3-eval`). Scope this prompt to the regeneration tool.
+
 ## Execution notes
 - Cost: 135 short TTS calls ≈ 20K characters ≈ ₹60; `make eval-uc1` STT ≈ ₹40. Print both estimates first.
 - Requires `SARVAM_API_KEY`; without it, ship the tool + test and mark the criteria UNMEASURED with a `docs/build/BLOCKERS.md` entry.

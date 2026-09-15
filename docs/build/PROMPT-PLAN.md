@@ -14,8 +14,9 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | program | P0 | done | — | Scaffold: uv workspace, adapters, compose, CI | S,K,L | 027f125…0bf1475 |
 | uc1 | P1 | done | program/P0 | Golden set (150 items) + eval runner | S,L | 0bf1475 |
 | uc1 | P2 | done | uc1/P1 | KB ingestion + cross-lingual hybrid retrieval | S,K,L | 0bf1475 |
-| program | P1-golden-audio | pending | uc1/P2 | Restore + commit UC1 golden WAVs; eval runs in a fresh clone | S,K,L | |
-| uc1 | P3 | pending | program/P1-golden-audio | LangGraph agent (chat-only) with deterministic guard | S,C,K,L | |
+| program | P1-golden-audio | partial | uc1/P2 | Golden WAVs committed and hash-verified; regeneration tool still to build | S,K,L | pending PR |
+| uc1 | P3-eval | pending | uc1/P3 | Measure the UC1 P3 B6 gates (action accuracy, hit@3, adversarial, language match) | K,L | |
+| uc1 | P3 | done | uc1/P2 | LangGraph agent (chat-only) with deterministic guard | S,C,K,L | pending PR |
 | uc1 | P4 | pending | uc1/P3 | Zammad ticketing, idempotent, Celery fallback | S,C,K | |
 | uc1 | P5 | pending | uc1/P4 | Voice pipeline: LiveKit + Pipecat + Saaras + Bulbul | S,K,L | |
 | uc1 | P6 | pending | uc1/P5 | React widget, replay endpoint, Grafana dashboard | S,C,K | |
@@ -46,7 +47,8 @@ sessions; the shared files they touch (`pyproject.toml` testpaths, `Makefile`, a
 are reconciled by `scripts/ship.sh`'s rebase — if two revisions create two alembic heads, the
 next ship adds a merge revision (see `.claude/rules/migrations.md`).
 
-1. `program/P1-golden-audio` → `uc1/P3` → `uc1/P4` → `uc1/P5` → `uc1/P6` → `uc1/P7`
+0. `uc1/P3` is already built and merged; its B6 numbers are still unmeasured (no golden audio, no live run yet)
+1. `program/P1-golden-audio` → `uc1/P3-eval` → `uc1/P4` → `uc1/P5` → `uc1/P6` → `uc1/P7`
 2. `uc2/P0-spike` → `uc2/P1` → `uc2/P2` → `uc2/P3` → `uc2/P4` → `uc2/P5`   (parallel to 1 after P0-spike)
 3. `uc3/P1` → `uc3/P2` → `uc3/P3` → `uc3/P4` → `uc3/P5` → `uc3/P6` → `uc3/P7`   (parallel to 1 and 2)
 4. `program/P9-adrs` (any time), then `program/P8-eval-refactor`, `program/P10-azure-deploy`, `program/P11-release-readiness`

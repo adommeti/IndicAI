@@ -8,7 +8,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 node_modules/
-platform/eval/golden/**/audio/*.wav
+# Golden audio is synthetic and hash-pinned by audio_manifest.jsonl, so it is
+# committed: cloud sessions clone the repo and cannot regenerate it for free.
+!platform/eval/golden/**/audio/*.wav
 *.egg-info/
 /build/
 dist/
@@ -25,3 +27,6 @@ CLAUDE.local.md
 .codex-runs/
 .agents/
 AGENTS.md
+
+# Local backups of harness files
+*.bak
