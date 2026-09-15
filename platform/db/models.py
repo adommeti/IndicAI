@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -339,3 +340,55 @@ audit_chain_anchors = Table(
     Column("recorded_at", DateTime(timezone=True), nullable=False),
     CheckConstraint("row_count >= 0", name="ck_audit_chain_anchors_row_count"),
 )
+
+
+# --- UC1 helpdesk ticketing (uc1/P4) -----------------------------------------
+
+
+class TicketFiling(Base):
+    """One turn's attempt to file a helpdesk ticket in Zammad.
+
+    A ticket is a side effect the employee can see, so filing it twice is worse
+    than not filing it at all. The guarantee is `uq_ticket_filings_turn`: one row
+    per `(session_id, turn_index)`, refused by the database. A retry of the same
+    turn -- a reconnecting voice client, a Celery redelivery, two workers racing
+    -- reserves the same key, loses on the constraint, and reads back what the
+    winner filed. A read-then-write check ("is there a row? no -- create one")
+    cannot do this: both readers see nothing and both file.
+
+    `ck_ticket_filings_number` is the other half. A row may carry a ticket number
+    only when it is `filed`; a `pending` row that somehow acquired a number is
+    refused at INSERT rather than read back to an employee as if Zammad had
+    issued it. The number is Zammad's to mint and nobody else's.
+
+    `payload` is the ticket as the graph produced it, stored so the fallback task
+    can file exactly what was approved without re-running the model, and
+    `source_key` is the value written to Zammad's `source_session_id` custom
+    field -- the handle a retry searches on when it cannot tell whether the
+    previous attempt committed at Zammad before the connection dropped.
+    """
+
+    __tablename__ = "ticket_filings"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id"))
+    turn_index: Mapped[int]
+    employee_id: Mapped[str] = mapped_column(String(128))
+    source_key: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="filing")
+    ticket_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ticket_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    attempts: Mapped[int] = mapped_column(default=0)
+    # A short class name, never a vendor message: this column is read in logs.
+    last_error: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "turn_index", name="uq_ticket_filings_turn"),
+        CheckConstraint("status in ('filing','filed','pending')", name="ck_ticket_filings_status"),
+        CheckConstraint("turn_index >= 0", name="ck_ticket_filings_turn_index"),
+        CheckConstraint(
+            "(status = 'filed') = (ticket_number is not null)",
+            name="ck_ticket_filings_number",
+        ),
+    )
