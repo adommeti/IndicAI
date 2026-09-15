@@ -13,8 +13,10 @@ and hear a Hindi reply") is therefore **UNMEASURED**, and is recorded as such in
 `docs/build/BLOCKERS.md`. Running the steps below on a laptop is what measures it.
 
 One thing will not work as shipped: **there is no recorded consent-notice audio in this
-repository** (see step 5.1 and the README's voice section). Read that before you demo this
-to anyone.
+repository**, and `run_session` refuses to start without one — so until you supply a file
+(a labelled stand-in is allowed, see step 5.1) these steps stop at step 3 rather than
+producing a half-consented call. Read step 5.1 and the README's voice section before you
+demo this to anyone.
 
 ---
 
@@ -177,7 +179,8 @@ a demo room idle, and close the room when you are done rather than leaving the t
 `apps/helpdesk_agent/voice_pipeline.py` is the agent side. Its pinned contract is:
 
 ```python
-VoiceSettings(room=..., livekit_url=..., identity=..., language="hi-IN", greeting_path=None)
+VoiceSettings(room=..., livekit_url=..., identity=..., language="hi-IN",
+              greeting_path=Path("<your consent notice>.wav"))  # None raises GreetingUnavailable
 await run_session(settings, decide=..., session_id=..., employee_id=...)
 ```
 
@@ -280,8 +283,11 @@ been streamed to a vendor is not a notice.
 **As shipped, this will not happen.** There is no consent-notice audio file in this
 repository — the only committed audio is the 155 golden WAVs under
 `platform/eval/golden/**` and three Bulbul samples under `docs/adr/assets/0003/`, none of
-which is a notice. `VoiceSettings.greeting_path` defaults to `None`, so a session started
-without a file plays nothing. Recorded in `docs/build/BLOCKERS.md` (uc1/P5).
+which is a notice. `VoiceSettings.greeting_path` defaults to `None`, and `run_session`
+treats that default as a refusal, not an opt-out: `load_greeting` raises
+`GreetingUnavailable` before a token is minted or a room is joined. So the failure you will
+actually see is the session declining to start, naming the path it wanted — not a call that
+proceeds without a notice. Recorded in `docs/build/BLOCKERS.md` (uc1/P5).
 
 To demo the *mechanism* before the real asset exists, synthesize a stand-in through the
 Sarvam TTS adapter and pass its path as `greeting_path` — and label it a stand-in, because a

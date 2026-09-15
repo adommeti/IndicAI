@@ -717,6 +717,8 @@ dependencies = [
     { name = "livekit" },
     { name = "livekit-api" },
     { name = "pipecat-ai" },
+    { name = "soundfile" },
+    { name = "soxr" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
 
@@ -729,6 +731,8 @@ requires-dist = [
     { name = "livekit", specifier = ">=1.1.18" },
     { name = "livekit-api", specifier = ">=1.2.1" },
     { name = "pipecat-ai", extras = ["silero"], specifier = ">=0.0.60" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "soxr", specifier = ">=1.0.0" },
     { name = "sqlalchemy", extras = ["asyncio"] },
 ]
 
