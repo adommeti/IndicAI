@@ -1,0 +1,75 @@
+/* Design tokens for the reviewer UI.
+ *
+ * One layer, defined once, consumed by Tailwind (tailwind.config.js reads these
+ * as CSS variables). Light and dark both defined here so a colour is never
+ * introduced inside a media query alone.
+ *
+ * The Indic font stack matters: a reviewer comparing an approved Tamil
+ * rendering against a translation cannot do it in a fallback font that drops
+ * conjuncts. Noto covers all four scripts; the system fonts are what is
+ * actually installed on a corporate Windows image.
+ */
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-indic: "Noto Sans Devanagari", "Noto Sans Telugu", "Noto Sans Tamil", "Nirmala UI",
+    "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  /* 8-pt grid */
+  --step-1: 0.5rem;
+  --step-2: 1rem;
+  --step-3: 1.5rem;
+  --step-4: 2rem;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --border: #d3d9e0;
+  --ink: #16191d;
+  --ink-muted: #5b6672;
+  --accent: #1b4f9c;
+  --danger: #9c1b1b;
+  --warn: #8a5a00;
+  --ok: #1a6b3c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b;
+    --surface: #1c2025;
+    --surface-2: #23282f;
+    --border: #363d46;
+    --ink: #eef1f5;
+    --ink-muted: #a3adb9;
+    --accent: #7fb0ff;
+    --danger: #ff8f8f;
+    --warn: #f0bf62;
+    --ok: #74d99f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Target-language text always renders in the Indic stack, whatever its parent. */
+.indic {
+  font-family: var(--font-indic);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

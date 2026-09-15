@@ -30,3 +30,10 @@ AGENTS.md
 
 # Local backups of harness files
 *.bak
+
+# UI packages: source is tracked, build output and browser caches are not.
+apps/*/ui/node_modules/
+apps/*/ui/dist/
+apps/*/ui/test-results/
+apps/*/ui/playwright-report/
+apps/*/ui/.env.e2e
