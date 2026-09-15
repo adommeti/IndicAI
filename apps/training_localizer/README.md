@@ -106,9 +106,21 @@ binding — see the `uc2/P1` report.
 Unit tests need nothing: `uv run pytest platform/tests/test_uc2_pipeline.py`.
 The versioning test needs the stack:
 `make stack-core && make migrate && uv run pytest platform/tests/test_uc2_pipeline.py -m integration`.
-One live segment per stage: `LIVE_API_TESTS=1 uv run pytest platform/tests/test_uc2_pipeline.py -m slow`.
+`LIVE_API_TESTS=1 uv run pytest platform/tests/test_uc2_pipeline.py -m slow` runs
+one segment through **translate and post_edit** against the real vendors; it does
+not cover adapt, backtranslate_qa or quiz, and post_edit's model leg only runs
+when `ANTHROPIC_API_KEY` is set.
 
 `make eval-uc2` runs the whole pipeline over the golden set and prints a cost
-estimate first (about ₹110). `UC2_EVAL_ARGS='--translate
-training_localizer.eval_hook:translate_and_enforce --baseline'` measures the
-Sarvam-only path for about ₹28 when no Anthropic key is available.
+estimate first (about ₹110). Its default arguments matter: `--fidelity-source
+sut` points the judge at this pipeline rather than at uc2/P1's draft references,
+and `--pre-edit` scores the translate stage *before* post_edit — without that
+second number `terminology_adherence` cannot fail, because `enforce` implements
+exactly the predicate the scorer tests.
+
+When no Anthropic key is available, the Sarvam-only path costs about ₹28:
+
+```
+UC2_EVAL_ARGS='--translate training_localizer.eval_hook:translate_and_enforce \
+  --pre-edit training_localizer.eval_hook:translate_only --baseline' make eval-uc2
+```

@@ -93,6 +93,23 @@ def test_all_five_d7_prompts_ship_verbatim() -> None:
         assert front["model"] in {"claude-sonnet-5", "claude-haiku-4-5"}
 
 
+def test_front_matter_admits_where_temperature_zero_is_not_actually_sent() -> None:
+    """`temperature: 0` in front-matter must not claim more than the adapter does.
+
+    `Claude.structured` omits the parameter for `claude-sonnet-5`, which rejects
+    it as deprecated (the same API exception uc1 recorded in
+    apps/helpdesk_agent/README.md). The three sonnet prompts therefore run at the
+    vendor default and say so; the haiku judge legs really are sent temperature 0.
+    """
+    source = (Path(stages.__file__).parents[2] / "platform" / "adapters" / "claude.py").read_text()
+    assert 'extra_body={} if model == "claude-sonnet-5" else {"temperature": 0}' in source
+
+    for name in ("adapt", "post_edit", "backtranslate", "qa_judge", "quiz"):
+        front = yaml.safe_load((stages.PROMPTS / f"{name}.md").read_text().split("---")[1])
+        sent = front["model"] != "claude-sonnet-5"
+        assert front.get("temperature_sent", True) is sent, name
+
+
 def test_prompt_version_is_content_derived() -> None:
     assert stages.prompt_version("adapt") != stages.prompt_version("quiz")
     assert len(stages.prompt_version("adapt")) == 16
@@ -508,10 +525,12 @@ async def test_chain_persists_versioned_stages_and_reruns_independently(
                     )
                 )
 
+        # Every one of these segments is over its word budget, so adapt makes its
+        # one shorten retry and needs a second reply queued.
         adapted = AdaptedScript(
             segments=[AdaptedSegment(seg_id=s.seg_id, text=s.source_text) for s in segments]
         )
-        fake = FakeClaude({AdaptedScript: [adapted], PostEdit: []})
+        fake = FakeClaude({AdaptedScript: [adapted, adapted], PostEdit: []})
 
         class FakeClaudeClient:
             structured = fake.structured
@@ -550,10 +569,36 @@ async def test_chain_persists_versioned_stages_and_reruns_independently(
         assert ("post_edit", 1) in versions and ("post_edit", 2) in versions
         assert all(r.meta.get("glossary_version") for r in rows if r.stage == "post_edit")
 
+        # quiz has no version column in D6, so a re-run must REPLACE its set.
+        from indic_platform.db.models import QuizItem
+        from training_localizer.stages import QuizDraft, QuizDraftItem
+
+        draft = QuizDraft(
+            items=[
+                QuizDraftItem(
+                    seg_id=segments[0].seg_id,
+                    question="What must you do?",
+                    options=["a", "b", "c", "d"],
+                    answer=0,
+                    rationale="because",
+                )
+            ]
+        )
+        fake.replies[QuizDraft] = [draft, draft]
+        await pipeline._quiz(module_id, "en-IN")
+        second_quiz = await pipeline._quiz(module_id, "en-IN")
+        async with AsyncSession(engine) as db:
+            quiz_rows = (
+                await db.scalars(select(QuizItem).where(QuizItem.module_id == module_id))
+            ).all()
+        assert len(quiz_rows) == 1, "a re-run replaces the set, it does not append a second one"
+        assert second_quiz["items"] == 1 and second_quiz["kept_approved"] == 0
+
         status = None
         async with AsyncSession(engine) as db:
             status = await pipeline.module_status(db, module_id)
         assert status["languages"]["hi-IN"]["post_edit"]["version"] == 2
+        assert status["quiz_items_en"] == 1
     finally:
         await engine.dispose()
 
@@ -576,15 +621,12 @@ async def test_live_one_segment_through_translate_and_post_edit() -> None:
 
     glossary = load_glossary()
     segment = next(s for s in golden() if not s.locked and "MFA" in s.source_text)
-    mayura = SarvamTranslate()
-    try:
-        translated = await stages.translate(
-            segment.source_text,
-            "hi-IN",
-            translator=lambda t, lang: mayura.translate(t, target=lang, mode="formal"),
-        )
-    finally:
-        await mayura.close()
+    mayura = SarvamTranslate()  # SarvamAdapter owns no closable resource
+    translated = await stages.translate(
+        segment.source_text,
+        "hi-IN",
+        translator=lambda t, lang: mayura.translate(t, target=lang, mode="formal"),
+    )
     assert translated.strip()
     assert any("ऀ" <= ch <= "ॿ" for ch in translated), "Devanagari output"
 

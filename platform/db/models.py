@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -83,6 +83,9 @@ class Localization(Base):
     """
 
     __tablename__ = "localizations"
+    # Declared here as well as in 0003_uc2_modules so `alembic check` does not
+    # see the migration's index as drift and autogenerate a drop.
+    __table_args__ = (Index("ix_localizations_module_language", "module_id", "language", "stage"),)
     module_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("modules.id"), primary_key=True)
     seg_id: Mapped[int] = mapped_column(primary_key=True)
     language: Mapped[str] = mapped_column(String(16), primary_key=True)
@@ -122,7 +125,9 @@ class Artifact(Base):
 class QuizAttempt(Base):
     __tablename__ = "quiz_attempts"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    module_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("modules.id"), index=True)
+    module_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("modules.id"), index=True
+    )  # ix_quiz_attempts_module_id
     language: Mapped[str] = mapped_column(String(16))
     employee_id: Mapped[str] = mapped_column(String(128))
     score: Mapped[int]

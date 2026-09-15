@@ -19,11 +19,12 @@ import uuid
 from collections.abc import Awaitable
 from typing import Any
 
-from celery import Celery
+from celery import Celery, chain
 from indic_platform.adapters.claude import Claude
 from indic_platform.adapters.sarvam_translate import SarvamTranslate
 from indic_platform.db.models import Localization, Module, QuizItem, Segment
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from training_localizer import stages
@@ -45,6 +46,20 @@ celery_app.conf.update(
     result_serializer="json",
     accept_content=["json"],
 )
+
+# Per-stage retry policy (PRD D5). Deliberately narrow: `AdapterRuntime` already
+# retries 429/5xx three times with jitter, so retrying a vendor error here would
+# multiply spend. What this covers is infrastructure -- a database or broker blip
+# between the worker and Postgres. A ValueError from a stage is a bug and must
+# surface, not be retried into a stuck queue.
+RETRY_ON = (OSError, TimeoutError, DBAPIError)
+STAGE_TASK = {
+    "autoretry_for": RETRY_ON,
+    "retry_backoff": True,
+    "retry_backoff_max": 300,
+    "retry_jitter": True,
+    "max_retries": 2,
+}
 
 
 def run[T](coro: Awaitable[T]) -> T:
@@ -166,7 +181,7 @@ async def write_stage(
 # --- tasks --------------------------------------------------------------------
 
 
-@celery_app.task(name="uc2.adapt", bind=True, max_retries=2, default_retry_delay=30)
+@celery_app.task(name="uc2.adapt", bind=True, **STAGE_TASK)
 def adapt_task(self: Any, module_id: str, language: str) -> dict[str, Any]:
     return run(_adapt(uuid.UUID(module_id), language))
 
@@ -204,7 +219,7 @@ async def _adapt(module_id: uuid.UUID, language: str) -> dict[str, Any]:
         await eng.dispose()
 
 
-@celery_app.task(name="uc2.translate", bind=True, max_retries=2, default_retry_delay=30)
+@celery_app.task(name="uc2.translate", bind=True, **STAGE_TASK)
 def translate_task(self: Any, module_id: str, language: str) -> dict[str, Any]:
     return run(_translate(uuid.UUID(module_id), language))
 
@@ -261,7 +276,7 @@ async def _translate(module_id: uuid.UUID, language: str) -> dict[str, Any]:
         await eng.dispose()
 
 
-@celery_app.task(name="uc2.post_edit", bind=True, max_retries=2, default_retry_delay=30)
+@celery_app.task(name="uc2.post_edit", bind=True, **STAGE_TASK)
 def post_edit_task(self: Any, module_id: str, language: str) -> dict[str, Any]:
     return run(_post_edit(uuid.UUID(module_id), language))
 
@@ -321,7 +336,7 @@ async def _post_edit(module_id: uuid.UUID, language: str) -> dict[str, Any]:
         await eng.dispose()
 
 
-@celery_app.task(name="uc2.backtranslate_qa", bind=True, max_retries=2, default_retry_delay=30)
+@celery_app.task(name="uc2.backtranslate_qa", bind=True, **STAGE_TASK)
 def backtranslate_qa_task(self: Any, module_id: str, language: str) -> dict[str, Any]:
     return run(_backtranslate_qa(uuid.UUID(module_id), language))
 
@@ -385,7 +400,7 @@ async def _backtranslate_qa(module_id: uuid.UUID, language: str) -> dict[str, An
         await eng.dispose()
 
 
-@celery_app.task(name="uc2.quiz", bind=True, max_retries=2, default_retry_delay=30)
+@celery_app.task(name="uc2.quiz", bind=True, **STAGE_TASK)
 def quiz_task(self: Any, module_id: str, language: str = "en-IN") -> dict[str, Any]:
     return run(_quiz(uuid.UUID(module_id), language))
 
@@ -397,18 +412,40 @@ async def _quiz(module_id: uuid.UUID, language: str) -> dict[str, Any]:
         async with AsyncSession(eng) as db, db.begin():
             segments = await load_segments(db, module_id)
             items = await stages.quiz(segments, structured=claude.structured)
-            existing = await db.scalar(
-                select(func.max(QuizItem.item_id)).where(
-                    QuizItem.module_id == module_id, QuizItem.language == language
+            # `quiz_items` has no `version` column in D6, so a re-run replaces
+            # this module-language's set rather than appending a second one:
+            # otherwise two runs leave ten items with no way to say which five
+            # are current. Approved items are kept -- a reviewer's decision is
+            # not something a re-run gets to discard.
+            approved = set(
+                (
+                    await db.scalars(
+                        select(QuizItem.item_id).where(
+                            QuizItem.module_id == module_id,
+                            QuizItem.language == language,
+                            QuizItem.approved.is_(True),
+                        )
+                    )
+                ).all()
+            )
+            await db.execute(
+                delete(QuizItem).where(
+                    QuizItem.module_id == module_id,
+                    QuizItem.language == language,
+                    QuizItem.approved.is_(False),
                 )
             )
-            start = int(existing or 0) + 1
-            for offset, item in enumerate(items):
+            await db.flush()
+            item_id = 1
+            written = 0
+            for item in items:
+                while item_id in approved:
+                    item_id += 1
                 db.add(
                     QuizItem(
                         module_id=module_id,
                         language=language,
-                        item_id=start + offset,
+                        item_id=item_id,
                         seg_id=item.seg_id,
                         question=item.question,
                         options=item.options,
@@ -417,7 +454,14 @@ async def _quiz(module_id: uuid.UUID, language: str) -> dict[str, Any]:
                         approved=False,
                     )
                 )
-        return {"stage": "quiz", "language": language, "items": len(items)}
+                item_id += 1
+                written += 1
+        return {
+            "stage": "quiz",
+            "language": language,
+            "items": written,
+            "kept_approved": len(approved),
+        }
     finally:
         await claude.client.close()
         await eng.dispose()
@@ -425,23 +469,29 @@ async def _quiz(module_id: uuid.UUID, language: str) -> dict[str, Any]:
 
 @celery_app.task(name="uc2.localize")
 def localize(module_id: str, languages: list[str] | None = None) -> dict[str, Any]:
-    """Run the whole chain for each language, in PRD D5 order.
+    """Queue the D5 chain per language.
 
-    Sequential per language on purpose: each stage reads the previous stage's
-    newest version, so overlapping runs on one (module, language) would race for
-    the same version number.
+    Each stage is dispatched as its own task, so each carries its own retry
+    policy and a failure stops that language's chain without taking the others
+    down with it. Signatures are immutable (`.si`) because a stage takes
+    `(module_id, language)`, not the previous stage's return value.
+
+    Chained rather than run in parallel within a language: every stage reads the
+    newest version of the one before it, so overlapping runs on a single
+    (module, language) would race for the same version number.
     """
     targets = list(languages or LANGUAGES)
-    results: dict[str, Any] = {}
+    queued: dict[str, str] = {}
     for language in targets:
-        results[language] = [
-            adapt_task.run(module_id, language),
-            translate_task.run(module_id, language),
-            post_edit_task.run(module_id, language),
-            backtranslate_qa_task.run(module_id, language),
-        ]
-    results["quiz"] = quiz_task.run(module_id, "en-IN")
-    return results
+        result = chain(
+            adapt_task.si(module_id, language),
+            translate_task.si(module_id, language),
+            post_edit_task.si(module_id, language),
+            backtranslate_qa_task.si(module_id, language),
+        ).apply_async()
+        queued[language] = result.id
+    queued["quiz"] = quiz_task.si(module_id, "en-IN").apply_async().id
+    return {"module_id": module_id, "queued": queued}
 
 
 async def module_status(db: AsyncSession, module_id: uuid.UUID) -> dict[str, Any]:
@@ -452,6 +502,16 @@ async def module_status(db: AsyncSession, module_id: uuid.UUID) -> dict[str, Any
     total = await db.scalar(
         select(func.count()).select_from(Segment).where(Segment.module_id == module_id)
     )
+    quiz_counts: dict[str, int] = {
+        str(row[0]): int(row[1])
+        for row in (
+            await db.execute(
+                select(QuizItem.language, func.count())
+                .where(QuizItem.module_id == module_id)
+                .group_by(QuizItem.language)
+            )
+        ).all()
+    }
     languages: dict[str, Any] = {}
     for language in LANGUAGES:
         per_stage: dict[str, Any] = {}
@@ -475,6 +535,8 @@ async def module_status(db: AsyncSession, module_id: uuid.UUID) -> dict[str, Any
             }
             if scores:
                 per_stage[stage]["fidelity_mean"] = sum(scores) / len(scores)
+        if language in quiz_counts:
+            per_stage["quiz"] = {"items": quiz_counts[language]}
         if per_stage:
             languages[language] = per_stage
     return {
@@ -483,4 +545,5 @@ async def module_status(db: AsyncSession, module_id: uuid.UUID) -> dict[str, Any
         "status": module.status,
         "segments": int(total or 0),
         "languages": languages,
+        "quiz_items_en": quiz_counts.get("en-IN", 0),
     }

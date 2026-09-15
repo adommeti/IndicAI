@@ -13,12 +13,12 @@ even when the model is unavailable or wrong.
 """
 
 import hashlib
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+from indic_platform.text import mentions
 
 TERMS = Path(__file__).parent / "terminology"
 
@@ -56,13 +56,7 @@ class Glossary:
         return None
 
 
-def mentions(term: str, text: str) -> bool:
-    """Whole-word, case-insensitive presence of an English term.
-
-    Shared with the eval runner's rule on purpose: the pipeline must be scored
-    by the same notion of "the term is present" that it enforces.
-    """
-    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.IGNORECASE) is not None
+__all__ = ["mentions"]  # re-exported: callers here read it as terminology.mentions
 
 
 def load_glossary(directory: Path = TERMS) -> Glossary:

@@ -3,6 +3,7 @@ id: uc2_post_edit
 version: 1
 model: claude-sonnet-5
 temperature: 0
+temperature_sent: false  # claude-sonnet-5 rejects the parameter; the adapter omits it
 schema: "PostEdit {text: str, changes: [{from: str, to: str, reason: str}]}"
 source: docs/prd-v2.md D7 (post_edit.md, system) — text below is the PRD's, verbatim
 ---

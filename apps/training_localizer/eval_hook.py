@@ -69,14 +69,25 @@ class Localizer:
         self.use_claude = use_claude
         self.glossary = load_glossary()
         self._done: dict[tuple[str, str], dict[int, str]] = {}
+        # Raw translate-stage output, before post_edit. Kept so the eval can
+        # score what the vendor actually produced as well as what the enforcer
+        # guarantees -- see `translate_only`.
+        self._raw: dict[tuple[str, str], dict[int, str]] = {}
         self.change_log: list[dict[str, Any]] = []
         self.meta: dict[str, Any] = {"adapt": {}, "post_edit_model": use_claude}
 
     def __call__(self, segment: RunnerSegment, language: str) -> str:
+        return self._localized(segment, language)[0]
+
+    def raw(self, segment: RunnerSegment, language: str) -> str:
+        """The translate stage's output for this segment, before post_edit."""
+        return self._localized(segment, language)[1]
+
+    def _localized(self, segment: RunnerSegment, language: str) -> tuple[str, str]:
         key = (segment.module_id, language)
         if key not in self._done:
-            self._done[key] = asyncio.run(self._module(segment.module_id, language))
-        return self._done[key][segment.seg_id]
+            self._done[key], self._raw[key] = asyncio.run(self._module(segment.module_id, language))
+        return self._done[key][segment.seg_id], self._raw[key][segment.seg_id]
 
     def _segments(self, module_id: str) -> list[SourceSegment]:
         from indic_platform.eval.runners.run_uc2 import load_segments
@@ -98,7 +109,7 @@ class Localizer:
             out.append(source)
         return out
 
-    async def _module(self, module_id: str, language: str) -> dict[int, str]:
+    async def _module(self, module_id: str, language: str) -> tuple[dict[int, str], dict[int, str]]:
         from indic_platform.adapters.sarvam_translate import SarvamTranslate
 
         segments = self._segments(module_id)
@@ -116,7 +127,7 @@ class Localizer:
             mayura = SarvamTranslate()
             limit = asyncio.Semaphore(CONCURRENCY)
 
-            async def one(segment: SourceSegment) -> tuple[int, str]:
+            async def one(segment: SourceSegment) -> tuple[int, str, str]:
                 locked_text = (
                     str(self.glossary.statements[segment.locked_id][language])
                     if segment.locked_id is not None
@@ -129,14 +140,14 @@ class Localizer:
                         translator=lambda t, lang: mayura.translate(t, target=lang, mode="formal"),
                         locked_text=locked_text,
                     )
-                text, changes, _ = await stages.post_edit(
-                    source_text=english[segment.seg_id],
-                    translated=translated,
-                    language=language,
-                    glossary=self.glossary,
-                    structured=claude.structured if claude else None,
-                    locked_id=segment.locked_id,
-                )
+                    text, changes, _ = await stages.post_edit(
+                        source_text=english[segment.seg_id],
+                        translated=translated,
+                        language=language,
+                        glossary=self.glossary,
+                        structured=claude.structured if claude else None,
+                        locked_id=segment.locked_id,
+                    )
                 self.change_log += [
                     {
                         "module_id": module_id,
@@ -146,13 +157,16 @@ class Localizer:
                     }
                     for change in changes
                 ]
-                return segment.seg_id, text
+                return segment.seg_id, text, translated
 
             results = await asyncio.gather(*(one(s) for s in segments))
         finally:
             if claude is not None:
                 await claude.client.close()
-        return dict(results)
+        return (
+            {seg_id: text for seg_id, text, _ in results},
+            {seg_id: raw for seg_id, _, raw in results},
+        )
 
 
 _full: Localizer | None = None
@@ -178,6 +192,22 @@ def translate_and_enforce(segment: RunnerSegment, language: str) -> str:
     if _enforce_only is None:
         _enforce_only = Localizer(use_claude=False)
     return _enforce_only(segment, language)
+
+
+def translate_only(segment: RunnerSegment, language: str) -> str:
+    """The raw translate-stage output, with no post_edit.
+
+    `run_uc2 --pre-edit` scores this alongside the finished text. Without it
+    `terminology_adherence` cannot fail: `enforce` implements exactly the
+    predicate the scorer tests, so any translator at all -- including one that
+    returns "zzz" -- comes out at 1.0. The pre-edit number is the one that says
+    something about the vendor, and it shares the cached run, so scoring it
+    costs nothing extra.
+    """
+    active = _full or _enforce_only
+    if active is None:
+        raise RuntimeError("--pre-edit needs the matching --translate hook in the same run")
+    return active.raw(segment, language)
 
 
 def change_log() -> list[dict[str, Any]]:

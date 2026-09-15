@@ -33,13 +33,13 @@ import argparse
 import asyncio
 import importlib
 import json
-import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import yaml
 from indic_platform.eval.report import Report
+from indic_platform.text import mentions
 from pydantic import BaseModel, Field
 
 GOLDEN = Path(__file__).parents[1] / "golden" / "uc2_training"
@@ -158,9 +158,9 @@ def load_timing() -> dict[str, Any]:
     return yaml.safe_load(TIMING.read_text())
 
 
-def mentions(term: str, text: str) -> bool:
-    """Whole-word, case-insensitive presence of an English term."""
-    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.IGNORECASE) is not None
+# Re-exported so existing callers keep working; the rule itself is shared with
+# the pipeline that has to satisfy it (see indic_platform.text).
+__all__ = ["mentions"]
 
 
 def terminology_expectations(
@@ -439,6 +439,7 @@ def evaluate(
     strict: bool = True,
     fidelity_source: str = "references",
     sut: str = "baseline (untranslated source)",
+    pre_edit: Translator | None = None,
 ) -> Report:
     segments = load_segments()
     references = load_references()
@@ -462,6 +463,23 @@ def evaluate(
     term_metrics, term_details = score_terminology(segments, translate, glossary, renderings)
     metrics.update(term_metrics)
     details += term_details
+    if pre_edit is not None:
+        # `terminology_adherence` alone cannot fail against a pipeline whose
+        # post-edit stage enforces exactly the predicate scored here: a
+        # translator returning "zzz" reaches 1.0. Scoring the text BEFORE the
+        # enforcer says what the translation vendor actually did, which is the
+        # number that moves. Reported, never gated -- the gate is on the
+        # finished text, which is what ships.
+        raw_metrics, raw_details = score_terminology(
+            segments, memoise(pre_edit), glossary, renderings
+        )
+        metrics.update(
+            {
+                "terminology_adherence_pre_edit": raw_metrics["terminology_adherence"],
+                "keep_english_retention_pre_edit": raw_metrics["keep_english_retention"],
+            }
+        )
+        details += [{**d, "check": f"{d['check']}:pre_edit"} for d in raw_details]
     metrics.update(score_timing(segments, translate, timing))
     quiz_metrics, quiz_details = score_quiz(quiz, segments)
     metrics.update(quiz_metrics)
@@ -613,6 +631,14 @@ def main() -> None:
         "--translate", help="module:function implementing (Segment, language) -> str"
     )
     parser.add_argument("--judge", help="module:function implementing the Judge contract")
+    parser.add_argument(
+        "--pre-edit",
+        help=(
+            "module:function giving the same pipeline's text BEFORE post-edit; "
+            "scored alongside as terminology_adherence_pre_edit so the headline "
+            "number can be compared against what the translator alone produced"
+        ),
+    )
     parser.add_argument("--judge-model", default="claude-haiku-4-5")
     parser.add_argument(
         "--fidelity-source",
@@ -645,6 +671,11 @@ def main() -> None:
         module, function = args.translate.split(":", 1)
         translate = getattr(importlib.import_module(module), function)
 
+    pre_edit: Translator | None = None
+    if args.pre_edit:
+        module, function = args.pre_edit.split(":", 1)
+        pre_edit = getattr(importlib.import_module(module), function)
+
     judge: Judge | None = None
     if args.judge:
         module, function = args.judge.split(":", 1)
@@ -663,6 +694,7 @@ def main() -> None:
         strict=not args.baseline,
         fidelity_source=args.fidelity_source,
         sut=args.translate or "baseline (untranslated source)",
+        pre_edit=pre_edit,
     )
     report.write(args.output)
     print(

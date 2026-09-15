@@ -3,6 +3,7 @@ id: uc2_adapt
 version: 1
 model: claude-sonnet-5
 temperature: 0
+temperature_sent: false  # claude-sonnet-5 rejects the parameter; the adapter omits it
 schema: "AdaptedScript {segments: [{seg_id: int, text: str, rationale: str}]}"
 source: docs/prd-v2.md D7 (adapt.md, system) — text below is the PRD's, verbatim
 ---
