@@ -1,0 +1,331 @@
+# DRAFT -- owned by Compliance, not by engineering. See guaranteed_returns.yaml
+# for the schema and the governance rule (PRD E7).
+category: off_channel_comms
+status: draft
+owner: compliance
+description: >
+  Moving business communication onto a channel the firm does not capture.
+  Naming a consumer messaging app is not itself a breach -- the signal is the
+  move, or the reason given for it.
+entries:
+  - id: oc-001
+    note: consumer messaging apps by name
+    severity: medium
+    weight: 0.6
+    terms:
+      - whatsapp
+      - व्हाट्सएप
+      - వాట్సాప్
+      - வாட்ஸ்அப்
+      - telegram
+      - टेलीग्राम
+      - టెలిగ్రామ్
+      - டெலிகிராம்
+      - signal app
+      - wechat
+      - snapchat
+      - imessage
+
+  - id: oc-002
+    note: moving off the recorded channel
+    severity: high
+    weight: 0.9
+    terms:
+      - do not put this on email
+      - not on email
+      - take it off email
+      - message me on whatsapp instead
+      - use signal for the rest
+      - talk on my personal
+      - ईमेल पर मत डालो
+      - बाकी बात मेरे निजी
+      - व्हाट्सएप पर भेजो
+      - ఈమెయిల్‌లో పెట్టవద్దు
+      - వాట్సాప్‌లో పంపండి
+      - నా వ్యక్తిగత టెలిగ్రామ్‌లో
+      - மின்னஞ்சலில் போடாதே
+      - வாட்ஸ்அப்பில் அனுப்பு
+      - என் தனிப்பட்ட டெலிகிராமில்
+      - email pe mat daalo
+      - whatsapp pe bhejo
+      - personal telegram pe
+
+  - id: oc-003
+    note: the reason given is that it is not recorded
+    severity: high
+    weight: 0.95
+    terms:
+      - nothing gets recorded there
+      - it is not recorded
+      - compliance does not see it
+      - not in the archive
+      - no audit trail there
+      - वहाँ कुछ रिकॉर्ड नहीं होता
+      - कंप्लायंस की रिकॉर्डिंग वहाँ नहीं
+      - रिकॉर्ड नहीं होता
+      - అక్కడ రికార్డు కాదు
+      - కంప్లయన్స్ రికార్డింగ్ అక్కడికి రాదు
+      - அங்கு பதிவு ஆகாது
+      - கம்ப்ளையன்ஸ் பதிவு அங்கு வராது
+      - wahan record nahi hota
+      - compliance recording wahan nahi aati
+
+  - id: oc-004
+    note: personal device or number
+    severity: medium
+    weight: 0.7
+    terms:
+      - my personal number
+      - personal phone
+      - my personal device
+      - मेरे निजी नंबर पर
+      - निजी फ़ोन
+      - నా వ్యక్తిగత నంబర్
+      - వ్యక్తిగత ఫోన్
+      - என் தனிப்பட்ட எண்
+      - தனிப்பட்ட தொலைபேசி
+      - personal number pe
+
+  - id: oc-005
+    note: personal email address
+    severity: high
+    weight: 0.8
+    terms:
+      - my gmail
+      - personal email
+      - my yahoo
+      - send it to my personal id
+      - मेरे जीमेल पर
+      - निजी ईमेल
+      - నా జీమెయిల్
+      - వ్యక్తిగత ఈమెయిల్
+      - என் ஜிமெயில்
+      - தனிப்பட்ட மின்னஞ்சல்
+      - mere gmail pe
+
+  - id: oc-006
+    note: disappearing or self-deleting messages
+    severity: high
+    weight: 0.85
+    terms:
+      - disappearing messages
+      - self destructing
+      - message will delete itself
+      - गायब होने वाले संदेश
+      - అదృశ్యమయ్యే సందేశాలు
+      - மறைந்துபோகும் செய்திகள்
+
+  - id: oc-007
+    note: instruction to delete afterwards
+    severity: high
+    weight: 0.85
+    terms:
+      - delete after reading
+      - clear this chat
+      - erase the thread
+      - पढ़कर मिटा देना
+      - चैट साफ़ कर देना
+      - చదివాక తొలగించు
+      - படித்ததும் நீக்கு
+
+  - id: oc-008
+    note: meeting offline to avoid a record
+    severity: medium
+    weight: 0.6
+    terms:
+      - let us discuss this in person
+      - baat aamne saamne karenge
+      - आमने सामने बात करेंगे
+      - ముఖాముఖి మాట్లాడదాం
+      - நேரில் பேசுவோம்
+
+  - id: oc-009
+    note: explicit avoidance of surveillance
+    severity: high
+    weight: 0.9
+    terms:
+      - they cannot see it there
+      - surveillance does not cover it
+      - monitoring nahi hota wahan
+      - वहाँ निगरानी नहीं होती
+      - అక్కడ పర్యవేక్షణ ఉండదు
+      - அங்கு கண்காணிப்பு இல்லை
+
+  - id: oc-010
+    note: moving to a personal call
+    severity: medium
+    weight: 0.55
+    terms:
+      - call me on my mobile instead
+      - mobile pe call karo
+      - मोबाइल पर कॉल करो
+      - మొబైల్‌కి కాల్ చేయి
+      - மொபைலில் அழை
+
+  - id: oc-011
+    note: using a non-firm video platform
+    severity: low
+    weight: 0.4
+    terms:
+      - personal zoom
+      - my own meet link
+      - निजी ज़ूम
+      - వ్యక్తిగత జూమ్
+      - தனிப்பட்ட ஜூம்
+
+  - id: oc-012
+    note: file sharing outside the firm
+    severity: high
+    weight: 0.8
+    terms:
+      - my personal drive
+      - dropbox link
+      - personal onedrive
+      - मेरी निजी ड्राइव
+      - నా వ్యక్తిగత డ్రైవ్
+      - என் தனிப்பட்ட டிரைவ்
+      - apni personal drive pe
+
+  - id: oc-013
+    note: asking the counterparty to move channel
+    severity: high
+    weight: 0.8
+    terms:
+      - ping me there instead
+      - wahin par message karo
+      - वहीं पर मैसेज करो
+      - అక్కడే సందేశం పంపు
+      - அங்கேயே செய்தி அனுப்பு
+
+  - id: oc-014
+    note: explicitly avoiding the firm system
+    severity: high
+    weight: 0.85
+    terms:
+      - not on the firm system
+      - avoid the official channel
+      - official channel se nahi
+      - आधिकारिक चैनल से नहीं
+      - అధికారిక ఛానెల్‌లో కాదు
+      - அதிகாரப்பூர்வ சேனலில் இல்லை
+
+  - id: oc-015
+    note: second phone kept for this purpose
+    severity: high
+    weight: 0.85
+    terms:
+      - my second phone
+      - the other handset
+      - दूसरा फ़ोन
+      - రెండో ఫోన్
+      - இரண்டாவது தொலைபேசி
+
+  - id: oc-016
+    note: coded or indirect reference to moving channel
+    severity: medium
+    weight: 0.6
+    terms:
+      - you know where to reach me
+      - the usual place
+      - hamesha wali jagah
+      - हमेशा वाली जगह
+      - ఎప్పటి చోటే
+      - வழக்கமான இடத்தில்
+
+  - id: oc-017
+    note: sharing a client document over a consumer app
+    severity: high
+    weight: 0.8
+    terms:
+      - i will whatsapp you the sheet
+      - photo bhej deta hoon
+      - फोटो भेज देता हूँ
+      - ఫోటో పంపుతాను
+      - புகைப்படம் அனுப்புகிறேன்
+
+  - id: oc-018
+    note: turning off recording on a call
+    severity: high
+    weight: 0.85
+    terms:
+      - let me stop the recording
+      - recording band kar deta hoon
+      - रिकॉर्डिंग बंद कर देता हूँ
+      - రికార్డింగ్ ఆపేస్తాను
+      - பதிவை நிறுத்துகிறேன்
+
+  - id: oc-019
+    note: instructing not to copy compliance
+    severity: medium
+    weight: 0.65
+    terms:
+      - do not copy compliance
+      - compliance ko cc mat karo
+      - कंप्लायंस को सीसी मत करो
+      - కంప్లయన్స్‌కు సీసీ చేయవద్దు
+      - கம்ப்ளையன்ஸை நகலெடுக்க வேண்டாம்
+
+  - id: oc-020
+    note: using a personal social account for business
+    severity: medium
+    weight: 0.6
+    terms:
+      - dm me on instagram
+      - linkedin message karo
+      - इंस्टाग्राम पर डीएम
+      - ఇన్‌స్టాగ్రామ్‌లో డీఎం
+      - இன்ஸ்டாகிராமில் டிஎம்
+
+  - id: oc-021
+    note: a channel name close to a non-record justification
+    severity: high
+    weight: 0.9
+    terms: []
+    regex: '\b(?:whatsapp|telegram|signal|wechat|personal\s+(?:phone|number|email|drive))\b[^.!?]{0,70}\b(?:not\s+record|no\s+record|nothing\s+gets\s+record|compliance|archive|monitor)\w*'
+
+  - id: oc-022
+    note: a non-record justification close to a channel name
+    severity: high
+    weight: 0.9
+    terms: []
+    regex: '\b(?:not\s+record|no\s+record|off\s+the\s+record|no\s+audit)\w*[^.!?]{0,70}\b(?:whatsapp|telegram|signal|personal\s+(?:phone|number|email))\b'
+
+  - id: oc-023
+    note: forwarding firm mail to a personal address
+    severity: high
+    weight: 0.85
+    terms:
+      - forward it to my personal
+      - apne personal pe forward
+      - अपने निजी पर फ़ॉरवर्ड
+      - నా వ్యక్తిగతానికి ఫార్వార్డ్
+      - என் தனிப்பட்டதற்கு அனுப்பு
+
+  - id: oc-024
+    note: describing the channel as safe or clean
+    severity: medium
+    weight: 0.6
+    terms:
+      - that channel is clean
+      - wahan safe hai
+      - वहाँ सुरक्षित है
+      - అక్కడ సురక్షితం
+      - அங்கு பாதுகாப்பானது
+
+  - id: oc-025
+    note: refusing to put something in writing at all
+    severity: medium
+    weight: 0.65
+    terms:
+      - i will not put that in writing
+      - likh kar nahi dunga
+      - लिखकर नहीं दूँगा
+      - రాసి ఇవ్వను
+      - எழுதி தர மாட்டேன்
+
+  - id: oc-026
+    note: personal number shared in the clear
+    severity: low
+    weight: 0.35
+    terms: []
+    regex: '\b(?:my|mera|meri)\s+(?:personal\s+)?(?:number|no)\b[^.!?]{0,20}\d{5}'

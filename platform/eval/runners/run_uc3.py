@@ -202,11 +202,23 @@ def score_detection(
 
     flagged = true_positives + false_positives
     relevant = true_positives + false_negatives
+    # The number a compliance team actually feels: of the calls that carry no
+    # violation at all, how many land in the review queue? Per-flag precision
+    # conflates "raised a second flag on a call that was already a true
+    # positive" with "raised a flag on a clean call", and only the second costs
+    # a reviewer their morning.
+    unlabelled = [t for t in transcripts if not t.labels]
+    noisy = {t.id for t in unlabelled if flags_by_id.get(t.id)}
     metrics: dict[str, float] = {
         "flags_raised": float(flagged),
         "labels": float(relevant),
         "recall": (true_positives / relevant) if relevant else 0.0,
+        "clean_transcripts": float(len(unlabelled)),
+        "clean_flagged": float(len(noisy)),
+        "clean_flag_rate": (len(noisy) / len(unlabelled)) if unlabelled else 0.0,
     }
+    for transcript_id in sorted(noisy):
+        details.append({"check": "noise:clean_flagged", "id": transcript_id})
     # Precision over zero flags is undefined, not 1.0. A detector that flags
     # nothing must not look perfectly precise -- but "undefined" has to be said
     # out loud, not left as a missing key nobody notices.

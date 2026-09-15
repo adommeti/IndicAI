@@ -1,0 +1,359 @@
+# DRAFT -- owned by Compliance, not by engineering.
+#
+# Changes go through a pull request with Compliance approval (PRD E7). CI runs
+# the UC3 eval on every change to this directory and blocks on regression, so a
+# term added here is a measured change, not a silent one.
+#
+# `terms` are matched literally, token-aware, case-insensitively, against both
+# the native-script transcript and its Roman rendering. `regex` is for shapes a
+# word list cannot express. `weight` feeds the Stage 0 score; `severity` is what
+# a reviewer sees. Nothing here decides anything on its own -- Stage 0 is a
+# recall floor and a triage input (E5).
+category: guaranteed_returns
+status: draft
+owner: compliance
+description: >
+  Promising a client a certain, assured or risk-free return, or denying the
+  possibility of loss. The regulatory line is the promise, not the number.
+entries:
+  - id: gr-001
+    note: explicit guarantee attached to a return
+    negatable: true
+    severity: high
+    weight: 0.9
+    terms:
+      - guaranteed return
+      - guaranteed returns
+      - return is guaranteed
+      - returns are guaranteed
+      - गारंटीड रिटर्न
+      - रिटर्न की गारंटी
+      - रिटर्न गारंटी
+      - రాబడి గ్యారంటీ
+      - గ్యారంటీ రాబడి
+      - வருமானம் உறுதி
+      - உறுதியான வருமானம்
+      - return guaranteed hai
+      - guaranteed return milega
+      - return ki guarantee
+    # The standard risk disclaimer uses the same words as the promise, so this
+    # entry is negation-aware: see `negatable` in matcher.py.
+    negatable: true
+    regex: '\bguarantee\w*\s+(?:\w+\s+){0,2}returns?\b'
+
+  - id: gr-002
+    note: assured or certain return, without the word guarantee
+    negatable: true
+    severity: high
+    weight: 0.85
+    terms:
+      - assured return
+      - assured returns
+      - certain return
+      - sure return
+      - fixed return
+      - निश्चित रिटर्न
+      - रिटर्न निश्चित है
+      - पक्का रिटर्न
+      - ఖాయమైన రాబడి
+      - రాబడి ఖాయం
+      - உறுதி வருமானம்
+      - return fixed hai
+      - return pakka hai
+      - assured return milega
+
+  - id: gr-003
+    note: capital protection or no-loss claims
+    severity: high
+    weight: 0.85
+    terms:
+      - capital protected
+      - capital protection
+      - capital is safe
+      - principal is safe
+      - no downside
+      - no loss
+      - cannot lose
+      - zero risk
+      - risk free
+      - पूँजी सुरक्षित
+      - पूंजी पूरी तरह सुरक्षित
+      - कोई नुकसान नहीं
+      - नुकसान का सवाल ही नहीं
+      - मूलधन सुरक्षित
+      - మూలధనం సురక్షితం
+      - నష్టం ఉండదు
+      - నష్టం అనేది ఉండదు
+      - முதலீடு பாதுகாப்பானது
+      - நஷ்டமே இல்லை
+      - capital protected hai
+      - koi downside nahi
+      - nuksan nahi hoga
+
+  - id: gr-004
+    note: a specific promised percentage
+    severity: high
+    weight: 0.8
+    terms:
+      - twelve percent guaranteed
+      - guaranteed twelve percent
+      - बारह प्रतिशत की गारंटी
+      - पन्द्रह प्रतिशत की गारंटी
+      - పన్నెండు శాతం గ్యారంటీ
+      - பன்னிரண்டு சதவீதம் உறுதி
+      - bara percent guaranteed
+    regex: '\b\d{1,2}\s*(?:%|percent|per\s*cent|प्रतिशत|శాతం|சதவீதம்)\s*(?:\w+\s+){0,3}(?:guarantee|guaranteed|assured|pakka|fixed)\b'
+
+  - id: gr-005
+    note: comparing to a deposit or calling a market product safe like one
+    severity: medium
+    weight: 0.6
+    terms:
+      - safe as a fixed deposit
+      - better than fd
+      - like an fd
+      - fd se behtar
+      - एफडी जितना सुरक्षित
+      - एफडी से बेहतर
+      - ఎఫ్‌డి కంటే మంచిది
+      - எஃப்டி போல பாதுகாப்பானது
+
+  - id: gr-006
+    note: promising a payout schedule as certain
+    severity: medium
+    weight: 0.6
+    terms:
+      - monthly payout guaranteed
+      - guaranteed income
+      - guaranteed payout
+      - मासिक आय की गारंटी
+      - गारंटीड इनकम
+      - ఖాయమైన ఆదాయం
+      - உறுதியான வருமானம் மாதம்
+      - monthly income guaranteed hai
+
+  - id: gr-007
+    note: telling the client not to worry about loss
+    severity: medium
+    weight: 0.55
+    terms:
+      - do not worry about the market
+      - market kuch bhi ho
+      - chinta mat karo paisa safe hai
+      - चिंता मत कीजिए पैसा सुरक्षित है
+      - बाज़ार कुछ भी हो
+      - మార్కెట్ ఏమైనా
+      - சந்தை எதுவானாலும்
+
+  - id: gr-008
+    note: promissory framing of past performance
+    severity: medium
+    weight: 0.5
+    terms:
+      - will give the same return
+      - same return milega
+      - हमेशा यही रिटर्न मिलेगा
+      - ఇదే రాబడి వస్తుంది
+      - இதே வருமானம் கிடைக்கும
+
+  - id: gr-009
+    note: guarantee offered verbally outside documentation
+    severity: high
+    weight: 0.75
+    terms:
+      - i personally guarantee
+      - my personal guarantee
+      - मैं व्यक्तिगत गारंटी देता हूँ
+      - నేను వ్యక్తిగతంగా హామీ ఇస్తున్నాను
+      - நான் தனிப்பட்ட உறுதி தருகிறேன்
+      - main guarantee deta hoon
+
+  - id: gr-010
+    note: suppressing the risk disclosure
+    severity: high
+    weight: 0.8
+    terms:
+      - skip the risk disclosure
+      - do not mention the risk
+      - risk ka mat batao
+      - जोखिम के बारे में मत बताना
+      - रिस्क मत बताओ
+      - రిస్క్ చెప్పవద్దు
+      - ஆபத்து சொல்ல வேண்டாம்
+
+  - id: gr-011
+    note: claiming regulatory or fund backing for a return
+    severity: medium
+    weight: 0.6
+    terms:
+      - sebi approved return
+      - government backed return
+      - सरकार की गारंटी
+      - सेबी अनुमोदित
+      - ప్రభుత్వ హామీ
+      - அரசு உத்தரவாதம்
+
+  - id: gr-012
+    note: downside framed as impossible rather than unlikely
+    severity: medium
+    weight: 0.6
+    terms:
+      - it can never go down
+      - kabhi neeche nahi jayega
+      - कभी नीचे नहीं जाएगा
+      - ఎప్పుడూ తగ్గదు
+      - ஒருபோதும் குறையாது
+
+  - id: gr-013
+    note: promising to make good a loss personally
+    severity: high
+    weight: 0.85
+    terms:
+      - i will cover the loss
+      - we will make up the loss
+      - nuksan main bhar doonga
+      - नुकसान मैं भर दूँगा
+      - నష్టం నేను భరిస్తాను
+      - நஷ்டத்தை நான் ஈடுசெய்வேன்
+
+  - id: gr-014
+    note: urgency coupled with a guarantee
+    severity: medium
+    weight: 0.5
+    terms:
+      - guaranteed only today
+      - aaj hi guaranteed
+      - आज ही गारंटी
+      - ఈరోజే గ్యారంటీ
+      - இன்றே உறுதி
+
+  - id: gr-015
+    note: describing a market-linked product as a deposit
+    severity: medium
+    weight: 0.6
+    terms:
+      - it is like a deposit
+      - deposit jaisa hai
+      - जमा जैसा है
+      - డిపాజిట్ లాంటిది
+      - வைப்பு போன்றது
+
+  - id: gr-016
+    note: assurance of principal return on exit
+    severity: medium
+    weight: 0.6
+    terms:
+      - you will get your money back
+      - paisa wapas milega guaranteed
+      - पैसा वापस मिलेगा
+      - డబ్బు తిరిగి వస్తుంది
+      - பணம் திரும்ப கிடைக்கும்
+
+  - id: gr-017
+    note: framing volatility as irrelevant
+    severity: low
+    weight: 0.35
+    terms:
+      - volatility does not matter
+      - market girne se farak nahi
+      - बाज़ार गिरने से फ़र्क़ नहीं
+      - మార్కెట్ పడినా ఫర్వాలేదు
+      - சந்தை வீழ்ந்தாலும் பரவாயில்லை
+
+  - id: gr-018
+    note: guaranteeing outperformance of a benchmark
+    severity: medium
+    weight: 0.55
+    terms:
+      - will definitely beat the index
+      - index se zyada pakka
+      - इंडेक्स से ज़्यादा पक्का
+      - సూచీ కంటే ఖచ్చితంగా ఎక్కువ
+      - குறியீட்டை விட நிச்சயம் அதிகம்
+
+  - id: gr-019
+    note: telling the client the documentation is a formality
+    severity: high
+    weight: 0.7
+    terms:
+      - the paperwork is a formality
+      - document to formality hai
+      - कागज़ी कार्रवाई औपचारिकता है
+      - పత్రాలు ఒక లాంఛనం
+      - ஆவணங்கள் சம்பிரதாயம்
+
+  - id: gr-020
+    note: guaranteeing a return in writing off-record
+    severity: high
+    weight: 0.75
+    terms:
+      - i will put the guarantee in writing separately
+      - alag se likh kar de doonga
+      - अलग से लिखकर दे दूँगा
+      - విడిగా రాసి ఇస్తాను
+      - தனியாக எழுதி தருகிறேன்
+
+  - id: gr-021
+    note: minimum return floor promised
+    severity: high
+    weight: 0.8
+    terms:
+      - minimum return of
+      - at least this much return
+      - kam se kam itna return
+      - कम से कम इतना रिटर्न
+      - కనీసం ఇంత రాబడి
+      - குறைந்தபட்சம் இவ்வளவு வருமானம்
+    regex: '\bminimum\s+(?:\w+\s+){0,2}returns?\b'
+
+  - id: gr-022
+    note: claiming the fund has never lost money
+    severity: medium
+    weight: 0.55
+    terms:
+      - never lost money
+      - kabhi loss nahi hua
+      - कभी नुकसान नहीं हुआ
+      - ఎప్పుడూ నష్టం రాలేదు
+      - ஒருபோதும் நஷ்டம் இல்லை
+
+  - id: gr-023
+    note: promise contingent on staying invested
+    severity: low
+    weight: 0.4
+    terms:
+      - hold for three years and it is guaranteed
+      - teen saal rakho guaranteed
+      - तीन साल रखो गारंटी
+      - మూడేళ్లు ఉంచితే ఖాయం
+      - மூன்று ஆண்டுகள் வைத்தால் உறுதி
+
+  - id: gr-024
+    note: discouraging the client from reading the risk factors
+    severity: medium
+    weight: 0.6
+    terms:
+      - do not bother reading the risk factors
+      - risk factors padhne ki zarurat nahi
+      - जोखिम कारक पढ़ने की ज़रूरत नहीं
+      - రిస్క్ అంశాలు చదవాల్సిన అవసరం లేదు
+      - ஆபத்து காரணிகளை படிக்க தேவையில்லை
+
+  - id: gr-025
+    note: comparing the product to insurance of capital
+    severity: medium
+    weight: 0.55
+    terms:
+      - your capital is insured
+      - poonji ka insurance hai
+      - पूँजी का बीमा है
+      - మూలధనానికి బీమా ఉంది
+      - மூலதனத்திற்கு காப்பீடு உள்ளது
+
+  - id: gr-026
+    note: any sentence pairing a promise verb with a return noun
+    severity: medium
+    weight: 0.5
+    terms: []
+    negatable: true
+    regex: '\b(?:promise|promising|assure|assuring|guarantee|guaranteeing)\b[^.!?]{0,40}\b(?:return|returns|profit|yield|payout)\b'

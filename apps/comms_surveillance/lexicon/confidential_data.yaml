@@ -1,0 +1,323 @@
+# DRAFT -- owned by Compliance, not by engineering. See guaranteed_returns.yaml
+# for the schema and the governance rule (PRD E7).
+category: confidential_data
+status: draft
+owner: compliance
+description: >
+  Moving client, fund or firm data out of controlled systems: exports to
+  personal storage, screenshots, forwarding registers, or sharing positions
+  with people who should not have them.
+entries:
+  - id: cf-001
+    note: export to personal storage
+    severity: high
+    weight: 0.9
+    terms:
+      - exported to my personal drive
+      - copied to my usb
+      - on my personal laptop
+      - saved it to my desktop at home
+      - अपनी निजी ड्राइव में निर्यात
+      - पेन ड्राइव में कॉपी
+      - घर के लैपटॉप पर
+      - నా వ్యక్తిగత డ్రైవ్‌కి ఎగుమతి
+      - పెన్ డ్రైవ్‌లో కాపీ
+      - என் தனிப்பட்ட டிரைவுக்கு ஏற்றுமதி
+      - பென் டிரைவில் நகல்
+      - personal drive pe export
+      - pen drive mein copy
+
+  - id: cf-002
+    note: client holdings or positions
+    severity: high
+    weight: 0.85
+    terms:
+      - client holdings list
+      - position sheet
+      - holdings file
+      - portfolio file
+      - क्लाइंट होल्डिंग्स सूची
+      - पोज़िशन शीट
+      - होल्डिंग्स फ़ाइल
+      - క్లయింట్ హోల్డింగ్స్ జాబితా
+      - పొజిషన్ షీట్
+      - வாடிக்கையாளர் பங்கு பட்டியல்
+      - நிலை தாள்
+
+  - id: cf-003
+    note: investor register or client list
+    severity: high
+    weight: 0.85
+    terms:
+      - investor register
+      - client list
+      - investor list
+      - निवेशक रजिस्टर
+      - ग्राहक सूची
+      - ఇన్వెస్టర్ రిజిస్టర్
+      - క్లయింట్ జాబితా
+      - முதலீட்டாளர் பதிவேடு
+      - வாடிக்கையாளர் பட்டியல்
+
+  - id: cf-004
+    note: sending firm data to a personal address
+    severity: high
+    weight: 0.9
+    terms:
+      - send it to my gmail
+      - mail it to my personal id
+      - मेरे जीमेल पर भेज दो
+      - निजी आईडी पर मेल करो
+      - నా జీమెయిల్‌కి పంపు
+      - వ్యక్తిగత ఐడీకి మెయిల్ చేయి
+      - என் ஜிமெயிலுக்கு அனுப்பு
+      - mere gmail pe bhej do
+
+  - id: cf-005
+    note: photographing a screen
+    severity: high
+    weight: 0.85
+    terms:
+      - photograph the position sheet
+      - take a screenshot and send
+      - screen ka photo le lo
+      - स्क्रीन का फोटो ले लो
+      - स्क्रीनशॉट भेज दो
+      - స్క్రీన్ ఫోటో తీసుకో
+      - స్క్రీన్‌షాట్ పంపు
+      - திரையின் புகைப்படம் எடு
+
+  - id: cf-006
+    note: sharing on a group
+    severity: high
+    weight: 0.8
+    terms:
+      - share it on the group
+      - group mein daal do
+      - ग्रुप पर डाल दो
+      - గ్రూప్‌లో పెట్టు
+      - குழுவில் பகிர்
+
+  - id: cf-007
+    note: bypassing the portal or DLP
+    severity: high
+    weight: 0.85
+    terms:
+      - faster than the portal
+      - portal se jaldi
+      - dlp block kar deta hai
+      - डीएलपी ब्लॉक कर देता है
+      - पोर्टल से जल्दी
+      - డీఎల్‌పీ బ్లాక్ చేస్తుంది
+      - டிஎல்பி தடுக்கிறது
+
+  - id: cf-008
+    note: VPN cited as a reason to go around controls
+    severity: medium
+    weight: 0.6
+    terms:
+      - vpn is slow so
+      - वीपीएन बहुत धीमा है
+      - వీపీఎన్ చాలా నెమ్మది
+      - வீபிஎன் மிக மெதுவாக உள்ளது
+      - vpn slow hai
+
+  - id: cf-009
+    note: NAV, AUM or performance before publication
+    severity: medium
+    weight: 0.65
+    terms:
+      - nav before publication
+      - unpublished nav
+      - aum figure
+      - एनएवी प्रकाशन से पहले
+      - ప్రచురణకు ముందు ఎన్ఏవీ
+      - வெளியீட்டுக்கு முன் என்ஏவி
+
+  - id: cf-010
+    note: fee or mandate terms shared externally
+    severity: medium
+    weight: 0.65
+    terms:
+      - our fee schedule
+      - mandate terms
+      - फ़ीस शेड्यूल
+      - ఫీజు షెడ్యూల్
+      - கட்டண அட்டவணை
+
+  - id: cf-011
+    note: personal data of clients
+    severity: high
+    weight: 0.85
+    terms:
+      - pan numbers
+      - aadhaar numbers
+      - kyc documents
+      - पैन नंबर
+      - आधार नंबर
+      - केवाईसी दस्तावेज़
+      - పాన్ నంబర్లు
+      - ఆధార్ నంబర్లు
+      - பான் எண்கள்
+      - ஆதார் எண்கள்
+
+  - id: cf-012
+    note: taking data when leaving
+    severity: high
+    weight: 0.95
+    terms:
+      - before i leave i will take a copy
+      - taking my book with me
+      - jaane se pehle copy le loonga
+      - जाने से पहले कॉपी ले लूँगा
+      - వెళ్లేముందు కాపీ తీసుకుంటాను
+      - போவதற்கு முன் நகல் எடுப்பேன்
+
+  - id: cf-013
+    note: sharing with a former employee or competitor
+    severity: high
+    weight: 0.9
+    terms:
+      - send it to him at his new firm
+      - competitor ko bhej do
+      - प्रतिद्वंद्वी को भेज दो
+      - పోటీదారుకి పంపు
+      - போட்டியாளருக்கு அனுப்பு
+
+  - id: cf-014
+    note: printing confidential material
+    severity: medium
+    weight: 0.6
+    terms:
+      - print it and take it home
+      - print karke ghar le jao
+      - प्रिंट करके घर ले जाओ
+      - ప్రింట్ చేసి ఇంటికి తీసుకెళ్లు
+      - அச்சிட்டு வீட்டுக்கு எடுத்துச் செல்
+
+  - id: cf-015
+    note: shared credentials
+    severity: high
+    weight: 0.9
+    terms:
+      - use my login
+      - my password is
+      - mera password
+      - मेरा पासवर्ड
+      - मेरे लॉगिन से
+      - నా పాస్‌వర్డ్
+      - என் கடவுச்சொல்
+
+  - id: cf-016
+    note: research before publication shared out
+    severity: medium
+    weight: 0.7
+    terms:
+      - draft note before it is out
+      - report jaane se pehle
+      - रिपोर्ट जाने से पहले
+      - నివేదిక వెళ్లకముందే
+      - அறிக்கை வெளியாகும் முன்
+
+  - id: cf-017
+    note: trade blotter or order book
+    severity: high
+    weight: 0.8
+    terms:
+      - the blotter
+      - order book file
+      - ऑर्डर बुक फ़ाइल
+      - ఆర్డర్ బుక్ ఫైల్
+      - ஆர்டர் புத்தக கோப்பு
+
+  - id: cf-018
+    note: counterparty or broker terms
+    severity: low
+    weight: 0.45
+    terms:
+      - broker commission rates
+      - ब्रोकर कमीशन दरें
+      - బ్రోకర్ కమిషన్ రేట్లు
+      - தரகர் கமிஷன் விகிதங்கள்
+
+  - id: cf-019
+    note: cloud paste sites
+    severity: high
+    weight: 0.8
+    terms:
+      - pastebin
+      - google doc link
+      - public link bana do
+      - पब्लिक लिंक बना दो
+      - పబ్లిక్ లింక్ చేయి
+      - பொது இணைப்பு உருவாக்கு
+
+  - id: cf-020
+    note: disabling encryption or controls
+    severity: high
+    weight: 0.85
+    terms:
+      - turn off the encryption
+      - encryption hata do
+      - एन्क्रिप्शन हटा दो
+      - ఎన్‌క్రిప్షన్ తీసివేయి
+      - குறியாக்கத்தை அகற்று
+
+  - id: cf-021
+    note: an export verb near a client-data noun
+    severity: high
+    weight: 0.85
+    terms: []
+    regex: '\b(?:export\w*|download\w*|copy|copied|forward\w*|email\w*|send|sent)\b[^.!?]{0,60}\b(?:client|investor|holding|position|portfolio|nav|kyc)\w*'
+
+  - id: cf-022
+    note: a client-data noun near a personal-destination marker
+    severity: high
+    weight: 0.85
+    terms: []
+    regex: '\b(?:client|investor|holding|position|portfolio)\w*[^.!?]{0,60}\b(?:personal\s+(?:drive|email|laptop|gmail)|my\s+gmail|usb|pen\s*drive|whatsapp)\b'
+
+  - id: cf-023
+    note: bulk extraction language
+    severity: high
+    weight: 0.8
+    terms:
+      - the whole database
+      - full dump
+      - poora data nikal lo
+      - पूरा डेटा निकाल लो
+      - మొత్తం డేటా తీసుకో
+      - முழு தரவையும் எடு
+
+  - id: cf-024
+    note: working from home cited as justification
+    severity: low
+    weight: 0.35
+    terms:
+      - so i can work from home
+      - ghar se kaam karne ke liye
+      - घर से काम करने के लिए
+      - ఇంటి నుండి పని చేయడానికి
+      - வீட்டிலிருந்து வேலை செய்ய
+
+  - id: cf-025
+    note: asking someone to remove access logs
+    severity: high
+    weight: 0.95
+    terms:
+      - clear the access log
+      - log se hata do
+      - लॉग से हटा दो
+      - లాగ్ నుండి తొలగించు
+      - பதிவிலிருந்து நீக்கு
+
+  - id: cf-026
+    note: sharing a seed or model file
+    severity: medium
+    weight: 0.6
+    terms:
+      - the model file
+      - our alpha model
+      - मॉडल फ़ाइल
+      - మోడల్ ఫైల్
+      - மாதிரி கோப்பு

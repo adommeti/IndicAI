@@ -1,0 +1,315 @@
+# DRAFT -- owned by Compliance, not by engineering. See guaranteed_returns.yaml
+# for the schema and the governance rule (PRD E7).
+category: personal_trading
+status: draft
+owner: compliance
+description: >
+  Dealing for one's own account, or a connected account, in a way the personal
+  account dealing policy forbids: ahead of a client order, without
+  pre-clearance, or hidden from the log.
+entries:
+  - id: pt-001
+    note: dealing ahead of a client order
+    severity: high
+    weight: 0.9
+    terms:
+      - before we placed the client order
+      - ahead of the client order
+      - front run
+      - front running
+      - क्लाइंट ऑर्डर से पहले
+      - ग्राहक के ऑर्डर से पहले
+      - క్లయింట్ ఆర్డర్ కంటే ముందే
+      - வாடிக்கையாளர் ஆர்டருக்கு முன்பே
+      - client order se pehle
+
+  - id: pt-002
+    note: buying in one's own account
+    severity: high
+    weight: 0.8
+    terms:
+      - in my own account
+      - my personal account
+      - my own demat
+      - apne account mein
+      - अपने खाते में
+      - मेरे निजी खाते में
+      - నా ఖాతాలో
+      - నా వ్యక్తిగత ఖాతా
+      - என் கணக்கில்
+      - என் தனிப்பட்ட கணக்கு
+
+  - id: pt-003
+    note: using a connected or family account
+    severity: high
+    weight: 0.85
+    terms:
+      - my wife's demat
+      - in my brother's account
+      - family account
+      - relative's account
+      - मेरी पत्नी के डीमैट
+      - भाई के खाते में
+      - रिश्तेदार के खाते
+      - నా భార్య డీమ్యాట్
+      - బంధువు ఖాతా
+      - என் மனைவியின் டீமேட்
+      - உறவினர் கணக்கு
+      - wife ke demat mein
+      - biwi ke account se
+
+  - id: pt-004
+    note: missing or skipped pre-clearance
+    severity: high
+    weight: 0.85
+    terms:
+      - did not file the pre-clearance
+      - without pre clearance
+      - skip the preclearance
+      - pre approval nahi liya
+      - पूर्व अनुमति नहीं ली
+      - प्री क्लीयरेंस नहीं
+      - ముందస్తు అనుమతి తీసుకోలేదు
+      - ముందస్తు అనుమతి లేకుండా
+      - முன் அனுமதி பெறவில்லை
+
+  - id: pt-005
+    note: instruction to omit from the log
+    severity: high
+    weight: 0.9
+    terms:
+      - leave it off the log
+      - do not log it
+      - keep it out of the record
+      - log mein mat daalo
+      - लॉग में मत डालो
+      - रिकॉर्ड से बाहर रखो
+      - లాగ్‌లో పెట్టవద్దు
+      - பதிவில் சேர்க்க வேண்டாம்
+
+  - id: pt-006
+    note: trading in a name on the restricted list
+    severity: high
+    weight: 0.8
+    terms:
+      - it is on the restricted list but
+      - restricted list mein hai phir bhi
+      - प्रतिबंधित सूची में है फिर भी
+      - నిషేధిత జాబితాలో ఉన్నా
+      - தடைப்பட்டியலில் இருந்தாலும்
+
+  - id: pt-007
+    note: short holding period breach
+    severity: medium
+    weight: 0.6
+    terms:
+      - sold within thirty days
+      - holding period breach
+      - तीस दिन के अंदर बेच दिया
+      - ముప్పై రోజుల్లోపే అమ్మేశాను
+      - முப்பது நாட்களுக்குள் விற்றேன்
+
+  - id: pt-008
+    note: using a friend or nominee as a front
+    severity: high
+    weight: 0.85
+    terms:
+      - put it in a friend's name
+      - benami account
+      - nominee ke naam par
+      - दोस्त के नाम पर
+      - बेनामी खाता
+      - స్నేహితుడి పేరుతో
+      - நண்பர் பெயரில்
+
+  - id: pt-009
+    note: mirroring the fund's trades personally
+    severity: high
+    weight: 0.8
+    terms:
+      - same trade in my account
+      - i took the same position
+      - fund jaisa hi maine liya
+      - जो फ़ंड ने लिया वही मैंने लिया
+      - ఫండ్ తీసుకున్నదే నేనూ తీసుకున్నాను
+      - நிதி எடுத்ததையே நானும் எடுத்தேன்
+
+  - id: pt-010
+    note: trading through an undisclosed broker
+    severity: medium
+    weight: 0.65
+    terms:
+      - through a broker we have not declared
+      - undeclared broking account
+      - बिना बताए ब्रोकर से
+      - ప్రకటించని బ్రోకర్ ద్వారా
+      - அறிவிக்காத தரகர் மூலம்
+
+  - id: pt-011
+    note: reversing a personal trade to avoid detection
+    severity: high
+    weight: 0.75
+    terms:
+      - square it off before the report
+      - unwind before compliance sees
+      - रिपोर्ट से पहले स्क्वायर कर दो
+      - నివేదికకు ముందే స్క్వేర్ చేయి
+      - அறிக்கைக்கு முன் சரிசெய்
+
+  - id: pt-012
+    note: instructing a colleague to trade for you
+    severity: high
+    weight: 0.8
+    terms:
+      - buy it for me in your account
+      - tum apne account se le lo
+      - तुम अपने खाते से ले लो
+      - నీ ఖాతాలో నా కోసం కొను
+      - உங்கள் கணக்கில் எனக்காக வாங்குங்கள்
+
+  - id: pt-013
+    note: personal trade in a name under research coverage
+    severity: medium
+    weight: 0.65
+    terms:
+      - i cover this name and i own it
+      - jis stock pe research karta hoon usme paisa
+      - जिस शेयर पर रिसर्च करता हूँ उसमें
+      - నేను పరిశోధించే షేరులో
+      - நான் ஆராயும் பங்கில்
+
+  - id: pt-014
+    note: gift or transfer used to disguise ownership
+    severity: medium
+    weight: 0.6
+    terms:
+      - transfer the shares as a gift
+      - gift dikha kar transfer
+      - उपहार दिखाकर ट्रांसफर
+      - బహుమతిగా బదిలీ
+      - பரிசாக மாற்றம்
+
+  - id: pt-015
+    note: breach of the personal account dealing policy by name
+    severity: high
+    weight: 0.75
+    terms:
+      - pad policy
+      - personal account dealing policy
+      - staff dealing rules
+      - व्यक्तिगत खाता नीति
+      - సిబ్బంది ట్రేడింగ్ నిబంధనలు
+      - ஊழியர் வர்த்தக விதிகள்
+
+  - id: pt-016
+    note: trading in the blackout window personally
+    severity: high
+    weight: 0.8
+    terms:
+      - traded during the blackout
+      - blackout mein trade kiya
+      - ब्लैकआउट में ट्रेड किया
+      - బ్లాక్అవుట్‌లో ట్రేడ్ చేశాను
+      - தடைக்காலத்தில் வர்த்தகம் செய்தேன்
+
+  - id: pt-017
+    note: instructing suppression from the quarterly declaration
+    severity: high
+    weight: 0.8
+    terms:
+      - keep it out of the quarterly declaration
+      - declaration mein mat likhna
+      - घोषणा में मत लिखना
+      - ప్రకటనలో రాయవద్దు
+      - அறிவிப்பில் எழுத வேண்டாம்
+
+  - id: pt-018
+    note: using an offshore or overseas account
+    severity: medium
+    weight: 0.65
+    terms:
+      - offshore account
+      - overseas broking account
+      - विदेशी खाते से
+      - విదేశీ ఖాతా
+      - வெளிநாட்டு கணக்கு
+
+  - id: pt-019
+    note: personal position sized against the fund
+    severity: medium
+    weight: 0.6
+    terms:
+      - i am bigger than the fund in this
+      - fund se zyada meri position
+      - फ़ंड से ज़्यादा मेरी पोज़िशन
+      - ఫండ్ కంటే నా పొజిషన్ ఎక్కువ
+      - நிதியை விட என் நிலை பெரியது
+
+  - id: pt-020
+    note: derivatives used to avoid the equity policy
+    severity: medium
+    weight: 0.65
+    terms:
+      - do it in options so it does not show
+      - option mein karo dikhega nahi
+      - ऑप्शन में करो दिखेगा नहीं
+      - ఆప్షన్‌లో చేయి కనిపించదు
+      - விருப்ப ஒப்பந்தத்தில் செய்
+
+  - id: pt-021
+    note: crypto or unlisted used to avoid declaration
+    severity: low
+    weight: 0.4
+    terms:
+      - unlisted so no declaration
+      - unlisted hai declare nahi karna
+      - अनलिस्टेड है घोषित नहीं करना
+      - అన్‌లిస్టెడ్ కాబట్టి ప్రకటించాల్సిన అవసరం లేదు
+      - பட்டியலிடப்படாதது அறிவிக்க தேவையில்லை
+
+  - id: pt-022
+    note: asking compliance to backdate an approval
+    severity: high
+    weight: 0.9
+    terms:
+      - backdate the approval
+      - approval ki date peeche kar do
+      - अनुमति की तारीख पीछे कर दो
+      - అనుమతి తేదీని వెనక్కి మార్చు
+      - அனுமதி தேதியை பின்னோக்கி மாற்று
+
+  - id: pt-023
+    note: trading on a colleague's research before publication
+    severity: high
+    weight: 0.75
+    terms:
+      - bought before our note went out
+      - note jaane se pehle liya
+      - नोट जाने से पहले ले लिया
+      - నివేదిక వెళ్లకముందే కొన్నాను
+      - அறிக்கை வெளியாகும் முன் வாங்கினேன்
+
+  - id: pt-024
+    note: personal-account marker close to a trade verb
+    severity: high
+    weight: 0.8
+    terms: []
+    regex: '\b(?:my|personal|own|wife|husband|brother|father)\b[^.!?]{0,30}\b(?:account|demat|portfolio)\b[^.!?]{0,60}\b(?:bought|buy|sold|sell|took|position)\b'
+
+  - id: pt-025
+    note: a trade verb close to a personal-account marker
+    severity: high
+    weight: 0.8
+    terms: []
+    regex: '\b(?:bought|buy|sold|sell|took\s+a\s+position)\b[^.!?]{0,60}\b(?:my|personal|own)\s+(?:account|demat|portfolio)\b'
+
+  - id: pt-026
+    note: discussing profit made personally on a fund name
+    severity: medium
+    weight: 0.6
+    terms:
+      - i made good money on it myself
+      - maine khud accha paisa banaya
+      - मैंने ख़ुद अच्छा पैसा बनाया
+      - నేను స్వయంగా బాగా సంపాదించాను
+      - நானே நல்ல லாபம் பெற்றேன்
