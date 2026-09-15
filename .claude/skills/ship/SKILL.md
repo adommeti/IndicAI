@@ -1,7 +1,7 @@
 ---
 name: ship
 description: Commit, push, open the PR, wait for CI and squash-merge the current branch using scripts/ship.sh; the only sanctioned way to land work. Use when asked to ship, merge, open a PR, land the branch, or when a prompt run is complete.
-allowed-tools: Bash(bash scripts/ship.sh*), Bash(git *), Bash(gh pr *), Bash(gh run *), Read
+allowed-tools: Bash(bash scripts/ship.sh*), Bash(git *), Bash(gh api *), Bash(gh run *), Read
 argument-hint: "[--no-merge] [--draft] [--title \"...\"] — usually no arguments"
 ---
 # Ship the current branch
@@ -20,10 +20,17 @@ argument-hint: "[--no-merge] [--draft] [--title \"...\"] — usually no argument
      line. History rewriting is blocked, so: `git switch -c <branch>-clean origin/<base>` and
      `git cherry-pick <sha>...` (the commit-msg hook cleans messages), then re-run ship.
    - rebase conflicts → resolve in the working tree, `git rebase --continue`, re-run ship.
-   - CI red → `gh pr checks <n>` and `gh run view <run-id> --log-failed`; fix; commit; re-run.
+   - CI red → `.claude/run/ci.log` lists every check as `status  conclusion  name`. For the
+     failing job's log: `gh run view <run-id> --log-failed`. To re-read the checks:
+     `gh api repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/check-runs --jq '.check_runs[]|"\(.conclusion)\t\(.name)\t\(.html_url)"'`.
+     Fix; commit; re-run ship.
    - merge failed → read `.claude/run/merge.log` (branch protection, conflicts) and report.
 5. After a successful merge you are on the updated base branch; report the PR number, URL and
    the merged SHA.
 
-Never use `gh pr merge`, `gh pr create`, or `git push` to the base branch directly; the Bash
-guard blocks them so that CI and attribution checks can never be skipped.
+Use `gh api` (REST), never the `gh pr`/`gh issue` porcelain: those are GraphQL, and the cloud
+environment's proxy answers GraphQL with HTTP 403. `scripts/ship.sh` is REST throughout.
+
+Never open or land a PR by hand — not through the porcelain, not through the REST endpoints
+behind it — and never `git push` to the base branch directly; the Bash guard blocks all of
+these so that CI and attribution checks can never be skipped.

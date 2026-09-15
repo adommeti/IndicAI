@@ -68,8 +68,8 @@ number never substitutes for a live one.
 
 ## Evidence
 
-- `scripts/run-prompt.sh` — prerequisite check, branch, marker; `scripts/ship.sh:35-126` — gate,
-  rebase, attribution re-check, PR, CI wait, squash step.
+- `scripts/run-prompt.sh` — prerequisite check, branch, marker; `scripts/ship.sh:61-193` — gate,
+  rebase, attribution re-check, PR, CI wait and squash, every GitHub call over REST (`gh api`).
 - `scripts/checks.sh:20-38` — gate stages and the `--full` tier; `Makefile` — `check`,
   `check-full`, `test-integration`, `eval-uc1|uc2|uc3`, `voice-test`.
 - `.github/workflows/ci.yml` — the three jobs and `LIVE_API_TESTS: '0'`.

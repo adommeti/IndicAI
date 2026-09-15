@@ -32,11 +32,15 @@ fi
 if printf '%s' "$NORM" | grep -Eq 'git +commit' && printf '%s' "$CMD" | grep -Eiq "$FORBIDDEN_TRAILER_RE|co-authored-by|generated with|anthropic"; then
   deny "commit messages must not carry tool attribution trailers or footers. Use a plain conventional message."
 fi
-if printf '%s' "$NORM" | grep -Eq 'gh +pr +merge' && [ "${INDICAI_SHIP_ACTIVE:-}" != "1" ]; then
+# ship.sh drives GitHub over REST (`gh api`), not the GraphQL `gh pr` porcelain,
+# so both spellings of "merge a PR" and "open a PR" are guarded.
+if printf '%s' "$NORM" | grep -Eq 'gh +pr +merge|(gh +api|-X +PUT)[^|;&]*/pulls/[0-9]+/merge' \
+   && [ "${INDICAI_SHIP_ACTIVE:-}" != "1" ]; then
   deny "merge only through scripts/ship.sh, which waits for CI and verifies attribution before merging."
 fi
-if printf '%s' "$NORM" | grep -Eq 'gh +pr +create' && [ "${INDICAI_SHIP_ACTIVE:-}" != "1" ]; then
-  deny "open PRs through scripts/ship.sh so the PR body is generated from the template and CI is watched."
+if printf '%s' "$NORM" | grep -Eq 'gh +pr +create|-X +POST[^|;&]*/pulls([^/a-zA-Z]|$)' \
+   && [ "${INDICAI_SHIP_ACTIVE:-}" != "1" ]; then
+  deny "open PRs through scripts/ship.sh so the PR body is generated from the report and CI is watched."
 fi
 
 # --- data and files that must not be destroyed ------------------------------
