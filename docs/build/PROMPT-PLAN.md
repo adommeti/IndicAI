@@ -32,7 +32,7 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc3 | P3 | done | uc3/P2 | Lexicon matcher (Stage 0) | S | |
 | uc3 | P4 | partial | uc3/P3 | Haiku triage, Sonnet deep analysis, verifier, canary | S,L | B6 gates unmeasured, no ANTHROPIC_API_KEY, see BLOCKERS |
 | uc3 | P5 | done | uc3/P4 | Append-only audit schema with hash chain, DB roles | S,C,K | chain verify 10004 rows in 0.51s; app role denied UPDATE/DELETE |
-| uc3 | P6 | pending | uc3/P5 | Reviewer UI, roles, metrics | S,C | |
+| uc3 | P6 | partial | uc3/P5 | Reviewer UI, roles, metrics | S,C | role matrix enforced and mutation-checked; live end-to-end demo and MSAL blocked, see BLOCKERS |
 | uc3 | P7 | pending | uc3/P6 | Security review, retention, spend caps; CI policy gate | S,C | |
 | program | P9-adrs | done | program/P0 | ADRs 0001/0002/0005–0008 + index | S | pending PR |
 | program | P8-eval-refactor | pending | uc1/P3,uc2/P2,uc3/P4 | Shared eval harness: common schema, judge, `make eval` | S,K,L | |
