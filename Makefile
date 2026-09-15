@@ -1,4 +1,5 @@
 UV ?= uv
+UC1_EVAL_ARGS ?=
 COMPOSE = docker compose --env-file .env.stack
 .PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc3 ingest-kb voice-test migrate audit \
         check check-quick check-full stack-core stack-obs stack-voice stack-sparse stack-status stack-logs ship plan
@@ -36,7 +37,7 @@ typecheck:
 test:
 	$(UV) run pytest -m 'not slow and not integration'
 eval-uc1:
-	$(UV) run python -m indic_platform.eval.runners.run_uc1 --baseline --retrieval --compare-translate
+	$(UV) run python -m indic_platform.eval.runners.run_uc1 --chat-only --decide helpdesk_agent.graph:decide $(UC1_EVAL_ARGS)
 eval-uc2 eval-uc3:
 	$(UV) run python -m indic_platform.eval.runners.run --app $(@:eval-%=%)
 ingest-kb:

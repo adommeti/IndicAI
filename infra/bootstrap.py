@@ -15,7 +15,7 @@ if not path.exists():
         "LANGFUSE_PUBLIC_KEY": "pk-lf-" + secrets.token_hex(16),
         "LANGFUSE_SECRET_KEY": "sk-lf-" + secrets.token_hex(24),  # pragma: allowlist secret
         "LANGFUSE_HOST": "http://localhost:3002",
-        "DATABASE_URL": f"postgresql+psycopg://platform:{password}@localhost:5433/platform",
+        "DATABASE_URL": f"postgresql+psycopg://platform:{password}@localhost:15433/platform",
         "REDIS_URL": "redis://localhost:6380/0",
         "MINIO_ENDPOINT": "localhost:9000",
         "MINIO_ACCESS_KEY": "minio",

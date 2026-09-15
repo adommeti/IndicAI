@@ -402,7 +402,7 @@ class Decision(BaseModel):
 
 class Ticket(BaseModel):
     title: str                              # English, ≤ 90 chars
-    description: str                        # English, ≥ 40 words, must paraphrase only what the user said
+    description: str                        # concise English; facts supported by employee evidence
     category: Literal["IT", "HR", "Facilities"]
     urgency: Literal["low", "normal", "high"]
 
@@ -417,7 +417,11 @@ graph.add_conditional_edges("guard", route_after_guard, {"act": "act", "reply": 
 graph.add_edge("act", END)
 ```
 
-**Guard node rules (deterministic, no LLM):** `clarify_count ≥ 2` forces `answer` or `file_ticket`; `file_ticket` without `ticket` → retry once with an error hint; every `cited_article_id` must exist in `chunks`; `description` must share ≥ 60% of its content words with the user's utterances in this session (a cheap groundedness check — the eval harness measures the real thing); reply language must match `state.language` (checked by a fast language-ID call on `reply_text`).
+**Guard node rules (deterministic):** `clarify_count ≥ 2` forces `answer` or `file_ticket`; `file_ticket` without `ticket` → retry once with an error hint; every `cited_article_id` must exist in `chunks`; a generated ticket must have an approving multilingual grounding verdict bound to the exact ticket and employee evidence, with nonempty exact source quotes and no unsupported claims; reply language must match `state.language` (checked by a fast language-ID call on `reply_text`).
+
+**Approved ticket-grounding revision (2026-09-08):** This replaces the original literal 60% word-overlap rule and 40-word minimum in C6 and the P3 build prompt. English descriptions may be concise translations or summaries of Indic utterances. The decide stage obtains a separate, cached, structured Claude verification using only the candidate ticket and employee statements, with no tools, KB articles, or assistant claims as evidence. The guard checks the verdict and its evidence binding deterministically; semantic verification remains model-based, not a proof. Unsupported, malformed, or unavailable verification fails closed and permits one decision retry. At the cap, a fixed English human-review notice replaces an unverified summary; original utterances are retained in the turn's grounding audit. Persist verifier model/version, verdicts, source evidence and review-required status in `decision_json._grounding`. The C7 base prompt remains verbatim; a versioned grounding supplement supplies this revised contract.
+
+Generated ticket titles/descriptions omit raw phone, email and national-ID values; values detected by the platform redactor are rejected before verification, preventing generic redaction placeholders from hiding a changed identifier. Originals remain in local evidence. The full session evidence goes only to the verifier, while decision generation retains its last-eight-turn history limit. Model-produced text matching the review template still requires verification; only the internal fallback path can create an unverified review notice.
 
 ## C7. Prompts (system prompt is cached; content below is the actual text to ship in `prompts/decide.md`)
 
