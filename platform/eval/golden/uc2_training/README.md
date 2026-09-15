@@ -58,7 +58,7 @@ for the full contract. Two conventions worth knowing here:
 
 Measured against the timing table in `platform/config/timing.yaml`, the draft
 (un-adapted) translations overrun their segment durations by a median of
-**1.26x (hi), 1.29x (te), 1.35x (ta)**, so only 17-20% of segments fit within
+**1.25x (hi), 1.29x (te), 1.33x (ta)**, so only 17-20% of segments fit within
 ±15%. That is the harness working: it says the `adapt` stage in PRD D7 — which is
 told to shorten wording rather than meaning when a segment is too dense — is
 load-bearing for UC2, not optional polish. `uc2/P2` should expect to compress.
