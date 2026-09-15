@@ -58,7 +58,7 @@ See [contracts](platform/adapters/base.py) and [SDK verification](docs/adapter-v
 | TTS | `SarvamTTS` | `stream(text_chunks, language, voice)`; REST convenience `speak(...)` |
 | Translate | `SarvamTranslate` | `translate(text, source="auto", target, mode="formal")` |
 | Dubbing | `SarvamDubbing` | `submit(video_uri, target_languages, voice_map)`, `status(job_id)`, `fetch(job_id)` |
-| LLM | `Claude` | `structured(system, user, schema, model, cache_system=True)`, `stream_text(system, messages, model)` |
+| LLM | `Claude` | `structured(system, user, schema, model, cache_system=True)`, `stream_text(system, messages, model)`; constructor takes `redactor` and `wrapper` so an app can document an evidence-preserving override (PRD E9) |
 | VectorStore | Protocol for UC1 retrieval | `search(vector, limit=3, filters=None)` |
 
 Streaming Protocol methods return asynchronous iterators directly (declared with `def` in

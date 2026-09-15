@@ -30,7 +30,7 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc3 | P1 | partial | program/P0 | Synthetic golden set (200), audio subset, eval runner | S,L | diarization accuracy unmeasured, see BLOCKERS |
 | uc3 | P2 | partial | uc3/P1 | Ingestion + batch STT/diarization + transliteration | S,C,K,L | golden ingest and diarization accuracy blocked, see BLOCKERS |
 | uc3 | P3 | done | uc3/P2 | Lexicon matcher (Stage 0) | S | |
-| uc3 | P4 | pending | uc3/P3 | Haiku triage, Sonnet deep analysis, verifier, canary | S,L | |
+| uc3 | P4 | partial | uc3/P3 | Haiku triage, Sonnet deep analysis, verifier, canary | S,L | B6 gates unmeasured, no ANTHROPIC_API_KEY, see BLOCKERS |
 | uc3 | P5 | pending | uc3/P4 | Append-only audit schema with hash chain, DB roles | S,C,K | |
 | uc3 | P6 | pending | uc3/P5 | Reviewer UI, roles, metrics | S,C | |
 | uc3 | P7 | pending | uc3/P6 | Security review, retention, spend caps; CI policy gate | S,C | |
