@@ -36,6 +36,16 @@ quality gate, and `bash scripts/ship.sh` pushes, opens the PR, waits for CI and 
 Operating procedure for cloud sessions: [docs/build/RUNBOOK.md](docs/build/RUNBOOK.md).
 Working agreement for the coding agent: [CLAUDE.md](CLAUDE.md).
 
+## Architecture decisions
+
+Program-level decisions and their consequences are recorded as ADRs, indexed in
+[docs/adr/README.md](docs/adr/README.md): reasoning in the user's language (0001), one platform
+package behind three apps (0002), hybrid hardened detection for surveillance (0005), meeting
+minutes as a separate consented module (0006), the build workflow (0007) and the cloud build
+environment contract (0008). ADRs 0003 (dubbing contract) and 0004 (surveillance scope) are
+reserved for the prompts and the governance gate that own them. `docs/prd-v2.md` is the
+specification and is read-only; deviations from it are recorded as ADRs.
+
 ## Package and interfaces
 
 Source lives in `platform/`; import it as `indic_platform` to avoid shadowing Python's

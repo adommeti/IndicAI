@@ -34,7 +34,7 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc3 | P5 | pending | uc3/P4 | Append-only audit schema with hash chain, DB roles | S,C,K | |
 | uc3 | P6 | pending | uc3/P5 | Reviewer UI, roles, metrics | S,C | |
 | uc3 | P7 | pending | uc3/P6 | Security review, retention, spend caps; CI policy gate | S,C | |
-| program | P9-adrs | pending | program/P0 | ADRs 0001/0002/0005–0008 + index | S | |
+| program | P9-adrs | done | program/P0 | ADRs 0001/0002/0005–0008 + index | S | pending PR |
 | program | P8-eval-refactor | pending | uc1/P3,uc2/P2,uc3/P4 | Shared eval harness: common schema, judge, `make eval` | S,K,L | |
 | program | P10-azure-deploy | pending | uc1/P7,uc2/P5,uc3/P7 | Bicep single-VM POC, Key Vault, OIDC deploy workflow | S,C | |
 | program | P11-release-readiness | pending | program/P8-eval-refactor,program/P10-azure-deploy,program/P9-adrs | README, demo, pilot checklist, release eval, tag | S,C,K,L | |
