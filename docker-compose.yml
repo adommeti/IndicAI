@@ -37,6 +37,43 @@ x-langfuse-depends: &langfuse-depends
   clickhouse: {condition: service_healthy}
   redis: {condition: service_healthy}
   minio: {condition: service_healthy}
+# Zammad, the uc1 ticketing backend. Compose profile `ticketing` (make
+# stack-ticketing) so `make stack-core` and `make up` are unaffected: Zammad is
+# Rails plus its own Postgres, Redis and memcached. Transcribed from the upstream
+# zammad/zammad-docker-compose service set (tag 7.1.3-0014) with the
+# zammad-elasticsearch service dropped and ELASTICSEARCH_ENABLED=false, which is
+# the documented way to run without it. Upstream's long list of pass-through
+# environment variables is not reproduced; only what this build sets is here.
+x-zammad-env: &zammad-env
+  MEMCACHE_SERVERS: zammad-memcached:11211
+  POSTGRESQL_HOST: zammad-postgresql
+  POSTGRESQL_PORT: '5432'
+  POSTGRESQL_DB: zammad_production
+  POSTGRESQL_USER: zammad
+  POSTGRESQL_PASS: ${STACK_PASSWORD:?Run make bootstrap}
+  POSTGRESQL_OPTIONS: '?pool=50'
+  # zammad-postgresql creates the database from its initdb hook below, and the
+  # role Zammad connects with deliberately has no CREATEDB.
+  POSTGRESQL_DB_CREATE: 'false'
+  REDIS_URL: redis://zammad-redis:6379
+  # Upstream documents ELASTICSEARCH_ENABLED=false -- not
+  # ZAMMAD_ELASTICSEARCH_ENABLED -- as the switch for running without
+  # Elasticsearch, to be set together with dropping the service. Untested here.
+  ELASTICSEARCH_ENABLED: 'false'
+  NGINX_PORT: '8080'
+  TZ: Asia/Kolkata
+x-zammad-service: &zammad-service
+  profiles: ['ticketing']
+  image: ghcr.io/zammad/zammad:7.1.3-0014
+  init: true
+  environment: *zammad-env
+  volumes:
+    - 'zammad-backup:/var/tmp/zammad:ro'
+    - 'zammad-storage:/opt/zammad/storage'
+  depends_on:
+    zammad-memcached: {condition: service_healthy}
+    zammad-postgresql: {condition: service_healthy}
+    zammad-redis: {condition: service_healthy}
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -204,6 +241,129 @@ services:
     healthcheck:
       <<: *health
       test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/api/health']
+  # --- ticketing profile: Zammad (uc1). Started only by `make stack-ticketing`. ---
+  zammad-postgresql:
+    profiles: ['ticketing']
+    image: postgres:17.11-alpine
+    environment:
+      # The image's bootstrap role is always a superuser, so Zammad gets its own
+      # unprivileged role from the initdb hook below instead of reusing it.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${STACK_PASSWORD}
+      # Same value the entrypoint would default to; named so the initdb hook
+      # below does not depend on that defaulting.
+      POSTGRES_DB: postgres
+      ZAMMAD_DB: zammad_production
+      ZAMMAD_DB_USER: zammad
+      ZAMMAD_DB_PASS: ${STACK_PASSWORD}
+    volumes: ['zammad-postgresql-data:/var/lib/postgresql/data']
+    configs:
+      - source: zammad-postgresql-initdb
+        target: /docker-entrypoint-initdb.d/10-create-zammad-role.sh
+        mode: 0555
+    healthcheck:
+      # Upstream connects over TCP as Zammad's own role rather than using
+      # pg_isready, which reports success for a role or database that does not
+      # exist yet, and for the socket-only server that runs during initdb.
+      test:
+        - CMD-SHELL
+        - |-
+          PGPASSWORD="$${ZAMMAD_DB_PASS}" \
+          psql --no-password --quiet --output /dev/null --variable ON_ERROR_STOP=1 \
+               --host 127.0.0.1 --username "$${ZAMMAD_DB_USER}" \
+               --dbname "$${ZAMMAD_DB}" --command "SELECT 1"
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+  zammad-redis:
+    profiles: ['ticketing']
+    image: redis:8.10.1-alpine
+    volumes: ['zammad-redis-data:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+  zammad-memcached:
+    profiles: ['ticketing']
+    image: memcached:1.6.45-alpine
+    command: memcached -m 256M
+    healthcheck:
+      test: ['CMD', 'nc', '-z', '127.0.0.1', '11211']
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+  zammad-init:
+    <<: *zammad-service
+    command: ['zammad-init']
+    restart: on-failure
+    user: 0:0
+  zammad-railsserver:
+    <<: *zammad-service
+    command: ['zammad-railsserver']
+    healthcheck:
+      test: ['CMD', 'curl', '-sf', 'http://127.0.0.1:3000']
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+  zammad-nginx:
+    <<: *zammad-service
+    command: ['zammad-nginx']
+    init: false
+    # 8080 and 8081 are already taken by tei and bge-sparse.
+    ports: ['127.0.0.1:8082:8080']
+    depends_on:
+      zammad-railsserver: {condition: service_healthy}
+  zammad-scheduler:
+    <<: *zammad-service
+    command: ['zammad-scheduler']
+  zammad-websocket:
+    <<: *zammad-service
+    command: ['zammad-websocket']
+configs:
+  # Copied from upstream zammad/zammad-docker-compose. Runs once, while an empty
+  # zammad-postgresql-data volume is initialised, to create the database Zammad
+  # owns and the plain login role it connects with. '$$' escapes Compose
+  # interpolation so the variables expand inside the container.
+  zammad-postgresql-initdb:
+    content: |
+      #!/bin/bash
+
+      set -o errexit
+      set -o pipefail
+
+      zammad_abort() {
+        echo "$1" >&2
+        echo "Correct this, then remove the zammad-postgresql-data volume and start again." >&2
+        exit 1
+      }
+
+      if [ "$${ZAMMAD_DB_USER}" = "$${POSTGRES_USER}" ]; then
+        zammad_abort "POSTGRES_USER and ZAMMAD_DB_USER must differ, the former is a superuser."
+      fi
+
+      case "$${ZAMMAD_DB}" in
+        postgres | template0 | template1)
+          zammad_abort "ZAMMAD_DB must not be one of PostgreSQL's system databases."
+          ;;
+      esac
+
+      echo "Creating the '$${ZAMMAD_DB_USER}' role and the '$${ZAMMAD_DB}' database..."
+
+      psql --variable ON_ERROR_STOP=1 \
+           --username "$${POSTGRES_USER}" \
+           --dbname "$${POSTGRES_DB}" \
+           --variable role="$${ZAMMAD_DB_USER}" \
+           --variable pass="$${ZAMMAD_DB_PASS}" \
+           --variable db="$${ZAMMAD_DB}" <<'EOSQL'
+      CREATE ROLE :"role" LOGIN PASSWORD :'pass';
+      CREATE DATABASE :"db" OWNER :"role";
+      EOSQL
+
 volumes:
   postgres-data:
   qdrant-data:
@@ -214,3 +374,7 @@ volumes:
   clickhouse-data:
   prometheus-data:
   grafana-data:
+  zammad-postgresql-data:
+  zammad-redis-data:
+  zammad-storage:
+  zammad-backup:

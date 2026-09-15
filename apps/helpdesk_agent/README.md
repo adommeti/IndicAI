@@ -142,3 +142,89 @@ Langfuse services running, `LIVE_API_TESTS=1 uv run pytest
 platform/tests/test_helpdesk_agent.py -m slow -q -s` tests real persistence and
 trace availability with mocked model/retrieval calls. It leaves synthetic test
 sessions in the local database.
+
+## Ticketing backend (P4)
+
+Ticket filing targets a self-hosted [Zammad](https://zammad.org). It is not part
+of `make stack-core`: it lives behind the compose profile `ticketing` and starts
+only with `make stack-ticketing`, which brings up eight containers pinned to
+these tags — `ghcr.io/zammad/zammad:7.1.3-0014` (running four roles: `init`,
+`railsserver`, `nginx`, `scheduler`, `websocket`), `postgres:17.11-alpine`,
+`redis:8.10.1-alpine` and `memcached:1.6.45-alpine`. Zammad brings its own
+Postgres, Redis and memcached; none of them touches the platform's `postgres`
+and `redis` services, and no compose profile other than `ticketing` references
+them. `make down` now tears this profile down alongside `retrieval`.
+
+What it costs to run: the four images are about 500 MB of compressed download
+(measured from the registry manifests; more once unpacked) and the first start
+also runs Zammad's database migrations, so budget several minutes before the
+API answers. Four Rails containers stay resident afterwards. Actual memory and
+CPU use have not been measured for this build — assume it is the heaviest
+optional profile in the stack and do not run it next to `stack-obs` on a small
+machine without checking.
+
+The service set is transcribed from upstream `zammad/zammad-docker-compose`
+(same tag) with two changes: the `zammad-elasticsearch` service is dropped and
+`ELASTICSEARCH_ENABLED=false` is set, which is upstream's documented way to run
+without Elasticsearch; and upstream's pass-through environment variables are not
+reproduced, so anything beyond what `docker-compose.yml` sets has no effect here.
+Note that the variable is `ELASTICSEARCH_ENABLED`, not the
+`ZAMMAD_ELASTICSEARCH_ENABLED` named in the prompt — the latter is not a Zammad
+variable. Without Elasticsearch, Zammad falls back to database search, which is
+weaker; nothing in uc1 depends on Zammad's search. `zammad-nginx` publishes on
+`127.0.0.1:8082` because 8080 and 8081 are taken by `tei` and `bge-sparse`.
+
+The compose file holds no password. Zammad's database credentials come from
+`${STACK_PASSWORD}`, the same private, generated `.env.stack` value the rest of
+the stack uses (`make bootstrap` creates it; it is never committed). `ZAMMAD_URL`
+and `ZAMMAD_TOKEN` are read from the environment and are listed empty in
+`.env.example`, with the steps for minting a token.
+
+### Seeding
+
+Zammad's first-run web wizard (admin user, organisation) is manual; it is not
+scripted here. Once it is done and a token exists:
+
+```
+ZAMMAD_URL=http://localhost:8082 ZAMMAD_TOKEN=... \
+    uv run python -m helpdesk_agent.zammad_seed
+```
+
+This creates the group **IT Support** and the Ticket attribute
+**`source_session_id`** (plain text, 64 chars), then applies Zammad's pending
+object-attribute migrations. It is idempotent by check-before-create: it lists
+`/api/v1/groups` and `/api/v1/object_manager_attributes` first, prints for each
+object whether it created it or found it already there, and treats Zammad's own
+422 on a duplicate as "already exists" so two seeders racing cannot both create.
+The migration step is run every time because it is a no-op when nothing is
+pending, which lets a run interrupted halfway converge on the next run. Running
+it twice produces one group and one field. It is an operator CLI rather than a
+request path, so it uses `httpx` directly instead of `indic_platform.adapters`,
+which exist to wrap the two model vendors.
+
+### What employee data reaches Zammad
+
+A filed ticket is a support ticket containing an employee's own words, and
+Zammad is a separate system with its own database, its own operators and its own
+retention. Every ticket this agent files carries, out of the agent and into
+Zammad:
+
+- the **ticket title** — a short generated summary of the employee's problem;
+- the **ticket description** — a generated summary of what the employee said,
+  which is about their words even when it is not a verbatim quote;
+- the **`source_session_id`** — the helpdesk session UUID, which links the ticket
+  to the stored conversation and is therefore an identifier for that employee's
+  session, not an anonymous value;
+- the ticket's **category** and **urgency** (`IT`/`HR`/`Facilities`,
+  `low`/`normal`/`high`), and the fixed tags `voice-agent` and `auto-filed`;
+- the **employee identifier** the ticket is filed on behalf of, so the ticket is
+  attributable to a named person inside Zammad.
+
+Raw utterances, audio and retrieval evidence stay in the platform's own
+Postgres and are not sent. Titles and descriptions go through the same grounding
+and redaction path as the rest of the agent: candidates containing phone
+numbers, email addresses or national IDs detected by
+`indic_platform.security.redact` are rejected before a ticket is created, so
+those values are not expected to reach Zammad. That is a detector, not a proof —
+treat the Zammad instance as holding employee personal data and scope its access
+and retention accordingly.

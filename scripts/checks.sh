@@ -22,7 +22,10 @@ stage format      uv run --frozen ruff format --check . || exit 1
 stage typecheck   uv run --frozen mypy platform apps infra || exit 1
 [ "$MODE" = "--quick" ] && { echo "quick checks passed"; exit 0; }
 
-stage unit-tests  uv run --frozen pytest -m 'not slow and not integration' -q -p no:cacheprovider || exit 1
+# `ticketing` is deselected alongside `integration`: those tests need the Zammad
+# compose profile, which neither this gate nor CI provisions. Registering the
+# marker without deselecting it here would run them against nothing.
+stage unit-tests  uv run --frozen pytest -m 'not slow and not integration and not ticketing' -q -p no:cacheprovider || exit 1
 stage eval-uc1-offline uv run --frozen python -m indic_platform.eval.runners.run --app uc1 || exit 1
 stage eval-uc2-offline uv run --frozen python -m indic_platform.eval.runners.run --app uc2 || exit 1
 stage eval-uc3-offline uv run --frozen python -m indic_platform.eval.runners.run --app uc3 || exit 1

@@ -90,6 +90,19 @@ async def run_turn(state: TurnState, *, existing: bool = False) -> TurnState:
                         retrieve=retriever.retrieve,
                         structured=claude.structured,
                         grounder=TicketGrounder(structured=claude.structured),
+                        # The act node files the ticket, so it needs the session
+                        # this turn is already running in -- it does not commit;
+                        # this transaction owns that.
+                        db=db,
+                        # The real count of turns already persisted, NOT
+                        # `len(state["history"])`. History is truncated to the
+                        # last 8 turns both here and in `initial_state`, so
+                        # turns 9 and 10 would both present a `turn_index` of 8
+                        # and the second ticket would be swallowed as an
+                        # idempotent replay of the first. Idempotency keyed on a
+                        # value that repeats is silent data loss, and the
+                        # employee would be told their ticket was filed.
+                        turn_index=len(turns) if existing else 0,
                     ).run(state, metadata=metadata, evidence=evidence)
                 finally:
                     await claude.client.close()
