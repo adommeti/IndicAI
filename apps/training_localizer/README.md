@@ -111,16 +111,17 @@ one segment through **translate and post_edit** against the real vendors; it doe
 not cover adapt, backtranslate_qa or quiz, and post_edit's model leg only runs
 when `ANTHROPIC_API_KEY` is set.
 
-`make eval-uc2` runs the whole pipeline over the golden set and prints a cost
-estimate first (about ₹110). Its default arguments matter: `--fidelity-source
-sut` points the judge at this pipeline rather than at uc2/P1's draft references,
-and `--pre-edit` scores the translate stage *before* post_edit — without that
-second number `terminology_adherence` cannot fail, because `enforce` implements
-exactly the predicate the scorer tests.
+Three eval targets, because only one of them is free:
 
-When no Anthropic key is available, the Sarvam-only path costs about ₹28:
+| target | what it runs | cost |
+|---|---|---|
+| `make eval-uc2` | the uc2/P1 trivial baseline, no vendor calls — this is what CI runs | free |
+| `make eval-uc2-sarvam` | translate + deterministic post_edit over the golden set | ~₹28 |
+| `make eval-uc2-live` | the whole pipeline, adapt and the judge included | ~₹110 |
 
-```
-UC2_EVAL_ARGS='--translate training_localizer.eval_hook:translate_and_enforce \
-  --pre-edit training_localizer.eval_hook:translate_only --baseline' make eval-uc2
-```
+The two vendor targets pass `--fidelity-source sut`, which points the judge at
+this pipeline rather than at uc2/P1's draft references, and `--pre-edit`, which
+scores the translate stage *before* post_edit. That second number is the one
+that can fail: `enforce` implements exactly the predicate the scorer tests, so
+`terminology_adherence` on its own reaches 1.0 for any translator at all. Both
+print a cost estimate before spending anything.
