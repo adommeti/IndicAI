@@ -17,7 +17,7 @@ UC2_LIVE_ARGS ?= --translate training_localizer.eval_hook:full \
 UC2_SARVAM_ARGS ?= --translate training_localizer.eval_hook:translate_and_enforce \
 	--pre-edit training_localizer.eval_hook:translate_only --baseline
 COMPOSE = docker compose --env-file .env.stack
-.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-diarize ingest-kb voice-test migrate audit \
+.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
         check check-quick check-full stack-core stack-obs stack-voice stack-sparse stack-status stack-logs ship plan
 bootstrap:
 	python3 infra/bootstrap.py
@@ -68,6 +68,10 @@ eval-uc3:
 	$(UV) run python -m indic_platform.eval.runners.run_uc3 $(UC3_EVAL_ARGS)
 eval-uc3-diarize:
 	$(UV) run python -m indic_platform.eval.runners.run_uc3 --diarize --baseline
+# Pushes the 20 golden WAVs through the real pipeline: MinIO, Postgres and live
+# Saaras diarized STT. Needs `make stack-core`, `make migrate` and SARVAM_API_KEY.
+ingest-golden-audio:
+	$(UV) run python -m comms_surveillance.ingest
 ingest-kb:
 	$(UV) run python -m indic_platform.cli ingest-kb
 voice-test:

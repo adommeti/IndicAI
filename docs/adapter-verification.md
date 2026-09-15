@@ -36,3 +36,27 @@ request's metadata-only error span. Vendor-returned content and error text are n
 Baseline evals: no Makefile/targets existed. After scaffold: UC1/UC2/UC3 each has 8 fixtures,
 evidence-check accuracy 1.0, delimiter integrity 1.0, redaction accuracy 1.0. B6 application
 metrics remain explicitly unmeasured. Dependency audit: no known vulnerabilities.
+
+## Sarvam `/transliterate` — verified 2026-09-15 (uc3/P2)
+
+Added `SarvamTranslate.transliterate` for the Roman rendering of native-script
+transcript segments.
+
+Request shape confirmed against the `sarvam` MCP server's API reference:
+
+| field | value |
+|---|---|
+| method | `POST /transliterate` |
+| body | `input`, `source_language_code`, `target_language_code`, `numerals_format`, `spoken_form` |
+| response | `transliterated_text`, `source_language_code` |
+
+Live call made through the MCP tool to confirm the behaviour that motivated the
+method — `input="வணக்கம், குரல் சரியாக கேட்கிறதா?"`, `source_language_code="ta-IN"`,
+`target_language_code="en-IN"` returned
+`"Vanakkam, gaala sariyaaga ketkirathaa?"`. Sarvam gets `Vanakkam` right where
+the offline library returns `vaṇaghghaṁ`; it renders `குரல்` as `gaala` rather
+than `kural`, so it is better on Tamil, not perfect.
+
+Billed against `mayura:v1` (the per-character text rate). Sarvam publishes no
+separate transliteration rate; if one appears it belongs in
+`platform/config/pricing.yaml`.

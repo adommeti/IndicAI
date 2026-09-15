@@ -356,3 +356,50 @@ async def test_stream_idle_timeout_and_cancel_closes_source() -> None:
     with pytest.raises(TimeoutError):
         _ = [s async for s in runtime.stream(generate, model="bulbul:v3", units={})]
     assert closed
+
+
+async def test_sarvam_transliterate_shape_and_cost() -> None:
+    """The request shape verified against the MCP API reference, and its price.
+
+    `.claude/rules/adapters.md`: a new capability needs a pricing entry and a
+    test asserting the computed cost. Transliteration is billed per character
+    against `mayura:v1`, the same rate as translation.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"transliterated_text": "Vanakkam", "source_language_code": "ta-IN"}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        sdk = AsyncSarvamAI(api_subscription_key="mock", httpx_client=http)
+        sink = MemorySink()
+        adapter = SarvamTranslate(
+            client=sdk, runtime=AdapterRuntime("sarvam", "translate", sink=sink)
+        )
+        assert await adapter.transliterate("வணக்கம்", source="ta-IN") == "Vanakkam"
+
+    assert seen[0]["input"] == "வணக்கம்"
+    assert seen[0]["source_language_code"] == "ta-IN"
+    assert seen[0]["target_language_code"] == "en-IN"
+    assert sink.records[0]["model"] == "mayura:v1"
+    assert sink.records[0]["cost_inr"] == len("வணக்கம்") * 0.002
+
+
+async def test_sarvam_transliterate_redacts_before_sending() -> None:
+    """Platform default: identifiers do not reach a vendor verbatim."""
+    seen: list[dict[str, Any]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"transliterated_text": "[EMAIL]", "source_language_code": "hi-IN"}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        sdk = AsyncSarvamAI(api_subscription_key="mock", httpx_client=http)
+        adapter = SarvamTranslate(client=sdk, runtime=AdapterRuntime("sarvam", "translate"))
+        await adapter.transliterate("person@example.com", source="hi-IN")
+    assert seen[0]["input"] == "[EMAIL]"
