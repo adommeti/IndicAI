@@ -1,0 +1,128 @@
+{
+  "model": "mayura:v1",
+  "mode": "formal",
+  "numerals_format": "international",
+  "segments": [
+    {
+      "n": 1,
+      "target": "hi-IN",
+      "source": "Multi-factor authentication is mandatory for all systems that hold client data.",
+      "translated_text": "ग्राहक डेटा रखने वाले सभी सिस्टमों के लिए बहु-कारक प्रमाणीकरण अनिवार्य है।",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 2,
+      "target": "hi-IN",
+      "source": "Report any suspected phishing email to the security team within 24 hours.",
+      "translated_text": "24 घंटे के भीतर सुरक्षा टीम को किसी भी संदिग्ध फ़िशिंग ईमेल की सूचना दें।",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 3,
+      "target": "hi-IN",
+      "source": "Do not share your VPN credentials with anyone, including IT staff.",
+      "translated_text": "अपने वी.पी.एन. पासवर्ड को किसी से साझा न करें, जिसमें आई.टी. कर्मचारी भी शामिल हैं।",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 4,
+      "target": "hi-IN",
+      "source": "This policy applies to all 1,250 employees across our 3 India offices.",
+      "translated_text": "यह नीति हमारे 3 भारत कार्यालयों में कार्यरत सभी 1,250 कर्मचारियों पर लागू होती है।",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 5,
+      "target": "hi-IN",
+      "source": "Violations may result in disciplinary action up to and including termination.",
+      "translated_text": "उल्लंघन के परिणामस्वरूप अनुशासनात्मक कार्रवाई हो सकती है जिसमें समाप्ति भी शामिल है।",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 1,
+      "target": "te-IN",
+      "source": "Multi-factor authentication is mandatory for all systems that hold client data.",
+      "translated_text": "క్లయింట్ డేటాను కలిగి ఉన్న అన్ని వ్యవస్థలకు మల్టీ-ఫ్యాక్టర్ ప్రామాణీకరణ తప్పనిసరి.",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 2,
+      "target": "te-IN",
+      "source": "Report any suspected phishing email to the security team within 24 hours.",
+      "translated_text": "అనుమానాస్పద ఫిషింగ్ ఇమెయిల్‌ను 24 గంటల్లో భద్రతా బృందానికి నివేదించండి.",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 3,
+      "target": "te-IN",
+      "source": "Do not share your VPN credentials with anyone, including IT staff.",
+      "translated_text": "మీ వీపీఎన్ ఆధారాలను ఐటీ సిబ్బందితో సహా ఎవరితోనూ పంచుకోకండి.",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 4,
+      "target": "te-IN",
+      "source": "This policy applies to all 1,250 employees across our 3 India offices.",
+      "translated_text": "ఈ విధానం మా మూడు భారతదేశ కార్యాలయాలలోని మొత్తం 1,250 మంది ఉద్యోగులకు వర్తిస్తుంది.",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 5,
+      "target": "te-IN",
+      "source": "Violations may result in disciplinary action up to and including termination.",
+      "translated_text": "ఉల్లంఘనలు జరిగితే, తొలగింపు వరకు మరియు అంతకంటే ఎక్కువ శిక్షలు విధించవచ్చు.",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 1,
+      "target": "ta-IN",
+      "source": "Multi-factor authentication is mandatory for all systems that hold client data.",
+      "translated_text": "வாடிக்கையாளர் தரவை வைத்திருக்கும் அனைத்து அமைப்புகளுக்கும் மல்டி-ஃபேக்டர் அங்கீகாரம் கட்டாயம்.",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 2,
+      "target": "ta-IN",
+      "source": "Report any suspected phishing email to the security team within 24 hours.",
+      "translated_text": "சந்தேகத்திற்கிடமான ஃபிஷிங் மின்னஞ்சலை 24 மணி நேரத்திற்குள் பாதுகாப்பு குழுவிடம் புகாரளிக்கவும்.",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 3,
+      "target": "ta-IN",
+      "source": "Do not share your VPN credentials with anyone, including IT staff.",
+      "translated_text": "உங்கள் விபிஎன் விவரங்களை ஐடி ஊழியர்கள் உட்பட யாருடனும் பகிர்ந்து கொள்ளாதீர்கள்.",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 4,
+      "target": "ta-IN",
+      "source": "This policy applies to all 1,250 employees across our 3 India offices.",
+      "translated_text": "இந்தக் கொள்கை எங்கள் 3 இந்திய அலுவலகங்களில் உள்ள அனைத்து 1,250 ஊழியர்களுக்கும் பொருந்தும்.",
+      "source_language_code": "en-IN"
+    },
+    {
+      "n": 5,
+      "target": "ta-IN",
+      "source": "Violations may result in disciplinary action up to and including termination.",
+      "translated_text": "மீறல்கள் ஏற்பட்டால், ஒழுங்கு நடவடிக்கைகள் எடுக்கப்படலாம், அதாவது பணிநீக்கம் வரை கூட இருக்கலாம்.",
+      "source_language_code": "en-IN"
+    }
+  ],
+  "controls": [
+    {
+      "variant": "numerals_format=native",
+      "translated_text": "यह नीति हमारे ३ भारत कार्यालयों में कार्यरत सभी १,२५० कर्मचारियों पर लागू होती है।"
+    },
+    {
+      "variant": "output_script=roman",
+      "translated_text": "Yah niti humare 3 Bharat karyalayon mein kaaryarat sabhi 1,250 karmachariyon par lagu hoti hai."
+    },
+    {
+      "variant": "output_script=spoken-form-in-native",
+      "translated_text": "यह नीति हमारे तीन भारत कार्यालयों में कार्यरत सभी एक हज़ार दो सौ पचास कर्मचारियों पर लागू होती है।"
+    }
+  ],
+  "chars_sent": 1305,
+  "estimated_cost_inr": 2.61
+}

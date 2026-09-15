@@ -1,0 +1,33 @@
+{
+  "samples": [
+    {
+      "language": "hi-IN",
+      "speaker": "shreya",
+      "model": "bulbul:v3",
+      "codec": "mp3",
+      "chars": 400,
+      "bytes": 481920,
+      "file": "bulbul-hi-IN-shreya.mp3"
+    },
+    {
+      "language": "te-IN",
+      "speaker": "shreya",
+      "model": "bulbul:v3",
+      "codec": "mp3",
+      "chars": 372,
+      "bytes": 483072,
+      "file": "bulbul-te-IN-shreya.mp3"
+    },
+    {
+      "language": "ta-IN",
+      "speaker": "shreya",
+      "model": "bulbul:v3",
+      "codec": "mp3",
+      "chars": 450,
+      "bytes": 514560,
+      "file": "bulbul-ta-IN-shreya.mp3"
+    }
+  ],
+  "chars_sent": 1222,
+  "estimated_cost_inr": 3.67
+}

@@ -15,27 +15,24 @@ or verify the decision. Anything not yet built is written as "not implemented �
 | [0000](0000-template.md) | Template | — | — |
 | [0001](0001-reason-in-users-language.md) | Claude reasons in the user's language; translation only for English artifacts and as an optional retrieval booster | Accepted | `program/P0`, applied by `uc1/P2`–`P3` |
 | [0002](0002-one-platform-three-apps.md) | One shared platform package, three thin apps, one Compose stack; adapters are the only vendor boundary | Accepted | `program/P0` |
-| 0003 | Dubbing API contract and the UC2 production path (D9 a or b) | **Reserved** | `uc2/P0-spike` |
+| [0003](0003-dubbing-contract.md) | Dubbing takes a caller-supplied script via `srt_upload_url`, so UC2 uses path (a) | Accepted | `uc2/P0-spike` |
 | 0004 | Surveillance scope: perimeter, lawful basis, retention, access | **Reserved** | Gate 0 (Compliance/Legal/HR), PRD E2 |
 | [0005](0005-hybrid-detection-hardened-analysis.md) | Hybrid lexicon + LLM detection with tool-less, verified, canaried analysis | Accepted (design) | `uc3/P1` (adversarial set), `uc3/P3`–`uc3/P5` |
 | [0006](0006-meeting-minutes-separate-module.md) | Meeting minutes is a separate, separately-consented module | Accepted | — |
 | [0007](0007-build-workflow.md) | One PR per build prompt, squash-merged, gated by three CI jobs and three verification tiers | Accepted | `program/P0` |
 | [0008](0008-cloud-build-environment.md) | The cloud build environment is a contract held in the repository | Accepted | `program/P0` |
 
-## Reserved numbers
+## Reserved number
 
-`0003` and `0004` are deliberately unwritten. Neither can be decided from this repository:
+`0004` is deliberately unwritten. It cannot be decided from this repository:
 
-- **0003 — dubbing contract.** Requires live Sarvam Dubbing API responses. `uc2/P0-spike` writes
-  it, with request/response snippets under `docs/adr/assets/0003/`, and `uc2/P1` and `uc2/P4`
-  read it. Until it exists, the UC2 production path is undecided.
 - **0004 — surveillance scope.** Requires a written answer from Compliance, Legal and HR to the
   Gate 0 questions in `docs/prd-v2.md` E2. Nothing in UC3 touches real data until it exists;
   `uc3/P1` proceeds synthetic-only and says so, and `uc3/P7` leaves the retention deletion job
   disabled until this ADR sets the rule.
 
-Do not write either from inference. An ADR that guesses at a vendor contract or a lawful basis is
-worse than an absent one, because the prompts downstream treat it as settled.
+Do not write it from inference. An ADR that guesses at a lawful basis is worse than an absent one,
+because the prompts downstream treat it as settled.
 
 ## Where the decisions come from
 
