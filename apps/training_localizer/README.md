@@ -104,8 +104,12 @@ binding — see the `uc2/P1` report.
 ## Running it
 
 Unit tests need nothing: `uv run pytest platform/tests/test_uc2_pipeline.py`.
-The versioning test needs the stack:
+The versioning test needs Postgres:
 `make stack-core && make migrate && uv run pytest platform/tests/test_uc2_pipeline.py -m integration`.
+CI runs it on every push (the `integration (postgres · redis · qdrant)` job), which
+is where the D5 promise — re-running `post_edit` leaves `translate` at its old
+version — is actually verified, along with `alembic upgrade head && alembic check`
+against PostgreSQL 16.
 `LIVE_API_TESTS=1 uv run pytest platform/tests/test_uc2_pipeline.py -m slow` runs
 one segment through **translate and post_edit** against the real vendors; it does
 not cover adapt, backtranslate_qa or quiz, and post_edit's model leg only runs
