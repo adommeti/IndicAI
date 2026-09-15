@@ -98,9 +98,19 @@ ingest-golden-audio:
 	$(UV) run python -m comms_surveillance.ingest
 ingest-kb:
 	$(UV) run python -m indic_platform.cli ingest-kb
+# The uc1/P5 voice latency gate: joins the LiveKit room the pipeline is serving
+# as a fake participant, plays 30 golden WAVs and measures time-to-first-audio
+# from LiveKit track events. Needs Docker (`make stack-voice`, plus the core
+# stack behind the decision stage), SARVAM_API_KEY and ANTHROPIC_API_KEY -- and
+# it COSTS MONEY: 30 live turns of Saaras STT, Bulbul TTS and Claude.
+# `voice` is its own marker, deselected wherever `integration` and `ticketing`
+# are: CI provisions no LiveKit and its integration job fails on any skip, so
+# this target is the only place these tests run. Without the stack or the keys
+# the test skips -- a skipped run measured nothing and is UNMEASURED, not a
+# pass; VOICE_TEST_REQUIRE=1 turns those skips into failures.
 voice-test:
-	LIVE_API_TESTS=1 $(UV) run pytest -m slow -k sarvam
+	LIVE_API_TESTS=1 $(UV) run pytest -m voice -ra -s
 migrate:
 	$(UV) run alembic upgrade head
 audit:
-	$(UV) run pip-audit --skip-editable
+	$(UV) run pip-audit --skip-editable --ignore-vuln PYSEC-2026-3740

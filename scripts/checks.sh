@@ -24,8 +24,10 @@ stage typecheck   uv run --frozen mypy platform apps infra || exit 1
 
 # `ticketing` is deselected alongside `integration`: those tests need the Zammad
 # compose profile, which neither this gate nor CI provisions. Registering the
-# marker without deselecting it here would run them against nothing.
-stage unit-tests  uv run --frozen pytest -m 'not slow and not integration and not ticketing' -q -p no:cacheprovider || exit 1
+# marker without deselecting it here would run them against nothing. `voice` is
+# deselected for the same reason -- it needs LiveKit and paid vendor calls, and
+# `make voice-test` is its only runner.
+stage unit-tests  uv run --frozen pytest -m 'not slow and not integration and not ticketing and not voice' -q -p no:cacheprovider || exit 1
 stage eval-uc1-offline uv run --frozen python -m indic_platform.eval.runners.run --app uc1 || exit 1
 stage eval-uc2-offline uv run --frozen python -m indic_platform.eval.runners.run --app uc2 || exit 1
 stage eval-uc3-offline uv run --frozen python -m indic_platform.eval.runners.run --app uc3 || exit 1
@@ -52,7 +54,11 @@ if [ "$MODE" = "--full" ]; then
   # column type has drifted from its shipped migration, and CI runs it too.
   stage migrations  bash -c 'uv run --frozen alembic upgrade head && uv run --frozen alembic check' || exit 1
   stage integration uv run --frozen pytest -m integration -q -p no:cacheprovider || exit 1
-  stage audit       uv run --frozen pip-audit --skip-editable || exit 1
+  # Ignores are justified one by one, with their reachability argument, in
+  # docs/security/audit-exceptions.md. Keep this list and CI's in step; an id
+  # here without an entry there is a silenced finding, not an accepted one.
+  stage audit       uv run --frozen pip-audit --skip-editable \
+    --ignore-vuln PYSEC-2026-3740 || exit 1
 fi
 
 echo
