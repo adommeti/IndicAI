@@ -122,8 +122,42 @@ jobs:
           uv run alembic check
       - name: integration tests
         run: |
-          set +e
-          uv run pytest -m integration -q -p no:cacheprovider
-          rc=$?
-          # 5 = no tests collected (allowed until the first integration test exists)
-          [ "$rc" = "0" ] || [ "$rc" = "5" ] || exit "$rc"
+          # --capture=tee-sys keeps each test's printed verification output in the log:
+          # the prompts cite that output as the evidence for their acceptance criteria.
+          uv run pytest -m integration -q -p no:cacheprovider --capture=tee-sys \
+            --junit-xml=integration-results.xml
+      - name: assert the integration tests actually ran
+        # This job is the only place several acceptance criteria are ever measured, and the
+        # tests skip themselves when a service is unreachable -- so a zero exit status does
+        # not on its own mean anything was measured. An empty collection and a clean sweep
+        # of skips both have to be loud failures, or the evidence can vanish while CI stays
+        # green. Count what passed; treat a skip as a broken service, not as a pass.
+        run: |
+          python3 - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("integration-results.xml").getroot()
+          passed, skipped = 0, []
+          for case in root.iter("testcase"):
+              outcomes = {child.tag for child in case}
+              if outcomes & {"failure", "error"}:
+                  continue
+              if "skipped" in outcomes:
+                  skipped.append(case.get("classname", "") + "::" + (case.get("name") or ""))
+              else:
+                  passed += 1
+          print(f"integration tests: {passed} passed, {len(skipped)} skipped")
+          for name in skipped:
+              print(f"  skipped: {name}")
+          if passed == 0:
+              sys.exit(
+                  "FAIL: no integration test passed. Either nothing was collected or every "
+                  "test skipped itself -- in both cases this job measured nothing."
+              )
+          if skipped:
+              sys.exit(
+                  "FAIL: integration tests skipped in a job that provisions their services. "
+                  "A skip here means a service was unreachable, not that the test is optional."
+              )
+          PY

@@ -21,6 +21,10 @@ or verify the decision. Anything not yet built is written as "not implemented �
 | [0006](0006-meeting-minutes-separate-module.md) | Meeting minutes is a separate, separately-consented module | Accepted | — |
 | [0007](0007-build-workflow.md) | One PR per build prompt, squash-merged, gated by three CI jobs and three verification tiers | Accepted | `program/P0` |
 | [0008](0008-cloud-build-environment.md) | The cloud build environment is a contract held in the repository | Accepted | `program/P0` |
+| [0009](0009-instruction-flag-evidence-exemption.md) | Instruction-like content is flagged without a verbatim evidence span, and that exemption is bounded and measured | Accepted | `uc3/P4` |
+| [0010](0010-audit-chain-order-and-timestamps.md) | The audit chain walks a `seq` identity column; `created_at` is application-set | Accepted | `uc3/P5` |
+| [0011](0011-audit-chain-tamper-evident-not-non-repudiable.md) | The audit chain is tamper-evident, not non-repudiable; a trust root outside the database is deferred | Accepted | `uc3/P5`, notarisation in `program/P10` |
+| [0012](0012-multiple-alembic-revisions-in-uc3-p5.md) | Four alembic revisions in one prompt, split by rollback semantics | Accepted | `uc3/P5` |
 
 ## Reserved number
 
@@ -39,4 +43,6 @@ because the prompts downstream treat it as settled.
 `docs/prd-v2.md` G1 is the decision log these records expand: 0001–0006 are listed there with
 their one-line consequence. 0007 and 0008 are not in G1 — they were forced by the build method
 (autonomous cloud sessions) rather than by the product design, and are recorded here so the
-method is as reviewable as the architecture.
+method is as reviewable as the architecture. 0009–0012 are likewise absent from G1: they
+record where an implementation had to deviate from the PRD's own text, and 0011 in
+particular bounds a security claim the PRD states more confidently than the code earns.
