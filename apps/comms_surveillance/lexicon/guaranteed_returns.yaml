@@ -18,6 +18,7 @@ description: >
 entries:
   - id: gr-001
     note: explicit guarantee attached to a return
+    negatable: true
     severity: high
     weight: 0.9
     terms:
@@ -35,13 +36,14 @@ entries:
       - return guaranteed hai
       - guaranteed return milega
       - return ki guarantee
-    # Negative lookbehind for the standard disclaimer. "past performance is
-    # not a guarantee of future returns" is the sentence this category
-    # exists to allow; "guarantee of returns" is the one it exists to catch.
-    regex: '(?<!not a )(?<!no )(?<!never a )\bguarantee\w*\s+(?:\w+\s+){0,2}returns?\b'
+    # The standard risk disclaimer uses the same words as the promise, so this
+    # entry is negation-aware: see `negatable` in matcher.py.
+    negatable: true
+    regex: '\bguarantee\w*\s+(?:\w+\s+){0,2}returns?\b'
 
   - id: gr-002
     note: assured or certain return, without the word guarantee
+    negatable: true
     severity: high
     weight: 0.85
     terms:
@@ -353,6 +355,5 @@ entries:
     severity: medium
     weight: 0.5
     terms: []
-    # Same disclaimer guard as gr-001: this catch-all is the wider net, so
-    # without it the lookbehind on gr-001 just moves the false positive here.
-    regex: '(?<!not a )(?<!no )(?<!never a )\b(?:promise|promising|assure|assuring|guarantee|guaranteeing)\b[^.!?]{0,40}\b(?:return|returns|profit|yield|payout)\b'
+    negatable: true
+    regex: '\b(?:promise|promising|assure|assuring|guarantee|guaranteeing)\b[^.!?]{0,40}\b(?:return|returns|profit|yield|payout)\b'
