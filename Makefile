@@ -68,7 +68,7 @@ lint:
 typecheck:
 	$(UV) run mypy platform apps infra
 test:
-	$(UV) run pytest -m 'not slow and not integration and not ticketing'
+	$(UV) run pytest -m 'not slow and not integration and not ticketing and not voice'
 eval-uc1:
 	$(UV) run python -m indic_platform.eval.runners.run_uc1 --chat-only --decide helpdesk_agent.graph:decide $(UC1_EVAL_ARGS)
 eval-uc2:
@@ -103,6 +103,8 @@ ingest-kb:
 # from LiveKit track events. Needs Docker (`make stack-voice`, plus the core
 # stack behind the decision stage), SARVAM_API_KEY and ANTHROPIC_API_KEY -- and
 # it COSTS MONEY: 30 live turns of Saaras STT, Bulbul TTS and Claude.
+# VOICE_TEST_GREETING must point at the recorded consent notice: a session
+# refuses to start without one and this repo ships none (docs/build/BLOCKERS.md).
 # `voice` is its own marker, deselected wherever `integration` and `ticketing`
 # are: CI provisions no LiveKit and its integration job fails on any skip, so
 # this target is the only place these tests run. Without the stack or the keys
