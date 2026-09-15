@@ -25,6 +25,7 @@ or verify the decision. Anything not yet built is written as "not implemented â€
 | [0010](0010-audit-chain-order-and-timestamps.md) | The audit chain walks a `seq` identity column; `created_at` is application-set | Accepted | `uc3/P5` |
 | [0011](0011-audit-chain-tamper-evident-not-non-repudiable.md) | The audit chain is tamper-evident, not non-repudiable; a trust root outside the database is deferred | Accepted | `uc3/P5`, notarisation in `program/P10` |
 | [0012](0012-multiple-alembic-revisions-in-uc3-p5.md) | Four alembic revisions in one prompt, split by rollback semantics | Accepted | `uc3/P5` |
+| [0013](0013-governance-role-is-subtractive.md) | The `governance` role subtracts transcript and audio access rather than granting a subset | Accepted | `uc3/P6` |
 
 ## Reserved number
 

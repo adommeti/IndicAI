@@ -3,8 +3,8 @@
 Batch pipeline for PRD Section E: recorded calls in, diarized and transliterated
 transcripts out, hybrid detection and a human review queue on top.
 
-As of uc3/P2 this package contains ingestion and transcription only. Detection
-(P3, P4), the audit chain (P5) and the reviewer UI (P6) are subsequent prompts.
+Ingestion and transcription (P1-P2), the three-stage detector (P3-P4), the
+append-only audit chain (P5) and the role-scoped reviewer API and UI (P6).
 
 ## Data classification and retention
 
@@ -34,11 +34,92 @@ everywhere else, including:
   text wherever an identifier appears. The native `text` column remains the
   record of what was said and is what evidence spans are quoted from.
 
-What the override does **not** relax: the transcript is still wrapped in
+What the override does **not** relax: the reviewer API is role-gated (see
+*Roles* above) and `governance` never receives an unredacted span, a transcript
+or an audio URL at all — the override widens what a *reviewer* may see, not who
+counts as one. The transcript is still wrapped in
 `<transcript>` tags and HTML-escaped so it cannot close its own tag, both system
 prompts state it is data rather than instructions, neither stage is given tools,
 and every evidence span is verified to be an exact substring before it reaches a
 reviewer.
+
+## Roles, and what each one is allowed to see
+
+Identity comes from the SSO claim on the ASGI scope (`request.scope["user"]` /
+`["auth"]`), never from a header or a body field, and the API fails closed: a
+deployment with no trusted authentication middleware in front of it answers 401
+on every route. Roles are the `AuthCredentials` scopes the claim carried; scopes
+this build does not recognise are dropped rather than echoed back.
+
+| | reviewer | lead | governance |
+|---|---|---|---|
+| `GET /me` | yes | yes | yes |
+| `GET /flags`, `GET /flags/{id}` | yes | yes | **no** |
+| `GET /flags/{id}/audio` | yes | yes | **no** |
+| `POST /flags/{id}/dispositions` | yes | yes | **no** |
+| `GET /qa-sample` | **no** | yes | **no** |
+| `GET /metrics/precision`, `GET /metrics/false_negative_estimate` | yes | yes | yes |
+| `GET /audit/chain_status` | yes | yes | yes |
+
+`compliance_lead` is a strict superset of `compliance_reviewer`.
+
+**`governance` is subtractive, not a smaller grant.** It is a
+segregation-of-duties role — the people who read the numbers about the
+surveillance programme are deliberately not the people who can read the calls —
+so it is enforced as a *deny* that wins over any allow. A principal holding
+`governance` and `compliance_reviewer` is still refused transcripts and audio.
+That is the stricter of the two readings of PRD E8; additive roles would make
+"governance cannot fetch transcripts" conditional on nobody ever being granted
+both. A dual-hatted person needs two subjects. Recorded as ADR 0013.
+
+Three things the refusal deliberately does *not* leak, each pinned by a test in
+`platform/tests/test_uc3_api.py`:
+
+- **403, never 404.** The role dependency runs before the flag lookup, so a
+  refused caller cannot use the endpoint as an oracle for whether a flag exists.
+- **403, never 422.** FastAPI solves dependencies before it validates path,
+  query and body, so a refused caller never gets a validation error quoting
+  their own request back at them.
+- **No row hashes on `/audit/chain_status`.** `audit.summarise` carries
+  `head_hash` and `first_break_id`; the response projects neither. A head hash
+  is what an anchor is compared against, and `first_break_id` names a row in the
+  evidence store.
+
+`.claude/rules/apps.md`: UI hiding is not access control. The UI calls `/me` to
+decide what to render; this table is what the server decides to answer, and
+every cell of it is an API test.
+
+`AUTH__DEV_BYPASS=true` mints the fixed identity `dev-bypass@example.test` with
+the reviewer and lead roles (`AUTH__DEV_BYPASS_ROLES=governance` switches to the
+governance view). It is **refused when `ENV=prod`** — the app refuses to start,
+and a process whose environment changes after boot answers 500 rather than
+minting the identity.
+
+## Data classification of what the API returns
+
+| response | classification | who |
+|---|---|---|
+| flag list, flag detail (transcript, evidence span, English rendering) | confidential | reviewer, lead |
+| presigned recording URL | confidential; a bearer token for the audio | reviewer, lead |
+| dispositions (note, reviewer id) | confidential, audited | reviewer, lead |
+| precision, false-negative estimate, chain status | internal, aggregate only | all three |
+
+The recording URL is signed for **180 seconds** and is never logged, never
+persisted and never placed on a Langfuse span (`.claude/rules/adapters.md`
+forbids tracing signed URLs). Signing lives in `api.py` rather than in
+`storage.py` because `storage.py` is the ingestion side — it lists and fetches
+objects for the pipeline — and the API is the only caller that hands a URL to a
+browser; `training_localizer.api.media` does the same thing in the same place.
+
+Dispositions are written through `audit.append` and never with a plain
+`session.add`, so every one joins the hash chain under the table's advisory
+lock. A changed mind is a new row; the queue shows the latest, the chain keeps
+every one.
+
+`policy_clause` is resolved from `policy.md` at read time rather than copied
+onto the flag row, so the queue cannot quote a definition Compliance has since
+rewritten. A category the document does not define yields an empty clause, never
+a guess.
 
 ## The analysis harness
 
@@ -66,6 +147,10 @@ verdict — Stage 2 produces candidate findings and a person decides.
 | `SARVAM_TRANSLITERATE` | unset (offline) | `true` routes transliteration through Sarvam |
 | `DATABASE_URL` | — | Postgres for `calls` / `transcript_segments` |
 | `CELERY_BROKER_URL` | `redis://localhost:6379/0` | beat and worker broker |
+| `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | — | signing the reviewer's audio URLs; absent, `/flags/{id}/audio` is 503 |
+| `AUTH__DEV_BYPASS` | unset | `true` mints a fixed test identity instead of reading the SSO claim. Refused when `ENV=prod` |
+| `AUTH__DEV_BYPASS_ROLES` | `compliance_reviewer,compliance_lead` | which roles that fixed identity carries |
+| `ENV` | unset | `prod` refuses the dev bypass at startup |
 
 ## Transliteration quality
 
