@@ -12,7 +12,7 @@ At claude.ai/code → environment selector → **Add cloud environment**:
 |---|---|
 | Name | `indicai` |
 | Network access | **Custom**, tick *Also include default list of common package managers*, and add: `api.sarvam.ai`, `docs.sarvam.ai`, `huggingface.co`, `*.huggingface.co`, `cdn-lfs.huggingface.co`, `cdn-lfs-us-1.huggingface.co`, `*.hf.co`, `*.xethub.hf.co`, `ghcr.io`, `github.com`, `objects.githubusercontent.com`, `mcr.microsoft.com`, `aka.ms` |
-| Environment variables | `SARVAM_API_KEY=…`, `ANTHROPIC_API_KEY=…`, `ANTHROPIC_MODEL=claude-sonnet-5`, `LIVE_API_TESTS=0`, `INDICAI_GIT_NAME=Anantha Dommeti`, `INDICAI_GIT_EMAIL=<see §4>` |
+| Environment variables | `SARVAM_API_KEY=…`, `ANTHROPIC_API_KEY=…`, `ANTHROPIC_MODEL=claude-sonnet-5`, `LIVE_API_TESTS=0`, `INDICAI_GIT_NAME=Anantha Dommeti`, `INDICAI_GIT_EMAIL=anantha.dommeti@users.noreply.github.com` (§4) |
 | Setup script | paste the contents of `scripts/cloud-setup.sh` |
 
 Notes:
@@ -20,6 +20,10 @@ Notes:
   to `api.anthropic.com`). The Sarvam key may instead be stored as an *API credential* for host
   `api.sarvam.ai` with header `api-subscription-key` (no prefix); then leave `SARVAM_API_KEY`
   set to any non-empty placeholder so the SDK client constructs.
+- Set `INDICAI_GIT_EMAIL` to a real address from the allowlist in §4, not to a placeholder. Both
+  identity variables are optional — omitted, `.claude/hooks/_lib.sh` uses the correct defaults —
+  but a variable set to placeholder text overrides that default and every commit the session makes
+  fails the `attribution` gate.
 - The setup script pulls the Compose images and warms the TEI model into the `tei-data` volume;
   it must finish in ~5 minutes and it is cached for ~7 days. If TEI is still downloading when a
   session starts, `scripts/stack.sh wait tei` blocks until it is healthy.
@@ -135,6 +139,7 @@ overrides.
 | Session ends without shipping, message says "STOP GATE allowed after 4 blocks" | The gate kept failing; read `.claude/run/gate.log` in the PR branch, or re-open the session and say "fix the gate and ship". |
 | `ship: no CI checks registered` | Actions disabled, or the workflow file changed in this PR and the token lacks the `workflow` scope. |
 | Push rejected: refusing to allow … workflow | Reconnect GitHub with a token that has `workflow` scope (`/web-setup` after `gh auth refresh -s workflow`). |
+| `attribution-check` FAIL: author is not an allowed identity | `INDICAI_GIT_EMAIL` in the cloud environment is a placeholder or an address outside the allowlist. Set it to an address from §4 (or unset it and take the `_lib.sh` default), then re-commit — `git reset --soft origin/main` and commit again; `--amend` is blocked by the Bash guard. |
 | `attribution-check` FAIL on `main` push | The squash-merge author email is not in `ALLOWED_AUTHOR_EMAILS`; add your GitHub-verified address. |
 | TEI unhealthy for >15 min | Weights still downloading; check `docker compose --env-file .env.stack logs tei`; verify `huggingface.co`/`*.hf.co` are allowlisted. |
 | `docker info` fails | Docker not available in the environment; stack-dependent criteria are reported UNMEASURED. |
