@@ -1,0 +1,54 @@
+{
+  "note": "Job created for contract evidence only. Never started, so no media was processed and no minutes were billed.",
+  "request": {
+    "source_language_code": "en-IN",
+    "target_language_codes": [
+      "hi-IN"
+    ],
+    "export_options": [
+      "video",
+      "audio",
+      "srt"
+    ],
+    "voice_cloning": false,
+    "voice_id": "shreya",
+    "register": "formal",
+    "job_name": "p0-spike-evidence"
+  },
+  "response": {
+    "status": "success",
+    "message": "Upload job created successfully",
+    "data": {
+      "job_id": "c4f3adda-bfd5-4099-8e35-9d557792b60f",
+      "upload_url": "https://saasprodstudiopublicsa.blob.core.windows.net/dubbing-storage/data/jobs_store/c4f3adda-bfd5-4099-8e35-9d557792b60f/inputs/source/c4f3adda-bfd5-4099-8e35-9d557792b60f.mp4?<signed-sas-redacted>",
+      "srt_upload_url": "https://saasprodstudiopublicsa.blob.core.windows.net/dubbing-storage/data/jobs_store/c4f3adda-bfd5-4099-8e35-9d557792b60f/inputs/source/c4f3adda-bfd5-4099-8e35-9d557792b60f.srt?<signed-sas-redacted>",
+      "expires_in_hours": 24,
+      "processing_started": false,
+      "voice_cloning": false,
+      "voice_id": "shreya",
+      "pace_preset": "normal",
+      "tts_engine": "sarvam_dub_pro",
+      "voice_cloning_engine": "sarvam_dub_pro",
+      "model_tier": null
+    }
+  },
+  "sdk_create_signature": "(*, source_language_code: Union[Literal['en-IN', 'hi-IN', 'bn-IN', 'gu-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'or-IN', 'pa-IN', 'ta-IN', 'te-IN', 'as-IN'], Any], target_language_codes: Sequence[Union[Literal['en-IN', 'hi-IN', 'bn-IN', 'gu-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'or-IN', 'pa-IN', 'ta-IN', 'te-IN', 'as-IN'], Any]], export_options: Optional[Sequence[Union[Literal['video', 'audio', 'srt'], Any]]] = Ellipsis, voice_cloning: Optional[bool] = Ellipsis, voice_id: Optional[str] = Ellipsis, pace_preset: Union[Literal['slow', 'moderate', 'normal', 'fast'], Any, NoneType] = Ellipsis, num_speakers: Optional[int] = Ellipsis, disable_watermark: Optional[bool] = Ellipsis, register: Union[Literal['formal', 'common-indic', 'classic-colloquial', 'modern-colloquial', 'academic', 'auto'], Any, NoneType] = Ellipsis, editor_flow: Optional[bool] = Ellipsis, job_name: Optional[str] = Ellipsis, request_options: Optional[sarvamai.core.request_options.RequestOptions] = None) -> sarvamai.types.create_dubbing_job_response.CreateDubbingJobResponse",
+  "observed_errors": [
+    {
+      "when": "voice_cloning=false without voice_id",
+      "http": 400,
+      "message": "Validation Error(s):\n- : Value error, voice_id is required when voice_cloning is false"
+    },
+    {
+      "when": "PUT to srt_upload_url / upload_url from this cloud session",
+      "error": "httpx.ProxyError: 403 Forbidden",
+      "cause": "*.blob.core.windows.net is not on the environment network allowlist (RUNBOOK section 1)"
+    },
+    {
+      "when": "speaker=anushka with model=bulbul:v3",
+      "http": 400,
+      "code": "invalid_request_error",
+      "message": "speaker not in the bulbul:v3 roster"
+    }
+  ]
+}

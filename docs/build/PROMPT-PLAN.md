@@ -21,7 +21,7 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc1 | P5 | pending | uc1/P4 | Voice pipeline: LiveKit + Pipecat + Saaras + Bulbul | S,K,L | |
 | uc1 | P6 | pending | uc1/P5 | React widget, replay endpoint, Grafana dashboard | S,C,K | |
 | uc1 | P7 | pending | uc1/P6 | Security + retention + spend caps; docs/security/uc1-review.md | S,C | |
-| uc2 | P0-spike | pending | program/P0 | Vendor contract spike → docs/adr/0003 | L | |
+| uc2 | P0-spike | partial | program/P0 | Vendor contract spike → docs/adr/0003 | L | see docs/build/BLOCKERS.md |
 | uc2 | P1 | pending | uc2/P0-spike | Terminology files, golden set, eval runner | S,L | |
 | uc2 | P2 | pending | uc2/P1 | Celery pipeline: adapt → translate → post_edit → QA → quiz | S,C,K,L | |
 | uc2 | P3 | pending | uc2/P2 | Reviewer UI with LOCKED enforcement | S,C | |
