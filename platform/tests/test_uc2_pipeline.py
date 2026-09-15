@@ -619,3 +619,100 @@ async def test_live_one_segment_through_translate_and_post_edit() -> None:
         glossary=glossary,
         locked_id=segment.locked_id,
     ), changes
+
+
+# --- API ----------------------------------------------------------------------
+
+
+def client() -> Any:
+    from fastapi.testclient import TestClient
+    from training_localizer.api import app
+
+    return TestClient(app)
+
+
+def test_health_is_public() -> None:
+    response = client().get("/health")
+    assert response.status_code == 200 and response.json()["stage"] == "P2"
+
+
+def test_every_write_fails_closed_without_trusted_sso() -> None:
+    """No SSO middleware is installed here, which is the bare-deployment case."""
+    api = client()
+    module_id = "00000000-0000-0000-0000-000000000001"
+    assert api.post("/modules", json={"title": "t", "segments": []}).status_code in (401, 422)
+    assert api.post(f"/modules/{module_id}/localize").status_code == 401
+    assert api.get(f"/modules/{module_id}/status").status_code == 401
+
+
+def authed() -> Any:
+    """A client standing in for a deployment with trusted SSO middleware.
+
+    The dependency is overridden rather than faked in the scope: what these
+    tests check is the validation *behind* authentication, and
+    `test_every_write_fails_closed_without_trusted_sso` covers the gate itself.
+    """
+    from fastapi.testclient import TestClient
+    from training_localizer.api import app, authenticated_owner
+
+    app.dependency_overrides[authenticated_owner] = lambda: "owner@example.test"
+    return TestClient(app)
+
+
+def test_a_locked_segment_without_an_approved_rendering_is_rejected() -> None:
+    api = authed()
+    try:
+        response = api.post(
+            "/modules",
+            json={
+                "title": "module",
+                "segments": [
+                    {
+                        "seg_id": 1,
+                        "start_ms": 0,
+                        "end_ms": 5000,
+                        "source_text": "An obligation nobody has approved a rendering for.",
+                        "locked": True,
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 422
+        assert "approved_renderings.yaml" in response.json()["detail"]
+    finally:
+        from training_localizer.api import app
+
+        app.dependency_overrides.clear()
+
+
+def test_localize_rejects_an_unsupported_language_before_queueing() -> None:
+    api = authed()
+    try:
+        response = api.post(
+            "/modules/00000000-0000-0000-0000-000000000001/localize?languages=fr-FR"
+        )
+        assert response.status_code == 422
+        assert "fr-FR" in response.json()["detail"]
+    finally:
+        from training_localizer.api import app
+
+        app.dependency_overrides.clear()
+
+
+def test_module_upload_rejects_malformed_segments() -> None:
+    api = authed()
+    try:
+        bad = [
+            {"seg_id": 1, "start_ms": 5000, "end_ms": 1000, "source_text": "backwards"},
+            {"seg_id": 1, "start_ms": 0, "end_ms": 1000, "source_text": "a", "extra": 1},
+        ]
+        for segment in bad:
+            response = api.post("/modules", json={"title": "m", "segments": [segment]})
+            assert response.status_code == 422, segment
+        duplicate = {"seg_id": 1, "start_ms": 0, "end_ms": 1000, "source_text": "a"}
+        response = api.post("/modules", json={"title": "m", "segments": [duplicate, duplicate]})
+        assert response.status_code == 422
+    finally:
+        from training_localizer.api import app
+
+        app.dependency_overrides.clear()

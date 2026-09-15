@@ -9,6 +9,7 @@ from indic_platform.db.models import Module, Segment
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from starlette.authentication import AuthCredentials, BaseUser
+from starlette.concurrency import run_in_threadpool
 
 from training_localizer.pipeline import LANGUAGES, localize, module_status
 from training_localizer.terminology import load_glossary, resolve_locked_id
@@ -153,7 +154,8 @@ async def localize_module(
                 raise HTTPException(404, "Unknown module")
     finally:
         await eng.dispose()
-    task = localize.delay(str(module_id), requested)
+    # Celery's .delay() is a blocking broker round-trip; keep it off the loop.
+    task = await run_in_threadpool(localize.delay, str(module_id), requested)
     return {"module_id": str(module_id), "languages": requested, "task_id": task.id}
 
 
