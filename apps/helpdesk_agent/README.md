@@ -60,7 +60,18 @@ The API uses this verified identity for both new and resumed sessions; another
 employee cannot resume a session merely by knowing its UUID. Without this trusted
 middleware, `/chat/turn` returns 401 before model calls or persistence. `/health`
 remains public. No IdP-specific token-validation backend is configured by P3;
-SSO deployment wiring is still required, with no anonymous development bypass.
+SSO deployment wiring is still required.
+
+uc1/P6 added a **local development bypass**, because the browser-side
+`VITE_AUTH_DEV_BYPASS` grants nothing server-side and a local UI would otherwise
+see 401 on every route. `AUTH__DEV_BYPASS=true` mints a fixed, obviously fake
+identity (`dev-bypass@example.test`) carrying `governance`. It is refused unless
+`ENV` names a known non-production environment — and an unset or misspelt `ENV`
+refuses too, so a typo locks the door rather than opening it. The refusal is
+raised at import (a misconfigured deployment does not start) and again on every
+request (setting the variable after boot cannot take effect). See
+`apps/helpdesk_agent/roles.py` and `platform/tests/test_uc1_dev_bypass.py`, which
+spends most of its assertions on the refusals rather than on the grant.
 
 The LangGraph workflow retrieves once, calls the cached C7 prompt with
 `claude-sonnet-5`, and applies deterministic guards. A rejected decision gets one
