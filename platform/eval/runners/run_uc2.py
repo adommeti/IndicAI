@@ -4,11 +4,19 @@ Measures four things over the `uc2_training` golden set:
 
   terminology_adherence  exact match against the target-language obligations —
                          approved glossary renderings and LOCKED statements.
-  fidelity_mean          back-translation fidelity 1-5 from a judge (D7), scored
-                         against the reference translations.
+  fidelity_mean          back-translation fidelity 1-5 from a judge (D7). At P1
+                         the judge scores the reference translations themselves
+                         (`--fidelity-source references`, the default), because
+                         there is no pipeline yet; uc2/P2 points it at the
+                         translator with `--fidelity-source sut`.
   timing_fit_rate        estimated spoken length within tolerance of the segment
                          duration, from characters-per-second per language.
   quiz_validity          structural checks on the reference quiz items.
+
+PRD D7 also ships these two rubrics under `apps/training_localizer/prompts/`.
+The copies here are the eval-side originals (.claude/rules/eval.md versions judge
+rubrics under platform/eval/prompts/); when uc2/P2 creates the app-side pair,
+`test_eval_and_app_judge_prompts_agree` keeps the two texts identical.
 
 The system under test is injected (`--translate module:function`), so the runner
 works before `apps/training_localizer` exists. The default is `baseline`, which
@@ -22,6 +30,7 @@ a floor under the baseline and hide a broken check.
 """
 
 import argparse
+import asyncio
 import importlib
 import json
 import re
@@ -39,10 +48,20 @@ TIMING = Path(__file__).parents[2] / "config" / "timing.yaml"
 LANGUAGES = ("hi-IN", "te-IN", "ta-IN")
 
 B6_GATES = {
-    "terminology_adherence": 1.0,  # D10: gate 100%
-    "fidelity_mean": 4.0,  # D10: gate >= 4.0
+    "terminology_adherence": 1.0,  # B6 + D10: gate 100%
+    "fidelity_mean": 4.0,  # B6 + D10: gate >= 4.0 mean
     "timing_fit_rate": 0.90,  # D10: target >= 90%
-    "quiz_validity": 1.0,
+    "quiz_validity": 1.0,  # no PRD threshold; structural faults are never acceptable
+}
+
+# Named by B6/D10 for UC2, not producible from a golden set alone. Reported as
+# unmeasured with the reason rather than omitted or given a passing placeholder.
+NOT_MEASURABLE_AT_P1 = {
+    "quiz_pass_rate_vs_english_control": "B6 business metric; needs the pilot cohort (uc2/P5)",
+    "reviewer_edit_rate": "D10 target <= 20%; needs the reviewer UI and real edits (uc2/P3)",
+    "fidelity_human_correlation": (
+        "D10; needs human-approved reference translations, which are still draft"
+    ),
 }
 
 
@@ -217,23 +236,43 @@ def score_terminology(
 def score_timing(
     segments: list[Segment], translate: Translator, timing: dict[str, Any]
 ) -> dict[str, float]:
+    """Estimated spoken length within tolerance of the authored segment duration.
+
+    The per-language rates are reported alongside the headline so a reader can see
+    when a run is degenerate: the golden durations were authored at a constant
+    English rate, so an *untranslated* baseline produces the same length ratio for
+    every segment in a language and its per-language rate is 0 or 1, never in
+    between. `timing_durations_synthetic` marks that, and `evaluate` turns it into
+    a provisional note on the stage line. Real translations vary in length and the
+    check discriminates normally (`test_timing_fit_discriminates_on_length`).
+    """
     tolerance = float(timing["tolerance"])
+    metrics: dict[str, float] = {}
     fits = total = 0
+    degenerate = True
     for language in LANGUAGES:
         cps = float(timing["languages"][language]["chars_per_second"])
+        lang_fits = 0
         for segment in segments:
             produced = translate(segment, language)
             estimated = len(produced) / cps
-            total += 1
-            fits += int(abs(estimated - segment.duration_s) <= tolerance * segment.duration_s)
-    return {"timing_fit_rate": fits / total if total else 0.0, "timing_segments": float(total)}
+            lang_fits += int(abs(estimated - segment.duration_s) <= tolerance * segment.duration_s)
+        metrics[f"timing_fit_rate_{language}"] = lang_fits / len(segments) if segments else 0.0
+        if segments and 0 < lang_fits < len(segments):
+            degenerate = False
+        fits += lang_fits
+        total += len(segments)
+    metrics["timing_fit_rate"] = fits / total if total else 0.0
+    metrics["timing_segments"] = float(total)
+    metrics["timing_durations_synthetic"] = float(degenerate)
+    return metrics
 
 
 def score_quiz(
     quiz: list[QuizItem], segments: list[Segment]
 ) -> tuple[dict[str, float], list[dict[str, object]]]:
     known = {(s.module_id, s.seg_id) for s in segments}
-    seen_ids: set[int] = set()
+    seen_ids: set[tuple[str, str, int]] = set()
     valid = 0
     details: list[dict[str, object]] = []
     for item in quiz:
@@ -248,9 +287,12 @@ def score_quiz(
             problems.append("answer index out of range")
         if not item.rationale.strip():
             problems.append("empty rationale")
-        if item.item_id in seen_ids:
-            problems.append("duplicate item_id")
-        seen_ids.add(item.item_id)
+        # D6 keys quiz_items on (module_id, language, item_id), so the same
+        # item_id legitimately recurs across modules and languages.
+        key = (item.module_id, item.language, item.item_id)
+        if key in seen_ids:
+            problems.append("duplicate (module_id, language, item_id)")
+        seen_ids.add(key)
         # "no item answerable without the content": the stem must not contain the
         # correct option verbatim, which would give the answer away.
         if 0 <= item.answer < len(item.options):
@@ -268,22 +310,38 @@ def score_quiz(
 
 
 def score_fidelity(
-    references: list[Reference], translate: Translator, judge: Judge | None
+    references: list[Reference],
+    translate: Translator,
+    judge: Judge | None,
+    *,
+    source: str = "references",
 ) -> tuple[dict[str, float], list[str], list[dict[str, object]]]:
+    """Judge fidelity over the 90 reference rows.
+
+    `source="references"` judges `reference_text` — this is what the P1 prompt
+    asks for ("implement the judge now against the reference translations"), and
+    it is the only thing worth judging before a pipeline exists. `source="sut"`
+    judges whatever `translate` produced, which is what uc2/P2 onwards wants.
+    """
     if judge is None:
         return {}, ["fidelity_mean"], []
     scores: list[int] = []
     details: list[dict[str, object]] = []
     for ref in references:
-        segment = Segment(
-            module_id=ref.module_id,
-            seg_id=ref.seg_id,
-            start_ms=0,
-            end_ms=1,
-            source_text=ref.source_text,
-            locked=ref.locked,
-        )
-        produced = translate(segment, ref.language)
+        if source == "references":
+            produced = ref.reference_text
+        else:
+            produced = translate(
+                Segment(
+                    module_id=ref.module_id,
+                    seg_id=ref.seg_id,
+                    start_ms=0,
+                    end_ms=1,
+                    source_text=ref.source_text,
+                    locked=ref.locked,
+                ),
+                ref.language,
+            )
         verdict = judge(ref.source_text, produced, ref.language)
         scores.append(verdict.score)
         if verdict.score < 4:
@@ -299,42 +357,56 @@ def score_fidelity(
                 }
             )
     return (
-        {"fidelity_mean": sum(scores) / len(scores), "fidelity_items": float(len(scores))},
+        {
+            "fidelity_mean": sum(scores) / len(scores),
+            "fidelity_items": float(len(scores)),
+        },
         [],
         details,
     )
 
 
-def claude_judge(model: str) -> Judge:
-    """Back-translate then score, per D7. Both prompts are versioned under
-    platform/eval/prompts/ and sent at temperature 0."""
+class Backtranslation(BaseModel):
+    """D7 asks for "only the English"; a schema gets that through `structured`,
+    which is the adapter path that sets temperature 0 (claude.py). `stream_text`
+    does not take a temperature, and adding one would change a Protocol shared by
+    every adapter — not this prompt's business."""
+
+    english: str
+
+
+def prompt_body(path: Path) -> str:
+    """The prompt text without its YAML front-matter."""
+    text = path.read_text()
+    return text.split("---", 2)[2].strip() if text.startswith("---") else text.strip()
+
+
+def claude_judge(model: str, client: Any | None = None) -> Judge:
+    """Back-translate, then score source vs. back-translation, per PRD D7.
+
+    Both rubrics are versioned under `platform/eval/prompts/` and both legs go
+    through `Claude.structured`, so both are sent at temperature 0 with the system
+    prompt cached. `client` is injectable so the path is testable without a key.
+    """
     from indic_platform.adapters.claude import Claude
-    from indic_platform.adapters.runtime import Runtime
 
     prompts = Path(__file__).parents[1] / "prompts"
-    back_prompt = prompts / "uc2_backtranslate.md"
-    judge_prompt = prompts / "uc2_qa_judge.md"
-
-    def body(path: Path) -> str:
-        text = path.read_text()
-        return text.split("---", 2)[2].strip() if text.startswith("---") else text.strip()
-
-    client = Claude(runtime=Runtime())
+    back_prompt = prompt_body(prompts / "uc2_backtranslate.md")
+    judge_prompt = prompt_body(prompts / "uc2_qa_judge.md")
+    sut = client if client is not None else Claude()
 
     def judge(source: str, produced: str, language: str) -> FidelityVerdict:
-        import asyncio
-
         async def run() -> FidelityVerdict:
-            english = await client.stream_text(
-                body(back_prompt).replace("{language}", language),
-                [{"role": "user", "content": produced}],
+            back = await sut.structured(
+                system=back_prompt.replace("{language}", language),
+                user=produced,
+                schema=Backtranslation,
                 model=model,
             )
-            back = "".join([chunk async for chunk in english])
-            return await client.structured(
-                body(judge_prompt),
-                f"SOURCE:\n{source}\n\nBACKTRANSLATION:\n{back}",
-                FidelityVerdict,
+            return await sut.structured(
+                system=judge_prompt,
+                user=f"SOURCE:\n{source}\n\nBACKTRANSLATION:\n{back.english}",
+                schema=FidelityVerdict,
                 model=model,
             )
 
@@ -343,18 +415,48 @@ def claude_judge(model: str) -> Judge:
     return judge
 
 
+def memoise(translate: Translator) -> Translator:
+    """Call the system under test once per (segment, language).
+
+    Terminology, timing and fidelity must describe the *same* text. Against a
+    non-deterministic translator, calling through three times would score three
+    different outputs and cost three times as much.
+    """
+    cache: dict[tuple[str, int, str], str] = {}
+
+    def wrapped(segment: Segment, language: str) -> str:
+        key = (segment.module_id, segment.seg_id, language)
+        if key not in cache:
+            cache[key] = translate(segment, language)
+        return cache[key]
+
+    return wrapped
+
+
 def evaluate(
-    translate: Translator = baseline, judge: Judge | None = None, strict: bool = True
+    translate: Translator = baseline,
+    judge: Judge | None = None,
+    strict: bool = True,
+    fidelity_source: str = "references",
 ) -> Report:
     segments = load_segments()
     references = load_references()
     quiz = load_quiz()
     glossary, renderings = load_terminology()
     timing = load_timing()
+    translate = memoise(translate)
 
     metrics: dict[str, float] = {}
-    details: list[dict[str, object]] = []
-    unmeasured: list[str] = []
+    # B6/D10 name UC2 measures this prompt cannot produce. Declaring them keeps the
+    # rule in .claude/rules/eval.md honest: every B6 metric is either measured with
+    # its item count or reported unmeasured with a reason. Silence would let a
+    # reader mistake `quiz_validity` (structural) for the B6 quiz *pass rate*.
+    # These lead `details` so the reasons survive its truncation.
+    unmeasured: list[str] = list(NOT_MEASURABLE_AT_P1)
+    details: list[dict[str, object]] = [
+        {"check": "unmeasured", "metric": metric, "reason": reason}
+        for metric, reason in NOT_MEASURABLE_AT_P1.items()
+    ]
 
     term_metrics, term_details = score_terminology(segments, translate, glossary, renderings)
     metrics.update(term_metrics)
@@ -363,10 +465,21 @@ def evaluate(
     quiz_metrics, quiz_details = score_quiz(quiz, segments)
     metrics.update(quiz_metrics)
     details += quiz_details
-    fid_metrics, fid_unmeasured, fid_details = score_fidelity(references, translate, judge)
+    fid_metrics, fid_unmeasured, fid_details = score_fidelity(
+        references, translate, judge, source=fidelity_source
+    )
     metrics.update(fid_metrics)
     unmeasured += fid_unmeasured
     details += fid_details
+    if fid_unmeasured:
+        details.insert(
+            0,
+            {
+                "check": "unmeasured",
+                "metric": "fidelity_mean",
+                "reason": "no judge injected; pass --judge (needs ANTHROPIC_API_KEY)",
+            },
+        )
 
     # Provenance: both the references and the timing table are drafts, so the
     # numbers that depend on them are provisional even when they are measured.
@@ -380,7 +493,16 @@ def evaluate(
     if draft_refs:
         provisional.append(f"fidelity ({draft_refs} draft references)")
     if not timing.get("measured", False):
-        provisional.append("timing fit (estimated, not measured)")
+        provisional.append("timing fit (rate estimated, not measured)")
+    if metrics.get("timing_durations_synthetic"):
+        # The golden durations were authored at the en-IN rate in this same file,
+        # so for an untranslated baseline the length ratio is a per-language
+        # constant (en_cps / lang_cps) and the rate says nothing about the text.
+        # It discriminates on real translations; it cannot on the baseline.
+        provisional.append(
+            "timing fit (golden durations authored at the en-IN rate; the baseline "
+            "ratio is a per-language constant, not a measurement of the text)"
+        )
 
     quality_gates = {
         name: metrics[name] >= threshold for name, threshold in B6_GATES.items() if name in metrics
@@ -403,11 +525,35 @@ def evaluate(
         gates=gates,
         unmeasured=unmeasured,
         quality_gates=quality_gates,
-        details=details[:50],
+        details=details,
     )
     if strict:
         report.gates = {**gates, **{f"b6:{k}": v for k, v in quality_gates.items()}}
     return report
+
+
+PRICING = Path(__file__).parents[2] / "config" / "pricing.yaml"
+# Both D7 legs send a short rubric plus one segment and return one short field.
+# Rounded up from the golden set's own lengths (~4 chars/token, 1.5x for Indic
+# script) so the printed number errs high rather than low.
+TOKENS_PER_CALL = (600, 200)
+
+
+def estimate_judge_cost(references: list[Reference], model: str) -> str:
+    """`.claude/rules/eval.md`: print an estimated cost before a live batch."""
+    pricing = yaml.safe_load(PRICING.read_text())
+    rates = pricing["models"].get(model)
+    calls = len(references) * 2  # back-translate, then score
+    if not rates:
+        return f"uc2 judge: {calls} Claude calls on {model}; no pricing entry, cost unknown"
+    tokens_in, tokens_out = TOKENS_PER_CALL
+    usd = calls * (tokens_in * rates["input_tokens"] + tokens_out * rates["output_tokens"])
+    inr = usd * float(pricing["fx_inr_per_usd"])
+    return (
+        f"uc2 judge: {len(references)} reference segments x 2 Claude calls "
+        f"(back-translate + score) on {model} = {calls} calls, "
+        f"estimated ${usd:.2f} / Rs {inr:.2f}"
+    )
 
 
 def main() -> None:
@@ -417,6 +563,12 @@ def main() -> None:
     )
     parser.add_argument("--judge", help="module:function implementing the Judge contract")
     parser.add_argument("--judge-model", default="claude-haiku-4-5")
+    parser.add_argument(
+        "--fidelity-source",
+        choices=("references", "sut"),
+        default="references",
+        help="What the judge scores: the reference translations (P1) or the translator (P2+)",
+    )
     parser.add_argument("--output", type=Path, default=Path("docs/eval"))
     parser.add_argument(
         "--live", action="store_true", help="Run the Claude judge (costs money); prints an estimate"
@@ -439,13 +591,15 @@ def main() -> None:
         judge = getattr(importlib.import_module(module), function)
     elif args.live:
         references = load_references()
-        print(
-            f"uc2 judge: {len(references)} segments x 2 Claude calls "
-            f"(back-translate + score) on {args.judge_model}"
-        )
+        print(estimate_judge_cost(references, args.judge_model))
         judge = claude_judge(args.judge_model)
 
-    report = evaluate(translate=translate, judge=judge, strict=not args.baseline)
+    report = evaluate(
+        translate=translate,
+        judge=judge,
+        strict=not args.baseline,
+        fidelity_source=args.fidelity_source,
+    )
     report.write(args.output)
     print(
         json.dumps(

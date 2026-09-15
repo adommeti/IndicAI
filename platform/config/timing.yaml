@@ -17,8 +17,16 @@
 # CAVEAT: one voice, one pace, one sample per language, on compliance-register
 # prose. Good enough to make the timing check discriminate; `uc2/P4` measures
 # per-segment durations on real dubbed output and should widen this base.
-# The earlier hand-guessed values (11.5 / 10.0 / 10.5) were 14-33% low and made
-# every correct translation look like a timing failure.
+# The earlier hand-guessed values (11.5 / 10.0 / 10.5) were 13.5% / 18.7% / 25%
+# below the measured rates, and made every correct translation look like a
+# timing failure.
+#
+# CIRCULARITY, read this before quoting a baseline timing number: the golden
+# segment durations in platform/eval/golden/uc2_training/samples/ were authored
+# at the `en-IN` rate below, so for an *untranslated* baseline the length ratio
+# is the constant en_cps / lang_cps for every segment in a language. The runner
+# detects that (`timing_durations_synthetic`) and says so on its stage line.
+# The check discriminates normally on real translations, whose lengths vary.
 
 measured: true
 measured_from: docs/adr/assets/0003/bulbul-*.mp3 (uc2/P0-spike, bulbul:v3, speaker shreya, pace 1.0)

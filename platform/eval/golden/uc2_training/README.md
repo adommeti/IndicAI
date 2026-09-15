@@ -19,8 +19,13 @@ improve a score — see `.claude/rules/eval.md`.
   Durations were authored at 15 English chars/second, floored at 3.5 s.
 - `reference_translations.<lang>.jsonl` — 30 lines per language
   (10 per module, always including that module's locked segments).
-- `quiz_items.jsonl` — 30 items, 10 per module, in the shape of the `quiz_items`
-  table in PRD D6.
+- `quiz_items.jsonl` — 30 items, 10 per module, modelled on the `quiz_items`
+  table in PRD D6 with one difference: D6 has `approved boolean default false`
+  and these lines carry `status: draft` instead, matching the reference
+  translations. `uc2/P2` owns the table; whichever spelling it picks, the
+  loader in `run_uc2.py` changes with it. Item ids are unique per
+  `(module_id, language, item_id)`, which is D6's key — the same id
+  deliberately recurs across modules.
 
 ## Everything here is DRAFT
 
@@ -31,12 +36,33 @@ Reference translations carry `status: draft` and an `origin`:
 | `approved_renderings:<id>` | 9 | copied verbatim from the LOCKED statement; correct by construction |
 | `mayura:v1 mode=formal` | 21 | machine draft, seeded so the harness can be wired and run |
 
+The `mayura:v1 mode=formal` label records how the 63 machine drafts were produced
+during `uc2/P1`, but unlike the `uc2/P0-spike` samples
+(`docs/adr/assets/0003/mayura-samples.json`) the raw API responses were not
+captured, so the label is not independently checkable from this repo. Treat it as
+"machine draft" and nothing stronger.
+
 **A reviewer replaces `reference_text` and flips `status` to `approved`. Nothing
 else on the line changes** — that is the whole point of the structure, and
 `test_references_carry_replaceable_draft_structure` pins it.
 
-Until then the runner reports fidelity as `provisional` and says so in the report's
-stage line. The machine drafts are *not* a substitute for the bilingual review PRD
+**The drafts break the glossary by construction**, because they are raw
+pre-`post_edit` Mayura output and the glossary is applied by the pipeline, not by
+the translator. Measured against `apps/training_localizer/terminology/`:
+
+| Language | `keep_english` terms dropped | approved renderings missed |
+|---|---:|---:|
+| hi-IN | 9 | 3 |
+| te-IN | 8 | 4 |
+| ta-IN | 8 | 6 |
+
+(hi-IN segment 1 renders GMO as "जी.एम.ओ." against `keep_english: GMO — never
+transliterated`.) So these references can never score 100% terminology adherence.
+`uc2/P2` must not treat them as the adherence target — the target is the glossary.
+They are a fidelity reference, and a provisional one at that.
+
+Until a reviewer approves them the runner reports fidelity as `provisional` and
+says so in the report's stage line. The machine drafts are *not* a substitute for the bilingual review PRD
 D10 budgets for: they share an engine with the pipeline under test, so scoring the
 pipeline against them would be partly circular. They exist so the harness is
 runnable and measurable today, not so it can be declared passing.
@@ -44,7 +70,7 @@ runnable and measurable today, not so it can be declared passing.
 ## What the runner measures
 
 `platform/eval/runners/run_uc2.py` (`make eval-uc2`). See its module docstring
-for the full contract. Two conventions worth knowing here:
+for the full contract. Four conventions worth knowing here:
 
 - **Adherence counts target-language obligations only** — approved renderings and
   LOCKED statements. `keep_english` retention is a separate metric because an
@@ -53,6 +79,17 @@ for the full contract. Two conventions worth knowing here:
 - **The baseline must score 0% adherence.** `make eval-uc2` runs the untouched
   English source as the "translation"; if that ever scores above zero, the check
   has stopped discriminating and the number means nothing.
+- **Adherence is stuffable and fidelity is the answer.** Word salad containing
+  every required string scores 100%
+  (`test_terminology_adherence_alone_is_stuffable`). That is why B6 gates on
+  adherence *and* fidelity >= 4.0, and why a green adherence number on its own
+  says nothing about whether the translation reads.
+- **The baseline timing number is not a measurement.** Segment durations here
+  were authored at the `en-IN` rate in `platform/config/timing.yaml`, so for the
+  untranslated baseline the length ratio is the constant `en_cps / lang_cps` and
+  the per-language fit rate is 0 or 1, never in between. The runner detects this
+  (`timing_durations_synthetic`) and flags the run provisional on its stage line.
+  The check discriminates normally on real translations, whose lengths vary.
 
 ## A finding from building this
 

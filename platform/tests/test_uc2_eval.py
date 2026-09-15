@@ -79,8 +79,15 @@ def test_baseline_keeps_english_terms_trivially() -> None:
     assert report.metrics["keep_english_retention"] == 1.0
 
 
-def perfect(segment: Segment, language: str) -> str:
-    """A translator that satisfies every target-language obligation."""
+def term_stuffer(segment: Segment, language: str) -> str:
+    """Satisfies every terminology obligation and nothing else.
+
+    Deliberately NOT a good translation: outside LOCKED segments it returns the
+    required strings concatenated, i.e. word salad. It exists to prove the
+    terminology check reaches 100% when the obligations are met, and it doubles
+    as the demonstration that adherence alone is a *stuffable* metric --- see
+    `test_terminology_adherence_alone_is_stuffable`. Fidelity is the check that
+    catches this, which is why B6 gates on both."""
     glossary, renderings = load_terminology()
     if segment.locked and segment.locked_id:
         statement = next(s for s in renderings["statements"] if s["id"] == segment.locked_id)
@@ -94,8 +101,31 @@ def perfect(segment: Segment, language: str) -> str:
     return " ".join(parts) or "x"
 
 
-def test_perfect_translator_reaches_full_adherence() -> None:
-    report = evaluate(translate=perfect, strict=False)
+def test_terminology_adherence_alone_is_stuffable() -> None:
+    """The documented limit of the metric: word salad containing every required
+    string scores 100% adherence. Adherence proves terms were not mistranslated;
+    it does not prove the sentence means anything. B6 pairs it with fidelity >= 4
+    for exactly this reason, and this test exists so nobody reads a green
+    adherence number as "the translation is good"."""
+    report = evaluate(translate=term_stuffer, strict=False)
+    assert report.metrics["terminology_adherence"] == 1.0
+
+    def judge(source: str, produced: str, language: str) -> FidelityVerdict:
+        # A real judge scores concatenated glossary terms as meaning-lost.
+        return FidelityVerdict(score=1, reason="word salad", lost_or_changed=["everything"])
+
+    stuffed = evaluate(translate=term_stuffer, judge=judge, strict=False, fidelity_source="sut")
+    assert stuffed.quality_gates["terminology_adherence"] is True
+    assert stuffed.quality_gates["fidelity_mean"] is False, "fidelity catches the stuffing"
+    assert stuffed.passed is True, "baseline mode reports, it does not gate"
+    assert (
+        evaluate(translate=term_stuffer, judge=judge, strict=True, fidelity_source="sut").passed
+        is False
+    ), "strict mode blocks it"
+
+
+def test_term_stuffer_reaches_full_adherence() -> None:
+    report = evaluate(translate=term_stuffer, strict=False)
     assert report.metrics["terminology_adherence"] == 1.0
     assert report.metrics["keep_english_retention"] == 1.0
     assert report.quality_gates["terminology_adherence"] is True
@@ -105,7 +135,7 @@ def test_locked_segments_require_exact_equality() -> None:
     """A near-miss on a LOCKED statement is a failure, not a pass."""
 
     def nearly(segment: Segment, language: str) -> str:
-        text = perfect(segment, language)
+        text = term_stuffer(segment, language)
         return text + " ." if segment.locked else text
 
     report = evaluate(translate=nearly, strict=False)
@@ -115,7 +145,7 @@ def test_locked_segments_require_exact_equality() -> None:
 
 def test_dropping_a_keep_english_term_is_caught() -> None:
     def translated_mfa(segment: Segment, language: str) -> str:
-        return perfect(segment, language).replace("MFA", "बहु-कारक")
+        return term_stuffer(segment, language).replace("MFA", "बहु-कारक")
 
     report = evaluate(translate=translated_mfa, strict=False)
     assert report.metrics["keep_english_retention"] < 1.0
@@ -182,6 +212,18 @@ def test_reference_quiz_items_all_pass() -> None:
     assert metrics["quiz_validity"] == 1.0, details
 
 
+def test_b6_metrics_p1_cannot_produce_are_declared_with_a_reason() -> None:
+    """eval.md: every B6 metric is measured or reported unmeasured with a reason."""
+    report = evaluate(strict=False)
+    reasons = {d["metric"]: d["reason"] for d in report.details if d["check"] == "unmeasured"}
+    for metric in ("quiz_pass_rate_vs_english_control", "reviewer_edit_rate"):
+        assert metric in report.unmeasured
+        assert metric not in report.metrics, "never a passing placeholder"
+        assert metric not in report.quality_gates
+        assert reasons[metric].strip()
+    assert reasons["fidelity_mean"].strip()
+
+
 def test_fidelity_is_unmeasured_without_a_judge() -> None:
     report = evaluate(strict=False)
     assert "fidelity_mean" in report.unmeasured
@@ -193,13 +235,13 @@ def test_fidelity_is_measured_with_an_injected_judge() -> None:
     def judge(source: str, produced: str, language: str) -> FidelityVerdict:
         return FidelityVerdict(score=5 if produced != source else 1, reason="stub")
 
-    report = evaluate(judge=judge, strict=False)
+    report = evaluate(judge=judge, strict=False, fidelity_source="sut")
     assert report.metrics["fidelity_items"] == 90
     assert report.metrics["fidelity_mean"] == 1.0, "baseline leaves the source untouched"
     assert report.quality_gates["fidelity_mean"] is False
     assert "fidelity_mean" not in report.unmeasured
 
-    report_ok = evaluate(translate=perfect, judge=judge, strict=False)
+    report_ok = evaluate(translate=term_stuffer, judge=judge, strict=False, fidelity_source="sut")
     assert report_ok.metrics["fidelity_mean"] == 5.0
     assert report_ok.quality_gates["fidelity_mean"] is True
 
@@ -239,3 +281,142 @@ def test_mentions_matches_whole_words_case_insensitively(
     term: str, text: str, expected: bool
 ) -> None:
     assert run_uc2.mentions(term, text) is expected
+
+
+class FakeClaude:
+    """Stands in for the Claude adapter so the judge path runs without a key.
+
+    It records every call so the test can assert the two D7 legs actually went
+    out with the versioned rubrics and the right schemas.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def structured(self, *, system: str, user: str, schema: type, model: str):  # type: ignore[no-untyped-def]
+        self.calls.append({"system": system, "user": user, "schema": schema, "model": model})
+        if schema is run_uc2.Backtranslation:
+            return run_uc2.Backtranslation(english="back-translated English")
+        return FidelityVerdict(score=4, reason="ok", lost_or_changed=[])
+
+
+def test_claude_judge_runs_both_d7_legs_against_a_mocked_adapter() -> None:
+    """Regression: `claude_judge` must be constructible and callable, not dead code."""
+    fake = FakeClaude()
+    judge = run_uc2.claude_judge("claude-haiku-4-5", client=fake)
+    verdict = judge("Report phishing within 24 hours.", "24 घंटे के भीतर सूचित करें।", "hi-IN")
+
+    assert verdict.score == 4
+    assert len(fake.calls) == 2, "backtranslate then judge"
+    back, score = fake.calls
+    assert back["schema"] is run_uc2.Backtranslation
+    assert back["user"] == "24 घंटे के भीतर सूचित करें।", "the judge never sees the source"
+    assert "hi-IN" in str(back["system"]) and "{language}" not in str(back["system"])
+    assert score["schema"] is FidelityVerdict
+    assert "SOURCE:" in str(score["user"]) and "BACKTRANSLATION:" in str(score["user"])
+    assert "back-translated English" in str(score["user"])
+    assert all(call["model"] == "claude-haiku-4-5" for call in fake.calls)
+
+
+def test_judge_legs_go_through_the_temperature_zero_adapter_path() -> None:
+    """Both rubrics declare temperature 0; `structured` is the adapter call that
+    sets it, so the judge must not reach for `stream_text`."""
+    fake = FakeClaude()
+    run_uc2.claude_judge("claude-haiku-4-5", client=fake)("Source text.", "लक्ष्य पाठ।", "hi-IN")
+    assert not hasattr(fake, "stream_text_called")
+    for call in fake.calls:
+        assert call["system"], "system prompt is the cached, versioned rubric"
+
+
+def test_fidelity_default_source_is_the_reference_translations() -> None:
+    """P1 asks for the judge implemented against the reference translations."""
+    judged: list[str] = []
+
+    def judge(source: str, produced: str, language: str) -> FidelityVerdict:
+        judged.append(produced)
+        return FidelityVerdict(score=5, reason="stub")
+
+    references = load_references()
+    metrics, _, _ = run_uc2.score_fidelity(references, run_uc2.baseline, judge)
+    assert metrics["fidelity_items"] == 90
+    assert judged == [r.reference_text for r in references]
+    assert all(r.source_text not in judged for r in references[:5]), "not the English source"
+
+    judged.clear()
+    run_uc2.score_fidelity(references, run_uc2.baseline, judge, source="sut")
+    assert judged == [r.source_text for r in references], "sut mode judges the translator"
+
+
+def test_quiz_ids_may_repeat_across_modules() -> None:
+    """D6 keys quiz_items on (module_id, language, item_id), not item_id alone."""
+    segments = load_segments()
+    good = load_quiz()[0]
+    other = next(s for s in segments if s.module_id != good.module_id)
+    twin = good.model_copy(update={"module_id": other.module_id, "seg_id": other.seg_id})
+    metrics, details = score_quiz([good, twin], segments)
+    assert metrics["quiz_validity"] == 1.0, details
+
+    same_module = good.model_copy()
+    metrics, details = score_quiz([good, same_module], segments)
+    assert metrics["quiz_validity"] == 0.5
+    assert "duplicate (module_id, language, item_id)" in details[0]["problems"]  # type: ignore[operator]
+
+
+def test_timing_flags_its_own_degeneracy_on_the_baseline() -> None:
+    """The golden durations were authored at the en-IN rate, so an untranslated
+    baseline gives a per-language constant ratio and the fit rate is 0 or 1 per
+    language, never a measurement of the text. The run must say so."""
+    report = evaluate(strict=False)
+    assert report.metrics["timing_durations_synthetic"] == 1.0
+    per_language = [report.metrics[f"timing_fit_rate_{lang}"] for lang in run_uc2.LANGUAGES]
+    assert set(per_language) <= {0.0, 1.0}, "degenerate by construction"
+    assert "golden durations authored at the en-IN rate" in report.stage
+
+    timing = run_uc2.load_timing()
+    segments = load_segments()
+
+    def varied(segment: Segment, language: str) -> str:
+        cps = timing["languages"][language]["chars_per_second"]
+        scale = 1.0 if segment.seg_id % 2 else 2.5
+        return "x" * int(segment.duration_s * cps * scale)
+
+    metrics = run_uc2.score_timing(segments, varied, timing)
+    assert metrics["timing_durations_synthetic"] == 0.0, "real variation is not flagged"
+    assert 0.0 < metrics["timing_fit_rate"] < 1.0
+
+
+def test_translator_is_called_once_per_segment_and_language() -> None:
+    """Terminology, timing and fidelity must score the same text, and a real SUT
+    costs money per call."""
+    calls: list[tuple[str, int, str]] = []
+
+    def counting(segment: Segment, language: str) -> str:
+        calls.append((segment.module_id, segment.seg_id, language))
+        return segment.source_text
+
+    def judge(source: str, produced: str, language: str) -> FidelityVerdict:
+        return FidelityVerdict(score=5, reason="stub")
+
+    evaluate(translate=counting, judge=judge, strict=False, fidelity_source="sut")
+    assert len(calls) == len(set(calls)) == 180, "60 segments x 3 languages, once each"
+
+
+def test_live_run_prints_an_inr_and_usd_estimate() -> None:
+    """.claude/rules/eval.md: an estimated cost is printed before a live batch."""
+    line = run_uc2.estimate_judge_cost(load_references(), "claude-haiku-4-5")
+    assert "180 calls" in line and "$" in line and "Rs " in line
+    unpriced = run_uc2.estimate_judge_cost(load_references(), "no-such-model")
+    assert "cost unknown" in unpriced, "never invent a price"
+
+
+def test_eval_and_app_judge_prompts_agree() -> None:
+    """PRD D7 ships these rubrics under the app too. While the app-side copies do
+    not exist (uc2/P2 creates them) this asserts nothing; once they do, it keeps
+    the two texts from drifting apart silently."""
+    eval_dir = run_uc2.Path(__file__).parents[1] / "eval" / "prompts"
+    app_dir = run_uc2.Path(__file__).parents[2] / "apps" / "training_localizer" / "prompts"
+    for name in ("uc2_backtranslate.md", "uc2_qa_judge.md"):
+        app_copy = app_dir / name.removeprefix("uc2_")
+        if not app_copy.exists():
+            continue
+        assert run_uc2.prompt_body(app_copy) == run_uc2.prompt_body(eval_dir / name), name
