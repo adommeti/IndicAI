@@ -886,7 +886,14 @@ class SarvamTTSProcessor(FrameProcessor):
                 chunks(), language=self._language, voice=self._voice
             ):
                 buffer.extend(encoded)
-                pcm, emitted_samples = self._decoder(bytes(buffer), emitted_samples)
+                # Off the loop. The decode is synchronous CPU work over the WHOLE buffer
+                # so far -- chunks are not independently decodable, so each one re-decodes
+                # the growing prefix and the cost climbs with the length of the reply. It
+                # sits directly on the time-to-first-audio path, and the same loop is
+                # carrying the employee's inbound audio frames while it runs.
+                pcm, emitted_samples = await asyncio.to_thread(
+                    self._decoder, bytes(buffer), emitted_samples
+                )
                 if not pcm:
                     continue
                 if started and turn is not None:
