@@ -534,10 +534,30 @@ def test_governance_is_subtractive_even_when_held_with_a_reviewer_role(
         loader.assert_not_called()
 
 
-def test_the_dev_bypass_is_refused_when_env_is_prod(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Refused at startup, and refused again per request if it is set later."""
+@pytest.mark.parametrize(
+    "env",
+    [
+        "prod",
+        # Every one of these was ACCEPTED by the original `== "prod"` check, and
+        # each is a plausible deployment typo whose failure mode is an
+        # unauthenticated surveillance queue serving a fixed identity.
+        "production",
+        "prd",
+        "PROD ",
+        "staging",
+        "",
+    ],
+)
+def test_the_dev_bypass_is_refused_outside_a_known_non_prod_env(
+    monkeypatch: pytest.MonkeyPatch, env: str
+) -> None:
+    """Refused at startup, and refused again per request if it is set later.
+
+    An allow-list, not a deny: unknown means refused, so a new environment name
+    fails closed rather than silently disabling authentication.
+    """
     monkeypatch.setenv("AUTH__DEV_BYPASS", "true")
-    monkeypatch.setenv("ENV", "prod")
+    monkeypatch.setenv("ENV", env)
     with pytest.raises(DevBypassRefused), TestClient(api.app):
         pass
     # A process already up whose environment changes underneath it: the
@@ -553,7 +573,9 @@ def test_the_dev_bypass_mints_a_fixed_identity_outside_prod(
     monkeypatch: pytest.MonkeyPatch, wired: Wiring
 ) -> None:
     monkeypatch.setenv("AUTH__DEV_BYPASS", "true")
-    monkeypatch.delenv("ENV", raising=False)
+    # Explicit, because an unset ENV is refused: the bypass has to be asked for
+    # in an environment that says what it is.
+    monkeypatch.setenv("ENV", "dev")
     identity = anonymous().get("/me").json()
     assert identity["dev_bypass"] is True
     assert identity["identity"] == "dev-bypass@example.test"
@@ -568,7 +590,7 @@ def test_the_dev_bypass_can_be_narrowed_to_the_governance_view(
 ) -> None:
     monkeypatch.setenv("AUTH__DEV_BYPASS", "true")
     monkeypatch.setenv("AUTH__DEV_BYPASS_ROLES", "governance")
-    monkeypatch.delenv("ENV", raising=False)
+    monkeypatch.setenv("ENV", "dev")
     bypassed = anonymous()
     assert bypassed.get("/me").json()["roles"] == [ROLE_GOVERNANCE]
     assert bypassed.get("/flags").status_code == 403

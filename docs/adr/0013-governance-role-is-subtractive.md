@@ -29,9 +29,12 @@ is a UI convention, not a separation.
 ## Decision
 
 `governance` is enforced as a **deny**, not as a smaller grant. `SEGREGATED_ROLES` is evaluated
-after the per-route allow-list, so a principal carrying `governance` is refused the
+*before* the per-route allow-list, so a principal carrying `governance` is refused the
 transcript- and audio-bearing routes even when it also carries `compliance_reviewer` or
-`compliance_lead`.
+`compliance_lead`. The order matters for the 403 body: checking deny first means the refusal can
+name the segregated role, because the code has not yet gone looking for a grant that would have
+admitted the caller. (An earlier draft of this record said "after", which described neither the
+code nor the behaviour it then claimed.)
 
 A dual-hatted person therefore needs two subjects, which is what segregation of duties means.
 

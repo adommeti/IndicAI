@@ -21,9 +21,10 @@ negative estimate is built from.
 segregation-of-duties role: the people who read the *numbers* about the
 surveillance programme are deliberately not the people who can read the
 *calls*. So it is enforced here as a deny, not as a smaller grant --
-`SEGREGATED_ROLES` is checked after the allow-list, and a principal carrying
+`SEGREGATED_ROLES` is checked *before* the allow-list, and a principal carrying
 `governance` is refused transcripts and audio even if it also carries a
-reviewer role.
+reviewer role. Deny first is what lets the 403 name the segregated role rather
+than reporting a missing grant the caller in fact holds.
 
 That is the stricter of the two readings of the contract, and it is chosen on
 purpose. Additive roles would mean a caller holding `governance` *and*
@@ -64,6 +65,15 @@ SEGREGATED_ROLES = frozenset({ROLE_GOVERNANCE})
 # The scope every SSO backend in this repo sets once it has verified a subject.
 AUTHENTICATED = "authenticated"
 
+# The environments where the dev bypass is permitted. An ALLOW-list, not a
+# `== "prod"` deny: the deny form refused `ENV=prod` and happily minted a fixed
+# unauthenticated identity for `ENV=production`, `ENV=prd`, a trailing space, or
+# an unset variable. Every one of those is a plausible deployment typo, and the
+# failure mode is an unauthenticated surveillance queue -- the worst outcome
+# this module exists to prevent. Unknown means not permitted, so a new
+# environment name fails closed and someone has to add it here deliberately.
+NON_PROD_ENVS = frozenset({"dev", "local", "test", "ci"})
+
 DEV_BYPASS_IDENTITY = "dev-bypass@example.test"
 DEV_BYPASS_ROLES = (ROLE_REVIEWER, ROLE_LEAD)
 
@@ -74,6 +84,10 @@ class DevBypassRefused(RuntimeError):
 
 def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_known_non_prod(env: str) -> bool:
+    return env.strip().lower() in NON_PROD_ENVS
 
 
 def dev_bypass_requested() -> bool:
@@ -89,9 +103,10 @@ def check_dev_bypass() -> None:
     startup check is the one that gets noticed, the per-request check is the one
     that cannot be skipped by setting the variable after boot.
     """
-    if dev_bypass_requested() and os.environ.get("ENV", "").strip().lower() == "prod":
+    if dev_bypass_requested() and not _is_known_non_prod(os.environ.get("ENV", "")):
         raise DevBypassRefused(
-            "AUTH__DEV_BYPASS=true is refused when ENV=prod. "
+            f"AUTH__DEV_BYPASS=true is refused unless ENV is one of "
+            f"{', '.join(sorted(NON_PROD_ENVS))}; got {os.environ.get('ENV', '') or '<unset>'!r}. "
             "Remove the flag or run against real SSO."
         )
 
