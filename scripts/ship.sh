@@ -175,14 +175,33 @@ echo "ship: CI green"
 
 # 7. Merge as the repository owner; the squash commit carries the PR author identity.
 #    commit_title is the bare title: GitHub appends " (#N)" to a squash subject.
+#
+#    In a cloud session the write goes out under the Claude GitHub App's own
+#    credentials, whatever `gh api user` reports, so GitHub authors the squash
+#    commit `claude[bot]` — which attribution-check.sh rejects, leaving `main`
+#    red and a tool identity in the history. Reads and the PR steps above are
+#    fine; only the merge carries an identity. So the merge is refused here and
+#    left to a human or a local checkout, which is what the repository's
+#    "author is always the owner" rule requires.
+if [ -n "${CLAUDE_CODE_REMOTE:-}" ] && [ "${INDICAI_ALLOW_BOT_MERGE:-}" != "1" ]; then
+  echo "ship: PR #$PR_NUM is green and mergeable: $PR_URL"
+  fail "refusing to merge from a cloud session: GitHub would author the squash commit 'claude[bot]',
+      which scripts/attribution-check.sh rejects and which turns the attribution job on $BASE red.
+      Merge it from the GitHub UI or a local checkout. Set INDICAI_ALLOW_BOT_MERGE=1 to override
+      (and add the bot address to ALLOWED_AUTHOR_EMAILS first, or $BASE will go red)."
+fi
+
 MERGE_BODY="$(git log --reverse --format='- %s' "origin/$BASE..HEAD")"
 json_obj merge_method squash commit_title "$TITLE" commit_message "$MERGE_BODY" \
   | api -X PUT "repos/{owner}/{repo}/pulls/$PR_NUM/merge" --input - >"$STATE_DIR/merge.log" 2>&1 \
   || { cat "$STATE_DIR/merge.log" >&2; fail "merge failed for PR #$PR_NUM ($PR_URL)"; }
-# Delete the head branch, as `gh pr merge --delete-branch` did. Best effort:
-# the merge has already landed and a surviving branch is cosmetic.
-api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$BRANCH" >/dev/null 2>&1 || true
 echo "ship: merged PR #$PR_NUM into $BASE ($PR_URL)"
+# Delete the head branch, as `gh pr merge --delete-branch` did. The session proxy
+# permits no write to the git-refs path, so say what was left behind rather than
+# swallowing the error: the merge has landed and a surviving branch is cosmetic.
+if ! api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$BRANCH" >/dev/null 2>&1; then
+  echo "ship: could not delete origin/$BRANCH (branch deletion is not permitted here); delete it in the GitHub UI"
+fi
 
 # 8. Return to an up-to-date base branch and clear the prompt marker.
 git fetch -q origin "$BASE"
