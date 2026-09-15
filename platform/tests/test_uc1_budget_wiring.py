@@ -33,6 +33,35 @@ def _turn_state(session_id: str, employee_id: str) -> Any:
     return state
 
 
+class _Sink:
+    """Stands in for the Langfuse sink `run_turn` insists on before it starts."""
+
+    def emit(self, record: dict[str, Any]) -> None:  # pragma: no cover - never called
+        raise AssertionError("the turn is stopped before anything is emitted")
+
+    def flush(self) -> None:
+        """`run_turn` flushes in its `finally`, so this is reached on the way out."""
+
+
+def _reach_the_scope(monkeypatch: pytest.MonkeyPatch, session: type) -> None:
+    """Get `run_turn` as far as the budget scope without a database or Langfuse.
+
+    Three things stand in front of it, and none of them is what this file is about:
+    `os.environ["DATABASE_URL"]`, which the unit CI job does not set (a local run only
+    has it because `settings.py` loads `.env.stack`, which is exactly the difference that
+    made the first version of these tests pass here and fail in CI); the Langfuse sink,
+    which `run_turn` requires by type; and the database session itself, replaced by
+    `session` so the turn stops the moment the scope is observable.
+
+    The URL is never connected to -- `create_async_engine` is lazy -- so a syntactically
+    valid DSN pointing nowhere is enough, and is honest about needing no server.
+    """
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://unused:unused@127.0.0.1:1/unused")
+    monkeypatch.setattr(persistence, "LangfuseSink", _Sink)
+    monkeypatch.setattr(persistence, "default_sink", _Sink)
+    monkeypatch.setattr(persistence, "AsyncSession", session)
+
+
 async def test_a_turn_charges_its_adapter_calls_to_its_own_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -58,7 +87,7 @@ async def test_a_turn_charges_its_adapter_calls_to_its_own_session(
         async def __aexit__(self, *_: Any) -> bool:
             return False
 
-    monkeypatch.setattr(persistence, "AsyncSession", SpySession)
+    _reach_the_scope(monkeypatch, SpySession)
 
     with pytest.raises(_Bail):
         await persistence.run_turn(_turn_state(session_id, "emp-budget@example.com"))
@@ -88,7 +117,7 @@ async def test_the_scope_does_not_leak_past_the_turn(monkeypatch: pytest.MonkeyP
         async def __aexit__(self, *_: Any) -> bool:
             return False
 
-    monkeypatch.setattr(persistence, "AsyncSession", Boom)
+    _reach_the_scope(monkeypatch, Boom)
 
     assert budget.current_session_id() is None
     with pytest.raises(_Bail):
