@@ -8,13 +8,15 @@ from.
 """
 
 import os
+import pathlib
 import uuid as uuidlib
 from dataclasses import dataclass
 from decimal import Decimal
 
 import pytest
-from comms_surveillance import ingest, transliterate
+from comms_surveillance import ingest, storage, transliterate
 from indic_platform.adapters.base import TranscriptSegment
+from indic_platform.adapters.sarvam_common import local_media
 
 
 @dataclass
@@ -24,13 +26,20 @@ class FakeObject:
 
 
 class FakeMinio:
+    """Lists keys and, like the real client, can materialize one to a local file."""
+
     def __init__(self, names: list[str]) -> None:
         self.names = names
+        self.fetched: list[str] = []
 
     def list_objects(
         self, bucket: str, prefix: str = "", recursive: bool = False
     ) -> list[FakeObject]:
         return [FakeObject(n) for n in self.names if n.startswith(prefix)]
+
+    def fget_object(self, bucket: str, key: str, path: str) -> None:
+        self.fetched.append(key)
+        pathlib.Path(path).write_bytes(b"RIFF....WAVEfmt ")
 
 
 class FakeSTT:
@@ -57,6 +66,9 @@ class FakeSTT:
         self.calls += 1
         assert diarize, "ingestion must ask for diarization"
         assert language == "auto", "the corpus is code-mixed; language is detected"
+        # The adapter boundary takes local media only. Asserting it here is what
+        # would have caught the s3:// URI being passed straight through.
+        local_media(uri)
         return list(self.segments)
 
 
@@ -178,12 +190,97 @@ def test_a_missing_sink_reports_zero_rather_than_an_estimate() -> None:
     assert ingest.spend(NoRecords(), "saaras:v3:diarized") == Decimal("0")
 
 
+# --- the defects the pre-ship review proved ------------------------------------
+#
+# Each of these failed before the fix.
+
+
+def test_a_code_mixed_segment_is_fully_romanised() -> None:
+    """The corpus is code-mixed; a majority-Latin segment still needs converting.
+
+    `already_roman` used to be a >50%-ASCII test, so `Client ko bolo मैं करूंगा`
+    was stored verbatim -- Devanagari still sitting inside `text_roman` under
+    `roman_source="verbatim"`, which P3's lexicon would never match.
+    """
+    roman, source = transliterate.offline("Client ko bolo मैं करूंगा", "hi-IN")
+    assert roman == "Client ko bolo maiṁ karūṁgā"
+    assert source == "indic-transliteration:iso"
+    assert not transliterate.NATIVE_RUN.search(roman), "no native script may survive"
+
+    mixed, mixed_source = transliterate.offline("NAV 12% हो गया", "hi-IN")
+    assert mixed == "NAV 12% hō gayā"
+    assert mixed_source != "verbatim"
+
+
+def test_pure_roman_text_is_still_left_alone() -> None:
+    assert transliterate.already_roman("Client ko bolo bara percent")
+    assert not transliterate.already_roman("Client ko bolo मैं")
+
+
+def test_cost_counts_only_what_this_call_added() -> None:
+    """A sweep reuses one sink, so call three must not be charged for one to three.
+
+    Before the fix, three recordings at Rs 0.25 each persisted as 0.25 / 0.50 /
+    0.75 -- Rs 1.50 billed against Rs 0.75 actually spent.
+    """
+
+    class Sink:
+        def __init__(self) -> None:
+            self.records: list[dict[str, object]] = []
+
+    sink = Sink()
+    charged = []
+    for _ in range(3):
+        before = ingest.sink_size(sink)
+        sink.records.append({"model": "saaras:v3:diarized", "cost_inr": 0.25})
+        charged.append(ingest.spend(sink, "saaras:v3:diarized", before))
+
+    assert charged == [Decimal("0.25")] * 3
+    assert sum(charged) == Decimal("0.75")
+
+
+async def test_an_object_store_uri_never_reaches_the_adapter() -> None:
+    """The adapter takes local media only; the app materializes first.
+
+    `local_media` raises on any non-file scheme, so passing `s3://...` straight
+    through meant every real recording would fail. `fetch_object` is the
+    materialization step and this asserts the contract it exists to satisfy.
+    """
+    from indic_platform.adapters.sarvam_common import local_media
+
+    with pytest.raises(ValueError, match="Materialize media"):
+        local_media("s3://comms-surveillance/recordings/one.wav")
+
+    minio = FakeMinio(["recordings/one.wav"])
+    with storage.fetch_object(minio, "recordings/one.wav", bucket="b") as path:
+        assert path.is_file()
+        assert local_media(str(path)) == path  # the adapter would accept this
+        kept = path
+    assert not kept.exists(), "a call recording must not be left in the temp dir"
+
+
 # --- stack --------------------------------------------------------------------
 
 
 def _skip_without_db() -> None:
-    if "DATABASE_URL" not in os.environ:
+    """Skip unless Postgres is actually reachable.
+
+    `DATABASE_URL` is set in this repo's dev shell whether or not the stack is
+    up, so checking only for the variable turns "no database" into four
+    connection-refused failures that read like real ones.
+    """
+    import socket
+    from urllib.parse import urlparse
+
+    url = os.environ.get("DATABASE_URL")
+    if not url:
         pytest.skip("DATABASE_URL is not set; run `make stack-core` and `make migrate`")
+    parsed = urlparse(url)
+    try:
+        with socket.create_connection((parsed.hostname or "localhost", parsed.port or 5432), 1):
+            pass
+    except OSError:
+        pytest.skip(f"Postgres at {parsed.hostname}:{parsed.port} is not reachable")
 
 
 @pytest.mark.integration
@@ -368,5 +465,156 @@ async def test_one_unreadable_recording_does_not_stop_the_sweep() -> None:
             statuses: dict[str, str] = {row[0]: row[1] for row in rows}
             assert statuses[f"{prefix}bad.wav"] == "failed"
             assert statuses[f"{prefix}good.wav"] == "transcribed"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.integration
+async def test_a_failed_call_is_retried_on_the_next_sweep() -> None:
+    """The constraint that stops duplicates must not also stop retry.
+
+    Before the fix, `claim` returned None for any existing `source_key`, so a
+    call marked `failed` by a transient vendor fault was never transcribed again
+    and every later sweep reported a clean night over it.
+    """
+    _skip_without_db()
+    from indic_platform.db.models import Call, TranscriptSegment
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    prefix = f"itest/{uuidlib.uuid4()}/"
+    minio = FakeMinio([f"{prefix}call.wav"])
+
+    class FailsOnce(FakeSTT):
+        async def batch(
+            self, uri: str, *, language: str = "auto", diarize: bool = False
+        ) -> list[TranscriptSegment]:
+            if self.calls == 0:
+                self.calls += 1
+                raise TimeoutError("vendor hiccup")
+            return await super().batch(uri, language=language, diarize=diarize)
+
+    stt = FailsOnce()
+    engine = create_async_engine(os.environ["DATABASE_URL"])
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        first = await ingest.ingest_prefix(minio, prefix=prefix, stt=stt, session_factory=factory)
+        assert first["claimed"] == 1 and first["failed"] == 1
+        async with AsyncSession(engine) as db:
+            status = (
+                await db.execute(select(Call.status).where(Call.source_key == f"{prefix}call.wav"))
+            ).scalar_one()
+            assert status == "failed"
+
+        second = await ingest.ingest_prefix(minio, prefix=prefix, stt=stt, session_factory=factory)
+        assert second["retried"] == 1, "a failed call must come back"
+        assert second["skipped"] == 0
+        assert second["transcribed"] == 1
+
+        async with AsyncSession(engine) as db:
+            call = (
+                await db.execute(select(Call).where(Call.source_key == f"{prefix}call.wav"))
+            ).scalar_one()
+            assert call.status == "transcribed"
+            rows = (
+                (
+                    await db.execute(
+                        select(TranscriptSegment).where(TranscriptSegment.call_id == call.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(rows) == 2
+
+        # And once it IS transcribed, a further sweep skips it as before.
+        third = await ingest.ingest_prefix(minio, prefix=prefix, stt=stt, session_factory=factory)
+        assert third["skipped"] == 1 and third["retried"] == 0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.integration
+async def test_the_persisted_cost_is_this_calls_own_spend() -> None:
+    """`stt_cost_inr` on the row, not just the helper — and not cumulative.
+
+    Three recordings through one shared sink, each costing Rs 0.25, must persist
+    0.25 apiece rather than 0.25 / 0.50 / 0.75.
+    """
+    _skip_without_db()
+    from indic_platform.db.models import Call
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    prefix = f"itest/{uuidlib.uuid4()}/"
+
+    class Sink:
+        def __init__(self) -> None:
+            self.records: list[dict[str, object]] = []
+
+    class Billing(FakeSTT):
+        def __init__(self, sink: Sink) -> None:
+            super().__init__()
+            self.sink = sink
+
+        async def batch(
+            self, uri: str, *, language: str = "auto", diarize: bool = False
+        ) -> list[TranscriptSegment]:
+            out = await super().batch(uri, language=language, diarize=diarize)
+            self.sink.records.append({"model": "saaras:v3:diarized", "cost_inr": 0.25})
+            return out
+
+    sink = Sink()
+    engine = create_async_engine(os.environ["DATABASE_URL"])
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        await ingest.ingest_prefix(
+            FakeMinio([f"{prefix}a.wav", f"{prefix}b.wav", f"{prefix}c.wav"]),
+            prefix=prefix,
+            stt=Billing(sink),
+            sink=sink,
+            session_factory=factory,
+        )
+        async with AsyncSession(engine) as db:
+            costs = (
+                (
+                    await db.execute(
+                        select(Call.stt_cost_inr)
+                        .where(Call.source_key.like(f"{prefix}%"))
+                        .order_by(Call.source_key)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            models = (
+                (await db.execute(select(Call.stt_model).where(Call.source_key.like(f"{prefix}%"))))
+                .scalars()
+                .all()
+            )
+        assert [Decimal(str(c)) for c in costs] == [Decimal("0.2500")] * 3
+        assert set(models) == {"saaras:v3:diarized"}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.integration
+async def test_the_recording_is_materialized_before_the_adapter_sees_it() -> None:
+    """The sweep fetches each object to local disk; the adapter never sees s3://."""
+    _skip_without_db()
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    prefix = f"itest/{uuidlib.uuid4()}/"
+    minio = FakeMinio([f"{prefix}call.wav"])
+    engine = create_async_engine(os.environ["DATABASE_URL"])
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        counts = await ingest.ingest_prefix(
+            minio, prefix=prefix, stt=FakeSTT(), session_factory=factory
+        )
+        # FakeSTT.batch calls local_media(uri); reaching "transcribed" proves the
+        # path it was handed was a real local file.
+        assert counts["transcribed"] == 1
+        assert minio.fetched == [f"{prefix}call.wav"]
     finally:
         await engine.dispose()

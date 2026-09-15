@@ -400,6 +400,8 @@ async def test_sarvam_transliterate_redacts_before_sending() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         sdk = AsyncSarvamAI(api_subscription_key="mock", httpx_client=http)
-        adapter = SarvamTranslate(client=sdk, runtime=AdapterRuntime("sarvam", "translate"))
+        adapter = SarvamTranslate(
+            client=sdk, runtime=AdapterRuntime("sarvam", "translate", sink=MemorySink())
+        )
         await adapter.transliterate("person@example.com", source="hi-IN")
     assert seen[0]["input"] == "[EMAIL]"

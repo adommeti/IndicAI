@@ -20,6 +20,7 @@ policy means a re-transcription never changes a flag.
 """
 
 import asyncio
+import logging
 import os
 import uuid
 from collections.abc import Sequence
@@ -31,11 +32,13 @@ from celery import Celery
 from celery.schedules import crontab
 from indic_platform.adapters.base import TranscriptSegment as AdapterSegment
 from indic_platform.db.models import Call, TranscriptSegment
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from comms_surveillance import transliterate
+from comms_surveillance import storage, transliterate
+
+log = logging.getLogger(__name__)
 
 BUCKET = os.environ.get("UC3_BUCKET", "comms-surveillance")
 PREFIX = os.environ.get("UC3_PREFIX", "recordings/")
@@ -102,11 +105,20 @@ def discover(minio: Any, *, bucket: str = BUCKET, prefix: str = PREFIX) -> list[
     return sorted(found, key=lambda r: r.key)
 
 
-async def claim(session: AsyncSession, recording: Recording) -> uuid.UUID | None:
-    """Create the `calls` row for this object, or return None if it exists.
+async def claim(session: AsyncSession, recording: Recording) -> tuple[uuid.UUID | None, bool]:
+    """The call id to transcribe, or None if this recording is already done.
 
-    The unique constraint on `source_key` is what makes the nightly sweep safe
-    to run twice and safe to run in parallel.
+    The unique constraint on `source_key` is what makes the sweep safe to run
+    twice and safe to run in parallel -- but "already claimed" is not the same
+    as "already transcribed". A call left `pending` because the process died
+    between claiming and transcribing, or marked `failed` by a transient vendor
+    fault, has to come back on the next sweep. Returning None for any existing
+    key would make the constraint that prevents duplicates also prevent retry,
+    and the nightly sweep would report a clean night over a call that never got
+    transcribed.
+
+    So: insert, and if the key is taken, look at what is actually there. Returns
+    (call id or None, whether this is a retry of an earlier attempt).
     """
     call_id = uuid.uuid4()
     session.add(
@@ -121,14 +133,28 @@ async def claim(session: AsyncSession, recording: Recording) -> uuid.UUID | None
         await session.flush()
     except IntegrityError:
         await session.rollback()
-        return None
-    return call_id
+        existing = (
+            await session.execute(select(Call).where(Call.source_key == recording.key))
+        ).scalar_one_or_none()
+        if existing is None or existing.status == "transcribed":
+            return None, False
+        return existing.id, True
+    return call_id, False
 
 
 async def romanise(
     segments: Sequence[AdapterSegment], client: Any | None = None
 ) -> list[tuple[str, str]]:
-    """(roman, source) for each segment, via the configured backend."""
+    """(roman, source) for each segment, via the configured backend.
+
+    When Sarvam is configured, one client is built for the whole transcript
+    rather than one per segment -- a call has dozens of turns and each adapter
+    carries its own HTTP client.
+    """
+    if client is None and transliterate.use_sarvam():
+        from indic_platform.adapters.sarvam_translate import SarvamTranslate
+
+        client = SarvamTranslate()
     return [await transliterate.to_roman(s.text, s.language or "", client) for s in segments]
 
 
@@ -177,17 +203,25 @@ async def store(
     call.stt_model = model
 
 
-def spend(sink: Any, model: str) -> Decimal:
+def spend(sink: Any, model: str, since: int = 0) -> Decimal:
     """What this call's transcription cost, from the adapter's own records.
+
+    `since` is how many records the sink already held before this call started.
+    Without it a sweep that reuses one sink charges the third recording for the
+    first three, which is exactly the bug this signature exists to prevent.
 
     `None` -- an injected adapter with no sink -- is zero, not an estimate. A
     made-up per-minute figure in a cost column is worse than a visible zero.
     """
     total = Decimal("0")
-    for record in getattr(sink, "records", None) or []:
+    for record in (getattr(sink, "records", None) or [])[since:]:
         if not model or record.get("model") == model:
             total += Decimal(str(record.get("cost_inr", 0) or 0))
     return total
+
+
+def sink_size(sink: Any) -> int:
+    return len(getattr(sink, "records", None) or [])
 
 
 DIARIZE_MODEL = "saaras:v3:diarized"
@@ -211,7 +245,7 @@ def stt_with_sink() -> tuple[Any, Any]:
 async def transcribe_call(
     session: AsyncSession,
     call_id: uuid.UUID,
-    audio_uri: str,
+    audio: str,
     *,
     stt: Any = None,
     sink: Any = None,
@@ -219,6 +253,10 @@ async def transcribe_call(
     language: str = "auto",
 ) -> int:
     """Transcribe one claimed call and persist its turns. Returns the turn count.
+
+    `audio` is a **local path or file:// URI**, not an object-store URI: the
+    adapter boundary takes local media only, so the caller materializes the
+    object first (`storage.fetch_object`).
 
     `language="auto"` is deliberate: PRD E3's corpus is code-mixed, and asking
     Saaras to detect the language beats trusting a filename convention.
@@ -232,17 +270,18 @@ async def transcribe_call(
     call = await session.get(Call, call_id)
     if call is None:
         raise LookupError(f"no call {call_id}")
-    call.status = "transcribing"
-    await session.flush()
 
-    segments = await stt.batch(audio_uri, language=language, diarize=True)
+    # Only this call's spend: a sweep reuses one sink across recordings, so
+    # start counting from where it already was.
+    before = sink_size(sink)
+    segments = await stt.batch(audio, language=language, diarize=True)
     romans = await romanise(segments, translit_client)
     await store(
         session,
         call_id,
         segments,
         romans,
-        cost_inr=spend(sink, DIARIZE_MODEL),
+        cost_inr=spend(sink, DIARIZE_MODEL, before),
         model=DIARIZE_MODEL,
     )
     return len(segments)
@@ -258,44 +297,62 @@ async def ingest_prefix(
     translit_client: Any = None,
     session_factory: Any = None,
 ) -> dict[str, int]:
-    """One sweep: claim everything new under the prefix and transcribe it.
+    """One sweep: claim everything under the prefix that is not done, and transcribe it.
 
     Returns counts rather than rows so a Celery task can serialise the result.
     A recording that fails to transcribe marks its call `failed` and does not
-    stop the sweep -- one unreadable file must not hold up a night's batch.
+    stop the sweep -- one unreadable file must not hold up a night's batch --
+    and the next sweep picks it up again, because `claim` retries anything that
+    is not `transcribed`.
+
+    One adapter for the whole sweep, not one per recording: the circuit breaker
+    counts failures per instance, so a fresh adapter each time would mean a dead
+    vendor is retried from scratch twenty times and the breaker never opens.
     """
+    if stt is None:
+        stt, sink = stt_with_sink()
     recordings = discover(minio, bucket=bucket, prefix=prefix)
-    counts = {"seen": len(recordings), "claimed": 0, "transcribed": 0, "skipped": 0, "failed": 0}
+    counts = {
+        "seen": len(recordings),
+        "claimed": 0,
+        "retried": 0,
+        "transcribed": 0,
+        "skipped": 0,
+        "failed": 0,
+    }
 
     for recording in recordings:
         async with session_factory() as session:
-            call_id = await claim(session, recording)
+            call_id, retry = await claim(session, recording)
             if call_id is None:
                 counts["skipped"] += 1
                 continue
-            counts["claimed"] += 1
+            counts["retried" if retry else "claimed"] += 1
             await session.commit()
 
-        async with session_factory() as session:
-            try:
-                await transcribe_call(
-                    session,
-                    call_id,
-                    recording.uri,
-                    stt=stt,
-                    sink=sink,
-                    translit_client=translit_client,
-                )
-                await session.commit()
-                counts["transcribed"] += 1
-            except Exception:
-                await session.rollback()
-                async with session_factory() as failing:
-                    call = await failing.get(Call, call_id)
-                    if call is not None:
-                        call.status = "failed"
-                        await failing.commit()
-                counts["failed"] += 1
+        try:
+            with storage.fetch_object(minio, recording.key, bucket=bucket) as path:
+                async with session_factory() as session:
+                    await transcribe_call(
+                        session,
+                        call_id,
+                        str(path),
+                        stt=stt,
+                        sink=sink,
+                        translit_client=translit_client,
+                    )
+                    await session.commit()
+            counts["transcribed"] += 1
+        except Exception:
+            # Why it failed matters to whoever works the queue in the morning,
+            # and a status alone does not say.
+            log.exception("uc3 ingest failed for %s", recording.key)
+            async with session_factory() as failing:
+                call = await failing.get(Call, call_id)
+                if call is not None:
+                    call.status = "failed"
+                    await failing.commit()
+            counts["failed"] += 1
     return counts
 
 
@@ -338,9 +395,15 @@ async def ingest_golden(
 
     from comms_surveillance.storage import client, push_golden
 
-    golden = source or Path("platform/eval/golden/uc3_surveillance/audio")
+    golden = Path(
+        source or Path(__file__).parents[2] / "platform/eval/golden/uc3_surveillance/audio"
+    )
     minio = client()
-    push_golden(Path(golden), minio=minio, prefix=prefix)
+    keys = push_golden(golden, minio=minio, prefix=prefix)
+    if not keys:
+        # Silently sweeping an empty prefix and reporting success is how a
+        # broken path gets mistaken for a passing run.
+        raise FileNotFoundError(f"no WAVs under {golden}; nothing to ingest")
 
     db = engine()
     try:

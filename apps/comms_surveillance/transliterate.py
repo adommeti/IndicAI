@@ -23,6 +23,7 @@ Two backends, because the offline one is not uniformly good:
 """
 
 import os
+import re
 from typing import Any
 
 from indic_transliteration import sanscript
@@ -53,27 +54,43 @@ SCHEME = sanscript.ISO
 KNOWN_WEAK = frozenset({"ta-IN"})
 
 
-def already_roman(text: str) -> bool:
-    """Is this text already in Latin script?
+# A maximal run of Indic-script characters (U+0900 Devanagari through U+0D7F
+# Malayalam, covering every script in SCRIPTS): the part of a segment that needs
+# converting. Everything else -- Latin, digits, punctuation, spaces -- is passed
+# through untouched.
+#
+# Scoped to these blocks rather than "non-ASCII" on purpose: ISO 15919 output is
+# Latin *with diacritics* (`maiṁ`, `karūṁgā`), so a non-ASCII test would call
+# this module's own output un-transliterated, and would mangle a Latin word that
+# merely carries an accent.
+NATIVE_RUN = re.compile(r"[\u0900-\u0D7F\u0D80-\u0DFF]+")
 
-    `hi-Latn` (Hinglish typed in Roman) needs no transliteration, and running
-    one over it would mangle it. Decided from the characters rather than the
-    language tag, because the tag is what STT guessed.
+
+def already_roman(text: str) -> bool:
+    """Is there nothing here to transliterate?
+
+    True only when the text contains no non-ASCII characters at all. A
+    proportion test would be wrong for this corpus: PRD E3's calls are
+    code-mixed, so a segment like `Client ko bolo मैं करूंगा` is majority-Latin
+    and still has Devanagari in it that a lexicon needs romanised.
     """
-    letters = [c for c in text if c.isalpha()]
-    if not letters:
-        return True
-    return sum(1 for c in letters if c.isascii()) / len(letters) > 0.5
+    return not NATIVE_RUN.search(text)
 
 
 def offline(text: str, language: str) -> tuple[str, str]:
-    """Transliterate locally. Returns (roman, source tag)."""
+    """Transliterate locally, run by run. Returns (roman, source tag).
+
+    Each non-ASCII run is converted in place and the Latin around it is left
+    alone, so a code-mixed segment comes back fully Roman rather than being
+    skipped because most of it already was.
+    """
     script = SCRIPTS.get(language)
     if script is None or already_roman(text):
         # Nothing to convert: English, Hinglish-in-Roman, or a language whose
         # script we have no mapping for. Echo it rather than inventing one.
         return text, "verbatim"
-    return _transliterate(text, script, SCHEME), f"indic-transliteration:{SCHEME}"
+    converted = NATIVE_RUN.sub(lambda m: _transliterate(m.group(), script, SCHEME), text)
+    return converted, f"indic-transliteration:{SCHEME}"
 
 
 async def via_sarvam(text: str, language: str, client: Any | None = None) -> tuple[str, str]:
