@@ -392,3 +392,101 @@ class TicketFiling(Base):
             name="ck_ticket_filings_number",
         ),
     )
+
+
+# --- UC1 retention (PRD C8; uc1/P7) ------------------------------------------
+
+
+class RetentionDeletion(Base):
+    """One retention policy's pass over one store: what it removed, and by what rule.
+
+    This table exists to answer a question asked a year later, by someone who
+    cannot see the code that ran: *was this data deleted on time, and under
+    which rule?* Answering it needs four things a bare "deleted N rows" line
+    does not carry.
+
+    The rule: `policy`, `retention_days` and `cutoff_at`. A retention window is
+    configurable, so a row deleted under a 90-day rule and a row deleted after
+    the window was shortened to 30 are different events; storing the number in
+    force at the time -- and the cutoff it produced -- makes the pass
+    reconstructible without the deployment's environment. `cutoff_at` is the
+    answer to "on time": everything created before it was in scope, and
+    `started_at - retention_days = cutoff_at` is the invariant a reviewer checks.
+
+    The scope: `target` (the store: the table name for a Postgres policy,
+    `turns`; a bucket/prefix for an object-store policy) and the
+    `window_start`/`window_end` pair, which is the oldest and newest
+    `created_at` the pass actually covered. A count alone cannot show that the
+    deleted rows were the old ones; the window can, and it is NULL exactly when
+    nothing matched.
+
+    The result: `rows_matched` against `rows_deleted`. They differ for the one
+    reason the flag records -- `dry_run`, where the job reports what it would
+    remove and removes nothing (`ck_retention_deletions_dry_run` refuses any
+    other reading of a dry run). `batches` and `batch_size` show the work was
+    chunked, and make a `failed` row legible: a pass that died after four
+    batches deleted four batches' worth, and the rows it did delete are still
+    counted here.
+
+    The provenance: `job_run_id` groups the policies of one sweep -- audio and
+    transcripts fire together -- so a reviewer sees a whole night's pass rather
+    than two unrelated rows, and `app` keeps one shared table honest when a
+    second application starts deleting its own data through it.
+
+    Nothing here is a copy of what was deleted: no ids, no utterances, no keys.
+    An audit record of a privacy deletion that quotes the deleted text would
+    defeat the deletion.
+    """
+
+    __tablename__ = "retention_deletions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    job_run_id: Mapped[uuid.UUID]
+    app: Mapped[str] = mapped_column(String(64))
+    policy: Mapped[str] = mapped_column(String(64))
+    target: Mapped[str] = mapped_column(String(200))
+    retention_days: Mapped[int]
+    cutoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rows_matched: Mapped[int] = mapped_column(BigInteger, default=0)
+    rows_deleted: Mapped[int] = mapped_column(BigInteger, default=0)
+    batches: Mapped[int] = mapped_column(default=0)
+    batch_size: Mapped[int] = mapped_column(default=0)
+    dry_run: Mapped[bool] = mapped_column(default=False)
+    status: Mapped[str] = mapped_column(String(16), default="completed")
+    # Why a pass matched nothing, or the class name of what stopped it. Never
+    # the deleted content.
+    detail: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("status in ('completed','failed')", name="ck_retention_deletions_status"),
+        CheckConstraint("retention_days > 0", name="ck_retention_deletions_days"),
+        CheckConstraint("batch_size > 0 and batches >= 0", name="ck_retention_deletions_batching"),
+        CheckConstraint(
+            "rows_matched >= 0 and rows_deleted >= 0 and rows_deleted <= rows_matched",
+            name="ck_retention_deletions_counts",
+        ),
+        # A dry run that deleted something is not a dry run.
+        CheckConstraint("not dry_run or rows_deleted = 0", name="ck_retention_deletions_dry_run"),
+        # The window is present exactly when the pass covered something, and
+        # never runs backwards.
+        CheckConstraint(
+            "(window_start is null) = (window_end is null)",
+            name="ck_retention_deletions_window_pair",
+        ),
+        CheckConstraint(
+            "(rows_matched = 0) = (window_start is null)",
+            name="ck_retention_deletions_window_scope",
+        ),
+        CheckConstraint(
+            "window_end is null or window_end >= window_start",
+            name="ck_retention_deletions_window_order",
+        ),
+        CheckConstraint("finished_at >= started_at", name="ck_retention_deletions_duration"),
+        Index("ix_retention_deletions_policy_finished", "policy", "finished_at"),
+        Index("ix_retention_deletions_job_run", "job_run_id"),
+    )
