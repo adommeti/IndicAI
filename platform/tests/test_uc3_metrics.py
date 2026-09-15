@@ -707,6 +707,24 @@ async def test_metrics_read_the_real_chain_end_to_end() -> None:
     now = datetime.now(UTC)
     key = f"metrics-test/{uuid.uuid4()}"
     try:
+        # Baseline first. `precision_by_category` is windowed by time, not by
+        # call, and this database is shared with every other integration test in
+        # the run -- `test_uc3_audit.py` writes its own `guaranteed_returns`
+        # flag with a disposition inside the same five minutes. Asserting an
+        # absolute count here is asserting that no sibling test exists, which
+        # was how this first failed: `decided == 2`, one of them not ours.
+        # The delta is the part this test actually established.
+        async with factory() as session:
+            window = now - timedelta(minutes=5)
+            baseline = {
+                row.category: row
+                for row in await metrics.precision_by_category(session, since=window)
+            }
+            baseline_estimate = await metrics.false_negative_estimate(session, since=window)
+        before = baseline.get(CATEGORY)
+        before_decided = before.decided if before else 0
+        before_false_positive = before.false_positive if before else 0
+
         async with factory() as session:
             call = Call(source_uri=f"s3://{key}", source_key=key, recorded_at=now)
             session.add(call)
@@ -743,17 +761,20 @@ async def test_metrics_read_the_real_chain_end_to_end() -> None:
             await session.commit()
 
         async with factory() as session:
-            window = now - timedelta(minutes=5)
             by_category = {
                 row.category: row
                 for row in await metrics.precision_by_category(session, since=window)
             }
-            assert by_category[CATEGORY].decided == 1
-            assert by_category[CATEGORY].false_positive == 1
+            # Two dispositions were written against one flag. Exactly one
+            # decision may appear, and it must be the later one: that is the
+            # "latest disposition wins" rule, and `seq` -- assigned by the
+            # database, not the application -- is what orders two rows sharing
+            # a transaction timestamp.
+            assert by_category[CATEGORY].decided - before_decided == 1
+            assert by_category[CATEGORY].false_positive - before_false_positive == 1
 
             estimate = await metrics.false_negative_estimate(session, since=window)
-            assert estimate.sampled == 1
-            assert estimate.missed == 0
-            assert estimate.rate == 0.0
+            assert estimate.sampled - baseline_estimate.sampled == 1
+            assert estimate.missed - baseline_estimate.missed == 0
     finally:
         await engine.dispose()

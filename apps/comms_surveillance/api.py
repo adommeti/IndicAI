@@ -401,14 +401,15 @@ async def qa_sample(
 # rather than a pass-through, because this is one of the two responses a
 # governance reader is allowed to see and `metrics.py` is a separate module: a
 # field added there must not be able to become a transcript quote here without
-# somebody editing this line. `metrics.py` owners: add the key here too.
+# somebody editing this line. Owners of `metrics.py`: a new bucket key needs to
+# be added here too, and `test_uc3_api` will say so if it is not.
 OVER_TIME_KEYS = frozenset(
     {
         "bucket",
-        "period",
-        "start",
-        "end",
+        "bucket_start",
+        "bucket_end",
         "category",
+        "flags",
         "confirmed",
         "false_positive",
         "decided",
@@ -439,6 +440,10 @@ async def precision(
     caller: Annotated[Principal, MetricsReader],
     bucket: Annotated[str, Query(max_length=16)] = "week",
 ) -> dict[str, Any]:
+    # Validated here rather than left to `metrics.precision_over_time`, which
+    # raises ValueError -- a 500 for what is a caller's typo.
+    if bucket not in metrics.BUCKETS:
+        raise HTTPException(422, f"bucket must be one of {', '.join(metrics.BUCKETS)}")
     by_category = await metrics.precision_by_category(session)
     over_time = await metrics.precision_over_time(session, bucket=bucket)
     return {

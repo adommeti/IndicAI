@@ -44,7 +44,7 @@ from starlette.middleware.authentication import AuthenticationMiddleware
 
 # The string that must never reach a governance reader. Every fake below is
 # seeded with it, so a leak through any field of any response is one assertion.
-SECRET = "SECRET-TRANSCRIPT-bol-do-capital-protected-hai"
+SECRET = "SECRET-TRANSCRIPT-bol-do-capital-protected-hai"  # pragma: allowlist secret
 
 FLAG_ID = "11111111-1111-4111-8111-111111111111"
 MISSING_FLAG_ID = "99999999-9999-4999-8999-999999999999"
