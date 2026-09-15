@@ -17,16 +17,27 @@ UC2_LIVE_ARGS ?= --translate training_localizer.eval_hook:full \
 UC2_SARVAM_ARGS ?= --translate training_localizer.eval_hook:translate_and_enforce \
 	--pre-edit training_localizer.eval_hook:translate_only --baseline
 COMPOSE = docker compose --env-file .env.stack
+# The `ticketing` profile (Zammad, uc1). Named explicitly because `up` with only
+# a --profile flag would also start every unprofiled service.
+ZAMMAD = zammad-postgresql zammad-redis zammad-memcached zammad-init \
+	zammad-railsserver zammad-nginx zammad-scheduler zammad-websocket
 .PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
-        check check-quick check-full stack-core stack-obs stack-voice stack-sparse stack-status stack-logs ship plan
+        check check-quick check-full stack-core stack-obs stack-voice stack-sparse stack-ticketing stack-status stack-logs ship plan
 bootstrap:
 	python3 infra/bootstrap.py
 up: bootstrap
 	$(COMPOSE) up -d --build --wait --wait-timeout 1200
 down:
-	$(COMPOSE) --profile retrieval down
+	$(COMPOSE) --profile retrieval --profile ticketing down
 stack-core stack-obs stack-voice stack-sparse: bootstrap
 	bash scripts/stack.sh $(@:stack-%=%)
+# Zammad for uc1 ticket filing; see apps/helpdesk_agent/README.md. Eight extra
+# containers (four Rails, plus its own Postgres/Redis/memcached), so it is opt-in
+# and not part of stack-core. zammad-init runs migrations once and exits, so it
+# is not waited on; the wait is on the two long-running services.
+stack-ticketing: bootstrap
+	$(COMPOSE) --profile ticketing up -d $(ZAMMAD)
+	$(COMPOSE) --profile ticketing up -d --wait --wait-timeout 900 zammad-railsserver zammad-nginx
 stack-status:
 	bash scripts/stack.sh status
 stack-logs:
