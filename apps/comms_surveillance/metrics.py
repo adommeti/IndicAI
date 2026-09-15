@@ -68,7 +68,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from comms_surveillance.detector import CATEGORIES
 
-# The two dispositions that decide a flag, and the two that do not.
+# The two dispositions that decide a flag, and the two that do not. Exported
+# vocabulary: the API layer classifies the same way, and a disposition outside
+# either set -- a fifth value added later without touching this module -- counts
+# as undecided, which keeps it out of every denominator until someone says where
+# it belongs.
 CONFIRMED = "confirmed"
 FALSE_POSITIVE = "false_positive"
 DECIDED: frozenset[str] = frozenset({CONFIRMED, FALSE_POSITIVE})
@@ -468,10 +472,11 @@ def _qa_calls(rows: Sequence[Any], *, since: datetime | None) -> list[_QaCall]:
         per_call.setdefault(flag_id, []).append(
             _Observation(
                 flag_id=flag_id,
-                # `flags.category` is not selected here: the false-negative
-                # estimate is per call, and a category breakdown of misses
-                # would need the sampled *calls* to carry categories, which
-                # nothing records.
+                # `flags.category` is not selected: the estimate is per call,
+                # and a call is one miss whatever its flags were about. A
+                # per-category breakdown of misses is available from
+                # `flags.category` if it is ever asked for; it is not here
+                # because nothing has asked.
                 category="",
                 created_at=as_utc(created_at),
                 disposition=row[5],
