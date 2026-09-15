@@ -304,7 +304,14 @@ async def test_a_second_sweep_does_not_duplicate_a_call() -> None:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         first = await ingest.ingest_prefix(minio, prefix=prefix, stt=stt, session_factory=factory)
-        assert first == {"seen": 2, "claimed": 2, "transcribed": 2, "skipped": 0, "failed": 0}
+        assert first == {
+            "seen": 2,
+            "claimed": 2,
+            "retried": 0,
+            "transcribed": 2,
+            "skipped": 0,
+            "failed": 0,
+        }
         assert stt.calls == 2
 
         second = await ingest.ingest_prefix(minio, prefix=prefix, stt=stt, session_factory=factory)
@@ -408,9 +415,15 @@ async def test_a_retranscription_replaces_turns_rather_than_appending() -> None:
                 )
             ]
         )
-        async with factory() as db:
-            await ingest.transcribe_call(db, call_id, "s3://x/call.wav", stt=shorter)
-            await db.commit()
+        # `transcribe_call` takes local media, like the adapter it wraps.
+        # `fetch_object` is a plain context manager, so it cannot go in the
+        # `async with`.
+        with storage.fetch_object(
+            FakeMinio([f"{prefix}call.wav"]), f"{prefix}call.wav", bucket="b"
+        ) as path:
+            async with factory() as db:
+                await ingest.transcribe_call(db, call_id, str(path), stt=shorter)
+                await db.commit()
 
         async with AsyncSession(engine) as db:
             rows = (
@@ -442,7 +455,10 @@ async def test_one_unreadable_recording_does_not_stop_the_sweep() -> None:
         async def batch(
             self, uri: str, *, language: str = "auto", diarize: bool = False
         ) -> list[TranscriptSegment]:
-            if uri.endswith("bad.wav"):
+            # The adapter is handed a materialized temp file, not the object
+            # key; `fetch_object` names it after the recording so it is still
+            # identifiable.
+            if "bad" in pathlib.Path(uri).name:
                 raise RuntimeError("unreadable media")
             return await super().batch(uri, language=language, diarize=diarize)
 

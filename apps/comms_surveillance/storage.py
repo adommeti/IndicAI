@@ -38,7 +38,9 @@ def fetch_object(minio: Any, key: str, *, bucket: str = BUCKET) -> Iterator[Path
     file is removed afterwards because these are call recordings and PRD E2's
     retention question is unanswered.
     """
-    handle, name = tempfile.mkstemp(suffix=Path(key).suffix or ".wav")
+    # Named after the recording, so a temp file left behind by a crash, or a
+    # path in a stack trace, says which call it belongs to.
+    handle, name = tempfile.mkstemp(prefix=f"{Path(key).stem}-", suffix=Path(key).suffix or ".wav")
     os.close(handle)
     path = Path(name)
     try:
