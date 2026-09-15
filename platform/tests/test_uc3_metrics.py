@@ -791,3 +791,30 @@ async def test_metrics_read_the_real_chain_end_to_end() -> None:
             assert estimate.missed - baseline_estimate.missed == 0
     finally:
         await engine.dispose()
+
+
+async def test_the_api_allow_list_matches_every_key_this_module_emits() -> None:
+    """A contract test between `metrics.precision_over_time` and `api.OVER_TIME_KEYS`.
+
+    The API projects over-time buckets through an allow-list so a field added
+    here cannot ride into the one aggregate a governance reader is allowed to
+    see. That is the right default, but it fails silently in the other
+    direction: a key added here and not added there is dropped from the
+    dashboard with nothing to notice it. The existing API-side assertion is
+    `set(point) <= OVER_TIME_KEYS` against a hand-built mock, which cannot catch
+    that. This compares the allow-list against what the real function emits.
+    """
+    from comms_surveillance import api
+
+    rows = [
+        flag_row(uuid.uuid4(), disposition="confirmed", seq=1),
+        flag_row(uuid.uuid4(), disposition="false_positive", seq=2),
+    ]
+    buckets = await metrics.precision_over_time(FakeSession(rows))  # type: ignore[arg-type]
+    assert buckets, "fixture produced no bucket, so this test proves nothing"
+    for bucket in buckets:
+        assert set(bucket) == set(api.OVER_TIME_KEYS), (
+            "precision_over_time and api.OVER_TIME_KEYS have drifted: "
+            f"emitted-not-allowed={set(bucket) - set(api.OVER_TIME_KEYS)}, "
+            f"allowed-not-emitted={set(api.OVER_TIME_KEYS) - set(bucket)}"
+        )

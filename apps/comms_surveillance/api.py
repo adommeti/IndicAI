@@ -45,7 +45,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from starlette.concurrency import run_in_threadpool
 
-from comms_surveillance import audit, detector, metrics, storage
+from comms_surveillance import audit, auth, detector, metrics, storage
 from comms_surveillance.auth import (
     Authenticated,
     CaseReader,
@@ -68,7 +68,22 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="comms surveillance", lifespan=lifespan)
+# `/docs`, `/redoc` and `/openapi.json` are served by FastAPI with no dependency
+# attached, so they sit outside the role matrix entirely: an unauthenticated
+# caller can read the full shape of a surveillance API -- every route, every
+# field name, the disposition vocabulary. No transcript content leaks, but it is
+# a map of the system handed to anyone who asks, and nothing in this app needs
+# it in a deployed environment. They stay on where the dev bypass is allowed,
+# because that is where they are actually used.
+_PUBLIC_SCHEMA = auth.dev_bypass_allowed()
+
+app = FastAPI(
+    title="comms surveillance",
+    lifespan=lifespan,
+    docs_url="/docs" if _PUBLIC_SCHEMA else None,
+    redoc_url="/redoc" if _PUBLIC_SCHEMA else None,
+    openapi_url="/openapi.json" if _PUBLIC_SCHEMA else None,
+)
 
 
 @app.get("/health")

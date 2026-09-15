@@ -90,6 +90,16 @@ def _is_known_non_prod(env: str) -> bool:
     return env.strip().lower() in NON_PROD_ENVS
 
 
+def dev_bypass_allowed() -> bool:
+    """Whether this environment is one where developer conveniences are allowed.
+
+    Separate from `dev_bypass_requested`: the interactive API schema is gated on
+    the *environment*, not on whether anyone asked for the bypass, so a
+    production deployment publishes no schema whether or not the flag is set.
+    """
+    return _is_known_non_prod(os.environ.get("ENV", ""))
+
+
 def dev_bypass_requested() -> bool:
     return _flag("AUTH__DEV_BYPASS")
 

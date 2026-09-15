@@ -1019,3 +1019,45 @@ def test_chain_status_keeps_the_reason_so_a_break_is_actionable(wired: Wiring) -
 
 def test_health_needs_no_identity() -> None:
     assert anonymous().get("/health").status_code == 200
+
+
+def test_the_interactive_schema_is_not_published_outside_a_dev_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`/docs`, `/redoc` and `/openapi.json` carry no dependency.
+
+    FastAPI serves them outside the role matrix entirely, so an unauthenticated
+    caller could read the full shape of a surveillance API: every route, every
+    field name, the disposition vocabulary. No transcript content, but a map of
+    the system handed to anyone who asks. They are gated on the environment
+    rather than on the role, because there is no role that needs them in a
+    deployed environment.
+    """
+    import importlib
+
+    from comms_surveillance import api as api_module
+
+    monkeypatch.setenv("ENV", "prod")
+    reloaded = importlib.reload(api_module)
+    try:
+        paths = {route.path for route in reloaded.app.routes}
+        assert "/openapi.json" not in paths
+        assert "/docs" not in paths
+        assert "/redoc" not in paths
+        # The API itself is unaffected: this closes a schema, not a route.
+        assert "/flags/{flag_id}" in paths
+    finally:
+        monkeypatch.setenv("ENV", "dev")
+        importlib.reload(api_module)
+
+
+def test_the_interactive_schema_is_available_where_the_dev_bypass_is(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+
+    from comms_surveillance import api as api_module
+
+    monkeypatch.setenv("ENV", "dev")
+    reloaded = importlib.reload(api_module)
+    assert "/openapi.json" in {route.path for route in reloaded.app.routes}
