@@ -1,5 +1,8 @@
 UV ?= uv
 UC1_EVAL_ARGS ?=
+# uc2/P1 has no pipeline yet, so the default target runs the trivial baseline and
+# the harness gates. uc2/P2 drops --baseline (UC2_EVAL_ARGS=) to gate on B6.
+UC2_EVAL_ARGS ?= --baseline
 COMPOSE = docker compose --env-file .env.stack
 .PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc3 ingest-kb voice-test migrate audit \
         check check-quick check-full stack-core stack-obs stack-voice stack-sparse stack-status stack-logs ship plan
@@ -38,8 +41,10 @@ test:
 	$(UV) run pytest -m 'not slow and not integration'
 eval-uc1:
 	$(UV) run python -m indic_platform.eval.runners.run_uc1 --chat-only --decide helpdesk_agent.graph:decide $(UC1_EVAL_ARGS)
-eval-uc2 eval-uc3:
-	$(UV) run python -m indic_platform.eval.runners.run --app $(@:eval-%=%)
+eval-uc2:
+	$(UV) run python -m indic_platform.eval.runners.run_uc2 $(UC2_EVAL_ARGS)
+eval-uc3:
+	$(UV) run python -m indic_platform.eval.runners.run --app uc3
 ingest-kb:
 	$(UV) run python -m indic_platform.cli ingest-kb
 voice-test:

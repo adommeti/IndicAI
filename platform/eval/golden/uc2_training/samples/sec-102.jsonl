@@ -1,0 +1,20 @@
+{"module_id": "sec-102", "seg_id": 1, "start_ms": 0, "end_ms": 5100, "source_text": "This module covers how client data and personal data are handled day to day.", "locked": false}
+{"module_id": "sec-102", "seg_id": 2, "start_ms": 5300, "end_ms": 10700, "source_text": "Client data is any information a client gives us or that we hold on their behalf.", "locked": false}
+{"module_id": "sec-102", "seg_id": 3, "start_ms": 10900, "end_ms": 15500, "source_text": "Personal data is any information that identifies a living individual.", "locked": false}
+{"module_id": "sec-102", "seg_id": 4, "start_ms": 15700, "end_ms": 20200, "source_text": "The same file can contain both, and then the stricter rule applies.", "locked": false}
+{"module_id": "sec-102", "seg_id": 5, "start_ms": 20400, "end_ms": 26700, "source_text": "Store client data only in approved systems: SharePoint, the client portal, or the case system.", "locked": false}
+{"module_id": "sec-102", "seg_id": 6, "start_ms": 26900, "end_ms": 32600, "source_text": "Never move client data to personal email, personal cloud storage, or a messaging app.", "locked": false}
+{"module_id": "sec-102", "seg_id": 7, "start_ms": 32800, "end_ms": 38100, "source_text": "A screenshot pasted into Teams is still client data leaving its approved system.", "locked": false}
+{"module_id": "sec-102", "seg_id": 8, "start_ms": 38300, "end_ms": 43500, "source_text": "DLP will block some of these transfers, but DLP is a safety net, not a policy.", "locked": false}
+{"module_id": "sec-102", "seg_id": 9, "start_ms": 43700, "end_ms": 49000, "source_text": "Multi-factor authentication is mandatory for all systems that hold client data.", "locked": true, "locked_id": "lock-mfa-mandatory"}
+{"module_id": "sec-102", "seg_id": 10, "start_ms": 49200, "end_ms": 54600, "source_text": "When you no longer need a local copy, delete it rather than archiving it quietly.", "locked": false}
+{"module_id": "sec-102", "seg_id": 11, "start_ms": 54800, "end_ms": 59500, "source_text": "Record retention schedules tell you how long each record class is kept.", "locked": false}
+{"module_id": "sec-102", "seg_id": 12, "start_ms": 59700, "end_ms": 63800, "source_text": "Deleting a record early is as serious as keeping it too long.", "locked": false}
+{"module_id": "sec-102", "seg_id": 13, "start_ms": 64000, "end_ms": 69300, "source_text": "Unauthorised access means opening a record you have no business reason to open.", "locked": false}
+{"module_id": "sec-102", "seg_id": 14, "start_ms": 69500, "end_ms": 75300, "source_text": "Curiosity about a colleague's file is unauthorised access, even with no further action.", "locked": false}
+{"module_id": "sec-102", "seg_id": 15, "start_ms": 75500, "end_ms": 81800, "source_text": "A data breach is any loss of control over client or personal data, including a mis-sent email.", "locked": false}
+{"module_id": "sec-102", "seg_id": 16, "start_ms": 82000, "end_ms": 86400, "source_text": "A mis-sent email is reportable even if you recall it successfully.", "locked": false}
+{"module_id": "sec-102", "seg_id": 17, "start_ms": 86600, "end_ms": 91500, "source_text": "Report any suspected phishing email to the security team within 24 hours.", "locked": true, "locked_id": "lock-report-24h"}
+{"module_id": "sec-102", "seg_id": 18, "start_ms": 91700, "end_ms": 97900, "source_text": "Working from home does not lower the standard; a shared home printer is not approved storage.", "locked": false}
+{"module_id": "sec-102", "seg_id": 19, "start_ms": 98100, "end_ms": 103200, "source_text": "Violations may result in disciplinary action up to and including termination.", "locked": true, "locked_id": "lock-violation-consequence"}
+{"module_id": "sec-102", "seg_id": 20, "start_ms": 103400, "end_ms": 109100, "source_text": "If a client asks you to send data by an unapproved route, say no and offer the portal.", "locked": false}
