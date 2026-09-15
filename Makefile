@@ -60,8 +60,10 @@ eval-uc2-live:
 	$(UV) run python -m indic_platform.eval.runners.run_uc2 $(UC2_LIVE_ARGS)
 eval-uc2-sarvam:
 	$(UV) run python -m indic_platform.eval.runners.run_uc2 $(UC2_SARVAM_ARGS)
-# uc3: the free baseline (flags nothing) is what CI runs; --diarize measures
-# speaker attribution against live Saaras on the 20 audio items (~Rs 5).
+# uc3: the free baseline (flags nothing) is what CI runs. --diarize measures
+# speaker attribution against live Saaras on the 20 audio items; it prints the
+# estimate (about Rs 4) and refuses to spend without LIVE_API_TESTS=1, so run it
+# as: LIVE_API_TESTS=1 make eval-uc3-diarize
 eval-uc3:
 	$(UV) run python -m indic_platform.eval.runners.run_uc3 $(UC3_EVAL_ARGS)
 eval-uc3-diarize:

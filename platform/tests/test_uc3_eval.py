@@ -25,6 +25,7 @@ from indic_platform.eval.runners.run_uc3 import (
     score_evidence,
     strip_attack,
 )
+from pydantic import ValidationError
 
 GOLDEN = Path(__file__).parents[1] / "eval" / "golden" / "uc3_surveillance"
 
@@ -211,8 +212,9 @@ def test_paraphrased_evidence_is_caught_even_when_the_category_is_right() -> Non
         ]
         for r in records
     }
-    metrics, details = score_evidence(records, flags)
+    metrics, unmeasured, details = score_evidence(records, flags)
     assert metrics["evidence_failure_rate"] == 1.0
+    assert unmeasured == []
     assert len(details) == 5
 
 
@@ -222,8 +224,8 @@ def test_matching_tolerates_a_tighter_or_looser_quote() -> None:
     tighter = Flag(category=label.category, evidence_span=label.evidence_span[:25])
     looser = Flag(category=label.category, evidence_span=label.evidence_span)
     wrong_category = Flag(category="conduct", evidence_span=label.evidence_span)
-    assert matches(tighter, label) and matches(looser, label)
-    assert not matches(wrong_category, label) or label.category == "conduct"
+    assert matches(tighter, label, record) and matches(looser, label, record)
+    assert not matches(wrong_category, label, record) or label.category == "conduct"
 
 
 # --- adversarial --------------------------------------------------------------
@@ -348,11 +350,152 @@ def test_spend_is_summed_from_adapter_records() -> None:
     assert spend.calls == 2
     assert spend.inr == pytest.approx(2.0)
     metrics = spend.metrics(200)
-    assert metrics["cost_per_call_inr"] == pytest.approx(0.01)
+    # Per *vendor call*, which is what the adapters recorded -- 2 calls, Rs 2.
+    # Dividing by the 200 transcripts would understate a call by 100x, and
+    # `evaluate` makes more calls than there are transcripts.
+    assert metrics["vendor_calls"] == 2.0
+    assert metrics["cost_per_call_inr"] == pytest.approx(1.0)
+    assert metrics["cost_per_transcript_inr"] == pytest.approx(0.01)
 
 
 def test_the_baseline_makes_no_vendor_calls() -> None:
     records = load_transcripts()
     assert all(baseline(r) == [] for r in records)
-    metrics, _ = score_detection(records, {r.id: [] for r in records})
+    metrics, unmeasured, _ = score_detection(records, {r.id: [] for r in records})
     assert metrics["flags_raised"] == 0.0
+    assert "precision" in unmeasured
+
+
+# --- the defects the pre-ship review proved ------------------------------------
+#
+# Each of these failed before the fix. They are here so the metric cannot quietly
+# go back to being unfalsifiable.
+
+
+def test_zero_evidence_is_unmeasured_not_a_passing_zero() -> None:
+    """The baseline checked no evidence, so it must not pass the evidence gate.
+
+    `evidence_failure_rate: 0.0` over zero checks is the same trap `precision`
+    already avoided: a detector that flags nothing scoring perfectly on work it
+    never did.
+    """
+    records = load_transcripts()
+    metrics, unmeasured, _ = score_evidence(records, {r.id: [] for r in records})
+    assert metrics["evidence_checked"] == 0.0
+    assert "evidence_failure_rate" not in metrics
+    assert "evidence_failure_rate" in unmeasured
+
+    report = run_uc3.evaluate(strict=False)
+    assert "evidence_failure_rate" not in report.quality_gates
+    assert "evidence_failure_rate" in report.unmeasured
+    assert "precision" in report.unmeasured
+
+
+def test_strict_mode_fails_on_a_metric_that_was_never_measured() -> None:
+    """An oracle detector with no diarization run must not report a green strict pass.
+
+    Absence used to skip the gate, so two of six B6 metrics could go untaken and
+    the run still came back `passed: True`.
+    """
+
+    def oracle(transcript: run_uc3.Transcript) -> list[Flag]:
+        return [
+            Flag(category=label.category, evidence_span=label.evidence_span, speaker=label.speaker)
+            for label in transcript.labels
+        ]
+
+    report = run_uc3.evaluate(detect=oracle, strict=True)
+    assert report.metrics["recall"] == 1.0
+    assert "diarization_accuracy" in report.unmeasured
+    assert report.gates["b6:diarization_accuracy:measured"] is False
+    assert report.passed is False
+
+
+def test_evidence_quoting_the_whole_call_is_not_evidence() -> None:
+    """A flag per category quoting the entire transcript used to score recall 1.0.
+
+    Bidirectional substring matching made every label a substring of the quote,
+    and the joined transcript contained it, so evidence verification passed too.
+    """
+    records = [r for r in load_transcripts() if r.labels][:5]
+    flags = {
+        r.id: [Flag(category=label.category, evidence_span=r.text) for label in r.labels]
+        for r in records
+    }
+    detection, _, _ = score_detection(records, flags)
+    assert detection["recall"] == 0.0
+    evidence, _, _ = score_evidence(records, flags)
+    assert evidence["evidence_failure_rate"] == 1.0
+
+
+def test_a_flag_blaming_the_wrong_speaker_is_not_a_true_positive() -> None:
+    """Misattributing a violation is a different error from finding it."""
+    record = next(r for r in load_transcripts() if r.labels)
+    label = record.labels[0]
+    other = next(s.speaker for s in record.segments if s.speaker != label.speaker)
+    right = Flag(category=label.category, evidence_span=label.evidence_span, speaker=label.speaker)
+    wrong = Flag(category=label.category, evidence_span=label.evidence_span, speaker=other)
+    assert matches(right, label, record)
+    assert not matches(wrong, label, record)
+
+
+def test_a_transcript_with_an_unknown_key_is_rejected() -> None:
+    """`labelz` must not validate into an apparently clean transcript."""
+    record = next(r for r in load_transcripts() if r.labels)
+    payload = json.loads(record.model_dump_json(by_alias=True))
+    payload["labelz"] = payload.pop("labels")
+    with pytest.raises(ValidationError):
+        run_uc3.Transcript.model_validate(payload)
+
+
+def test_the_diarization_estimate_is_priced_from_pricing_yaml() -> None:
+    """`--diarize` must say what it will spend, from the pricing file."""
+    line = run_uc3.estimate_diarization_cost(run_uc3.load_audio_manifest())
+    assert run_uc3.DIARIZE_MODEL in line and "Rs " in line
+    # The rate is real: Saaras diarized batch at Rs 45/h over the manifest's audio.
+    seconds = sum(i["duration_ms"] for i in run_uc3.load_audio_manifest()["items"]) / 1000
+    expected = seconds * 0.0125
+    assert f"Rs {expected:.2f}" in line
+    # No items is Rs 0.00, not "unknown": the rate is known, the audio is empty.
+    assert "Rs 0.00" in run_uc3.estimate_diarization_cost({"items": []})
+
+
+def test_an_adversarial_item_with_no_usable_control_is_not_scored_as_a_win() -> None:
+    """If stripping removes nothing, attacked and control are the same run.
+
+    Suppression cannot show up as a difference, so the item must be reported
+    rather than counted as a zero.
+    """
+    plain = [r for r in load_transcripts() if r.cls == "clean"][:1]
+    forced = [
+        run_uc3.Transcript(
+            id=r.id,
+            language_mix=r.language_mix,
+            **{"class": "adversarial"},
+            segments=r.segments,
+            labels=[],
+        )
+        for r in plain
+    ]
+    metrics, unmeasured, details = run_uc3.score_adversarial(
+        forced, baseline, {r.id: [] for r in forced}
+    )
+    assert metrics["adversarial_items"] == 1.0
+    assert metrics["adversarial_comparable"] == 0.0
+    assert "adversarial_success" in unmeasured
+    assert any(d["check"] == "adversarial:no_control" for d in details)
+
+
+def test_every_real_adversarial_item_still_has_a_usable_control() -> None:
+    """The 20 shipped adversarial items must all be comparable.
+
+    This is what keeps `adversarial_success: 0.0` meaningful rather than true by
+    construction.
+    """
+    records = load_transcripts()
+    metrics, unmeasured, _ = run_uc3.score_adversarial(
+        records, baseline, {r.id: [] for r in records}
+    )
+    assert metrics["adversarial_items"] == 20.0
+    assert metrics["adversarial_comparable"] == 20.0
+    assert unmeasured == []

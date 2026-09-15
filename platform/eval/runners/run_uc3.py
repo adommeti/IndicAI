@@ -23,8 +23,7 @@ flags nothing ever scores above zero on anything, the check is broken.
 import argparse
 import importlib
 import json
-import re
-import unicodedata
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +35,9 @@ from pydantic import BaseModel, Field
 
 GOLDEN = Path(__file__).parents[1] / "golden" / "uc3_surveillance"
 PRICING = Path(__file__).parents[2] / "config" / "pricing.yaml"
+
+# The model id `--diarize` bills against, and the key its rate lives under.
+DIARIZE_MODEL = "saaras:v3:diarized"
 
 CATEGORIES = (
     "guaranteed_returns",
@@ -79,7 +81,9 @@ class Transcript(BaseModel):
     labels: list[Label] = Field(default_factory=list)
     adversary_kind: str | None = None
 
-    model_config = {"populate_by_name": True}
+    # A typo such as "labelz" must not validate into an unlabelled -- and so
+    # apparently clean -- transcript. Golden-set integrity depends on this.
+    model_config = {"populate_by_name": True, "extra": "forbid"}
 
     @property
     def text(self) -> str:
@@ -121,23 +125,42 @@ def load_audio_manifest() -> dict[str, Any]:
 # --- precision and recall -----------------------------------------------------
 
 
-def matches(flag: Flag, label: Label) -> bool:
-    """A flag answers a label when it names the same category on the same text.
+def within_one_segment(span: str, transcript: Transcript) -> bool:
+    """Is this span quoted from a single turn of the call?
+
+    Evidence that spans the whole transcript is not evidence. Without this
+    bound a detector can raise one flag per category quoting the entire call
+    and score perfect recall with a clean evidence rate, because the label's
+    span is a substring of what it quoted.
+    """
+    text = span.strip()
+    return bool(text) and any(text in segment.text for segment in transcript.segments)
+
+
+def matches(flag: Flag, label: Label, transcript: Transcript) -> bool:
+    """A flag answers a label when it names the same category, on the same text,
+    against the same speaker.
 
     Evidence has to overlap, not match exactly: a detector that quotes a tighter
     or looser span than the label is still right about what it found, and
     demanding character-identical spans would measure quoting style rather than
-    detection.
+    detection. But it must be quoting one turn, and if it names a speaker it
+    must name the right one -- in surveillance, attributing a violation to the
+    wrong participant is a different and worse error than missing it.
     """
     if flag.category != label.category:
         return False
+    if flag.speaker and flag.speaker != label.speaker:
+        return False
     a, b = flag.evidence_span.strip(), label.evidence_span.strip()
-    return bool(a) and (a in b or b in a)
+    if not (a and (a in b or b in a)):
+        return False
+    return within_one_segment(a, transcript)
 
 
 def score_detection(
     transcripts: list[Transcript], flags_by_id: dict[str, list[Flag]]
-) -> tuple[dict[str, float], list[dict[str, object]]]:
+) -> tuple[dict[str, float], list[str], list[dict[str, object]]]:
     details: list[dict[str, object]] = []
     true_positives = false_positives = false_negatives = 0
     per_category: dict[str, dict[str, int]] = {c: {"tp": 0, "fn": 0, "fp": 0} for c in CATEGORIES}
@@ -146,7 +169,7 @@ def score_detection(
         flags = list(flags_by_id.get(transcript.id, []))
         unmatched = list(flags)
         for label in transcript.labels:
-            hit = next((f for f in unmatched if matches(f, label)), None)
+            hit = next((f for f in unmatched if matches(f, label, transcript)), None)
             bucket = per_category.setdefault(label.category, {"tp": 0, "fn": 0, "fp": 0})
             if hit is not None:
                 unmatched.remove(hit)
@@ -185,16 +208,27 @@ def score_detection(
         "recall": (true_positives / relevant) if relevant else 0.0,
     }
     # Precision over zero flags is undefined, not 1.0. A detector that flags
-    # nothing must not look perfectly precise.
+    # nothing must not look perfectly precise -- but "undefined" has to be said
+    # out loud, not left as a missing key nobody notices.
+    unmeasured: list[str] = []
     if flagged:
         metrics["precision"] = true_positives / flagged
+    else:
+        unmeasured.append("precision")
+        details.append(
+            {
+                "check": "unmeasured",
+                "metric": "precision",
+                "reason": "0 flags raised, so precision is undefined",
+            }
+        )
     for category, counts in per_category.items():
         total = counts["tp"] + counts["fn"]
         if total:
             metrics[f"recall_{category}"] = counts["tp"] / total
         if counts["tp"] + counts["fp"]:
             metrics[f"precision_{category}"] = counts["tp"] / (counts["tp"] + counts["fp"])
-    return metrics, details
+    return metrics, unmeasured, details
 
 
 # --- adversarial --------------------------------------------------------------
@@ -267,8 +301,8 @@ def _is_attack(text: str) -> bool:
 
 
 def score_adversarial(
-    transcripts: list[Transcript], detect: Detector
-) -> tuple[dict[str, float], list[dict[str, object]]]:
+    transcripts: list[Transcript], detect: Detector, flags_by_id: dict[str, list[Flag]]
+) -> tuple[dict[str, float], list[str], list[dict[str, object]]]:
     """Did the manipulation change the outcome?
 
     Two ways it can succeed, and both count:
@@ -283,14 +317,34 @@ def score_adversarial(
     adversarial = [t for t in transcripts if t.cls == "adversarial"]
     details: list[dict[str, object]] = []
     successes = 0
+    comparable = 0
     for transcript in adversarial:
-        attacked = detect(transcript)
-        control = detect(strip_attack(transcript))
+        # Reuse the flags already computed for this transcript rather than
+        # calling the detector again: a second call costs money and, for a
+        # nondeterministic detector, would score adversarial success against a
+        # different output than precision and recall were scored against.
+        attacked = list(flags_by_id.get(transcript.id, []))
+        stripped = strip_attack(transcript)
+        if stripped.segments == transcript.segments:
+            # No attack turn was removed, so attacked and control are the same
+            # run and suppression cannot show up as a difference. Saying so is
+            # the point: an unmarked attack would otherwise score 0 silently.
+            details.append(
+                {
+                    "check": "adversarial:no_control",
+                    "id": transcript.id,
+                    "adversary_kind": transcript.adversary_kind,
+                    "reason": "no segment matched ATTACK_MARKERS, so the control is identical",
+                }
+            )
+            continue
+        comparable += 1
+        control = detect(stripped)
         suppressed = [
             label
             for label in transcript.labels
-            if any(matches(f, label) for f in control)
-            and not any(matches(f, label) for f in attacked)
+            if any(matches(f, label, stripped) for f in control)
+            and not any(matches(f, label, transcript) for f in attacked)
         ]
         echoed = [f for f in attacked if f.evidence_span.strip() and _is_attack(f.evidence_span)]
         if suppressed or echoed:
@@ -304,13 +358,23 @@ def score_adversarial(
                     "echoed": [f.evidence_span[:100] for f in echoed],
                 }
             )
-    return (
-        {
-            "adversarial_items": float(len(adversarial)),
-            "adversarial_success": (successes / len(adversarial)) if adversarial else 0.0,
-        },
-        details,
-    )
+    metrics = {
+        "adversarial_items": float(len(adversarial)),
+        "adversarial_comparable": float(comparable),
+    }
+    unmeasured: list[str] = []
+    if comparable:
+        metrics["adversarial_success"] = successes / comparable
+    else:
+        unmeasured.append("adversarial_success")
+        details.append(
+            {
+                "check": "unmeasured",
+                "metric": "adversarial_success",
+                "reason": "no adversarial item produced a control differing from the attack",
+            }
+        )
+    return metrics, unmeasured, details
 
 
 # --- evidence -----------------------------------------------------------------
@@ -318,16 +382,18 @@ def score_adversarial(
 
 def score_evidence(
     transcripts: list[Transcript], flags_by_id: dict[str, list[Flag]]
-) -> tuple[dict[str, float], list[dict[str, object]]]:
+) -> tuple[dict[str, float], list[str], list[dict[str, object]]]:
     """Every flag must quote the transcript exactly. A flag nobody can trace back
     to a line in the call is not reviewable, whatever else it got right."""
     details: list[dict[str, object]] = []
     checked = failed = 0
     for transcript in transcripts:
-        haystack = transcript.text
         for flag in flags_by_id.get(transcript.id, []):
             checked += 1
-            if flag.evidence_span.strip() and flag.evidence_span in haystack:
+            # Quoting one turn, not the joined transcript: a "quote" stitched
+            # across turns never happened, and a quote of everything proves
+            # nothing.
+            if within_one_segment(flag.evidence_span, transcript):
                 continue
             failed += 1
             details.append(
@@ -338,21 +404,26 @@ def score_evidence(
                     "quoted": flag.evidence_span[:120],
                 }
             )
-    return (
-        {
-            "evidence_checked": float(checked),
-            "evidence_failure_rate": (failed / checked) if checked else 0.0,
-        },
-        details,
-    )
+    metrics = {"evidence_checked": float(checked)}
+    unmeasured: list[str] = []
+    if checked:
+        metrics["evidence_failure_rate"] = failed / checked
+    else:
+        # A detector that flags nothing has had no evidence checked. Reporting
+        # 0.0 would hand it a passing "must be zero" gate for work it never did
+        # -- the same trap `precision` avoids above.
+        unmeasured.append("evidence_failure_rate")
+        details.append(
+            {
+                "check": "unmeasured",
+                "metric": "evidence_failure_rate",
+                "reason": "0 flags raised, so no evidence span was checked",
+            }
+        )
+    return metrics, unmeasured, details
 
 
 # --- diarization --------------------------------------------------------------
-
-
-def normalise(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text).casefold()
-    return re.sub(r"[^\w\s]", " ", text).strip()
 
 
 def attribution_accuracy(
@@ -456,6 +527,7 @@ def score_diarization(
 
 
 def estimate_cost(transcripts: list[Transcript], model: str = "claude-haiku-4-5") -> str:
+    """What a full analysis run would cost, for `--detect` runs that spend."""
     pricing = yaml.safe_load(PRICING.read_text())
     rates = pricing["models"].get(model)
     calls = len(transcripts)
@@ -470,6 +542,31 @@ def estimate_cost(transcripts: list[Transcript], model: str = "claude-haiku-4-5"
     )
 
 
+def estimate_diarization_cost(manifest: dict[str, Any]) -> str:
+    """What `--diarize` will spend on Saaras, from `pricing.yaml`.
+
+    Diarized batch STT is billed per hour of audio, and the manifest already
+    records every item's duration, so this is the real figure rather than a
+    guess at a call count. Printed before the first request, because
+    `.claude/rules/eval.md` requires a live run to say what it costs first.
+    """
+    items = manifest.get("items", [])
+    seconds = sum(int(item.get("duration_ms", 0)) for item in items) / 1000.0
+    pricing = yaml.safe_load(PRICING.read_text())
+    rates = (pricing.get("models") or {}).get(DIARIZE_MODEL) or {}
+    per_second = rates.get("seconds")
+    if per_second is None:
+        return (
+            f"uc3 diarization: {len(items)} items, {seconds:.0f}s of audio through "
+            f"{DIARIZE_MODEL}; no pricing entry, cost unknown"
+        )
+    inr = seconds * float(per_second)
+    return (
+        f"uc3 diarization: {len(items)} items, {seconds:.0f}s of audio through "
+        f"{DIARIZE_MODEL} at Rs {float(per_second) * 3600:.0f}/h -- estimated Rs {inr:.2f}"
+    )
+
+
 @dataclass
 class Spend:
     """Per-call cost, read from what the adapters recorded rather than guessed."""
@@ -480,12 +577,24 @@ class Spend:
     by_model: dict[str, float] = field(default_factory=dict)
 
     def metrics(self, items: int) -> dict[str, float]:
-        return {
+        """`items` is the transcript count; `self.calls` is what the vendors saw.
+
+        These differ and the difference matters: `evaluate` runs the detector on
+        every transcript *and* on each adversarial item twice more (attacked and
+        control), so dividing spend by the transcript count understates the cost
+        of a call by whatever the control runs added. Per-call is per vendor
+        call; per-transcript is reported separately and named as such.
+        """
+        out = {
             "vendor_calls": float(self.calls),
             "cost_inr_total": round(self.inr, 4),
             "cost_usd_total": round(self.usd, 4),
-            "cost_per_call_inr": round(self.inr / items, 6) if items else 0.0,
         }
+        if self.calls:
+            out["cost_per_call_inr"] = round(self.inr / self.calls, 6)
+        if items:
+            out["cost_per_transcript_inr"] = round(self.inr / items, 6)
+        return out
 
 
 def spend_from_sink(sink: Any) -> Spend:
@@ -520,16 +629,21 @@ def evaluate(
     details: list[dict[str, object]] = []
     unmeasured: list[str] = []
 
-    detection, detection_details = score_detection(transcripts, flags_by_id)
+    detection, detection_unmeasured, detection_details = score_detection(transcripts, flags_by_id)
     metrics.update(detection)
+    unmeasured += detection_unmeasured
     details += detection_details
 
-    adversarial, adversarial_details = score_adversarial(transcripts, detect)
+    adversarial, adversarial_unmeasured, adversarial_details = score_adversarial(
+        transcripts, detect, flags_by_id
+    )
     metrics.update(adversarial)
+    unmeasured += adversarial_unmeasured
     details += adversarial_details
 
-    evidence, evidence_details = score_evidence(transcripts, flags_by_id)
+    evidence, evidence_unmeasured, evidence_details = score_evidence(transcripts, flags_by_id)
     metrics.update(evidence)
+    unmeasured += evidence_unmeasured
     details += evidence_details
 
     diarization, diarization_unmeasured, diarization_details = score_diarization(transcribe)
@@ -581,7 +695,14 @@ def evaluate(
         details=details,
     )
     if strict:
-        report.gates = {**gates, **{f"b6:{k}": v for k, v in quality_gates.items()}}
+        # A B6 metric that was never taken cannot be allowed to pass by being
+        # absent. Strict mode is what uc3/P4 will run, and a green run with two
+        # of six gates never measured is a false green, not a pass.
+        report.gates = {
+            **gates,
+            **{f"b6:{k}": v for k, v in quality_gates.items()},
+            **{f"b6:{name}:measured": False for name in unmeasured},
+        }
     return report
 
 
@@ -634,11 +755,13 @@ def main() -> None:
 
     transcribe = None
     if args.diarize:
-        manifest = load_audio_manifest()
-        print(
-            f"uc3 diarization: {len(manifest.get('items', []))} audio items through "
-            "saaras:v3:diarized"
-        )
+        # Live vendor calls are opt-in and say what they cost before spending.
+        if os.environ.get("LIVE_API_TESTS") != "1":
+            raise SystemExit(
+                "--diarize makes live Saaras calls: set LIVE_API_TESTS=1 to confirm.\n"
+                + estimate_diarization_cost(load_audio_manifest())
+            )
+        print(estimate_diarization_cost(load_audio_manifest()))
         transcribe = saaras_diarizer()
 
     report = evaluate(
