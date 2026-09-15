@@ -690,6 +690,16 @@ async def test_a_truncated_tail_is_detected_although_the_chain_still_walks_clean
     `prev_hash` matches, every `row_hash` recomputes. Only the anchor knows the
     chain used to be longer. This is the realistic shape of an audit-trail
     attack -- nobody deletes the head, they delete what they did last night.
+
+    Order matters, and getting it wrong is how this test first failed: the row
+    that disappears has to be one the anchor had already counted. Appending a
+    row *after* anchoring and then deleting it returns the chain to exactly the
+    anchored state, and the anchor is right to call that clean.
+
+    That is also this control's honest limit, worth stating where someone will
+    read it: a row appended and deleted between two nightly runs leaves no
+    trace in either the count or the head. Narrowing that window means
+    anchoring more often, not anchoring differently.
     """
     from sqlalchemy import text
 
@@ -700,38 +710,46 @@ async def test_a_truncated_tail_is_detected_although_the_chain_still_walks_clean
         async with factory() as db:
             kept = await audit.append(db, _run(call_id))
             await db.commit()
-
-        # Anchor the chain as the nightly job would.
-        async with factory() as db:
-            before = await audit.verify_chain(db, "analysis_runs")
-            assert before.ok
-            await audit.write_anchor(
-                db, "analysis_runs", head_hash=before.head_hash, rows=before.rows
-            )
-            await db.commit()
+            kept_id = kept.id
 
         async with factory() as db:
             doomed = await audit.append(db, _run(call_id))
             await db.commit()
             doomed_id = doomed.id
 
+        # Last night's verification, which counted both rows.
         async with factory() as db:
-            # Superuser truncation of the tail.
+            before = await audit.verify_chain(db, "analysis_runs")
+            assert before.ok, before.reason
+            await audit.write_anchor(
+                db, "analysis_runs", head_hash=before.head_hash, rows=before.rows
+            )
+            await db.commit()
+
+        async with factory() as db:
+            # Superuser truncation of an anchored row.
             await db.execute(text("delete from analysis_runs where id = :id"), {"id": doomed_id})
             await db.commit()
 
             # Without the anchor this reads as clean, which is the whole point.
             walk_only = await audit.verify_chain(db, "analysis_runs", check_anchor=False)
             assert walk_only.ok, walk_only.reason
+            assert walk_only.rows == before.rows - 1
 
-            # With it, the missing rows are visible.
+            # With it, the missing row is visible.
             anchored = await audit.verify_chain(db, "analysis_runs")
             assert not anchored.ok
             assert anchored.anchor_ok is False
             assert "removed" in anchored.reason or "rewritten" in anchored.reason
-            assert kept.id
 
-            await db.rollback()
+        # Leave the chain as this test found it, so the anchor and the rows
+        # agree again for whatever runs next.
+        async with factory() as db:
+            await db.execute(text("delete from analysis_runs where id = :id"), {"id": kept_id})
+            await db.execute(
+                text("delete from audit_chain_anchors where table_name = 'analysis_runs'")
+            )
+            await db.commit()
     finally:
         await engine.dispose()
 
