@@ -6,6 +6,7 @@ matter for the acceptance criteria, because the properties being claimed --
 of a real Postgres, not of Python.
 """
 
+import json
 import os
 import uuid as uuidlib
 from datetime import UTC, datetime
@@ -510,7 +511,10 @@ async def test_ten_thousand_rows_verify_in_under_ten_seconds() -> None:
                     " :lexicon_version, :prompt_version, :input_sha256, cast(:output as jsonb),"
                     " :created_at, :prev_hash, :row_hash)"
                 ),
-                [{**r, "output": "{}"} for r in rows],
+                # Bind exactly what was hashed. An earlier version hashed
+                # {"flags": []} and inserted {}, which the chain correctly
+                # reported as tampering -- the fixture was wrong, not the code.
+                [{**r, "output": json.dumps(r["output"])} for r in rows],
             )
             await db.commit()
 
