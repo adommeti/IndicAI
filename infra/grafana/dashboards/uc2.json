@@ -1,0 +1,91 @@
+{
+  "uid": "uc2-training-localizer",
+  "title": "UC2 — training localizer",
+  "tags": ["uc2", "indic-ai"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "5m",
+  "time": { "from": "now-30d", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "postgres",
+        "current": { "text": "platform", "value": "platform" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Modules delivered",
+      "description": "Module-languages with a manifest artifact. package_task is the only thing that writes one, so this counts completed deliveries rather than started ones.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "select count(*) as \"delivered\" from artifacts where kind = 'manifest';"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Localization throughput (segments approved per day)",
+      "description": "Reviewer output, which is the pipeline's real rate limit: machine stages are fast and the human gate is not.",
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "select date_trunc('day', created_at) as time, language as metric, count(*) as value from localizations where stage = 'approved' and $__timeFilter(created_at) group by 1, 2 order by 1;"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Spend per module-language (INR / USD)",
+      "description": "Summed from adapter_calls, which every vendor call writes through platform/adapters/runtime.py using platform/config/pricing.yaml. NOTE: adapter_calls carries session_id, not module_id, so this is grouped by vendor and capability until uc2 threads a module-scoped session id through the Celery tasks — see the uc2/P5 report.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "select vendor, capability, model, count(*) as calls, round(sum(cost_inr), 2) as inr, round(sum(cost_usd), 4) as usd from adapter_calls where $__timeFilter(created_at) group by 1, 2, 3 order by inr desc;"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Comprehension: native vs English-only control",
+      "description": "PRD B6's business metric. Cells with fewer than 5 attempts show their count and a null rate; the API applies the same rule, so the dashboard and the report agree.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "select cohort, language, count(*) as attempts, case when count(*) >= 5 then round(avg(case when score::numeric / nullif(max_score, 0) >= 0.6 then 1 else 0 end), 3) end as pass_rate, round(avg(score::numeric / nullif(max_score, 0)), 3) as mean_score, round(percentile_cont(0.5) within group (order by duration_ms) / 1000.0, 1) as median_seconds from quiz_attempts where $__timeFilter(taken_at) group by 1, 2 order by 1, 2;"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Segments awaiting review",
+      "description": "post_edit rows with no approved row yet: what the reviewers still owe.",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 17 },
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "select m.title, p.language, count(*) as awaiting from localizations p join modules m on m.id = p.module_id where p.stage = 'post_edit' and not exists (select 1 from localizations a where a.module_id = p.module_id and a.seg_id = p.seg_id and a.language = p.language and a.stage = 'approved') group by 1, 2 order by awaiting desc;"
+        }
+      ]
+    }
+  ]
+}

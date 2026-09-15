@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
-from indic_platform.db.models import Module, QuizItem, Segment
+from indic_platform.db.models import Artifact, Module, QuizAttempt, QuizItem, Segment
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -21,6 +21,15 @@ from training_localizer.pipeline import (
     load_review,
     localize,
     module_status,
+)
+from training_localizer.reports import (
+    Attempt,
+    assign_cohort,
+    comprehension,
+    delivery_language,
+    load_pilot,
+    score_attempt,
+    to_markdown,
 )
 from training_localizer.review import OverrideRequired, review_rows, review_summary
 from training_localizer.terminology import load_glossary, resolve_locked_id
@@ -329,5 +338,206 @@ async def approve_quiz(
         await eng.dispose()
 
 
+# --- pilot delivery and the comprehension report (uc2/P5) ---------------------
+
+
+class AttemptIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    module_id: uuid.UUID
+    language: str = Field(min_length=2, max_length=16)
+    # item_id -> chosen option index. An item left out counts as wrong.
+    answers: dict[int, int]
+    duration_ms: int = Field(ge=0, le=24 * 60 * 60 * 1000)
+
+
+@app.get("/delivery/{module_id}")
+async def delivery(
+    module_id: uuid.UUID,
+    employee_id: Annotated[str, Depends(authenticated_owner)],
+    preferred: Language = "hi-IN",
+) -> dict[str, Any]:
+    """What this employee watches, and the quiz they then take.
+
+    The language served is the employee's preference only if their cohort is
+    `native`; the control arm gets the English original, which is what makes it
+    a control. The client cannot choose its own arm.
+    """
+    pilot = load_pilot()
+    cohort = assign_cohort(employee_id, pilot)
+    language = delivery_language(employee_id, preferred, pilot)
+
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db:
+            module = await db.get(Module, module_id)
+            if module is None:
+                raise HTTPException(404, "Unknown module")
+            artifacts = (
+                await db.scalars(
+                    select(Artifact).where(
+                        Artifact.module_id == module_id, Artifact.language == language
+                    )
+                )
+            ).all()
+            quiz = (
+                await db.scalars(
+                    select(QuizItem).where(
+                        QuizItem.module_id == module_id,
+                        QuizItem.language == language,
+                        QuizItem.approved.is_(True),
+                    )
+                )
+            ).all()
+    finally:
+        await eng.dispose()
+
+    by_kind = {a.kind: a for a in artifacts}
+    return {
+        "module_id": str(module_id),
+        "title": module.title,
+        "language": language,
+        "cohort": cohort,
+        "pilot_id": pilot["pilot_id"],
+        "video_uri": (by_kind["dubbed_video"].uri if "dubbed_video" in by_kind else None),
+        "captions_uri": (by_kind["captions"].uri if "captions" in by_kind else None),
+        "summary_audio_uri": (by_kind["summary_audio"].uri if "summary_audio" in by_kind else None),
+        # The correct answer is never sent to the browser: it is the one field
+        # that would let an employee pass without watching anything.
+        "quiz": [
+            {
+                "item_id": q.item_id,
+                "seg_id": q.seg_id,
+                "question": q.question,
+                "options": q.options,
+            }
+            for q in quiz
+        ],
+    }
+
+
+@app.post("/delivery/attempts", status_code=201)
+async def record_attempt(
+    body: AttemptIn, employee_id: Annotated[str, Depends(authenticated_owner)]
+) -> dict[str, Any]:
+    """Score the attempt server-side and store it with its cohort."""
+    pilot = load_pilot()
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db, db.begin():
+            items = (
+                await db.scalars(
+                    select(QuizItem).where(
+                        QuizItem.module_id == body.module_id,
+                        QuizItem.language == body.language,
+                        QuizItem.approved.is_(True),
+                    )
+                )
+            ).all()
+            if not items:
+                raise HTTPException(404, "No approved quiz items for this module and language")
+            score, max_score = score_attempt(body.answers, {q.item_id: q.answer for q in items})
+            attempt = QuizAttempt(
+                module_id=body.module_id,
+                language=body.language,
+                employee_id=employee_id,
+                score=score,
+                max_score=max_score,
+                cohort=assign_cohort(employee_id, pilot),
+                duration_ms=body.duration_ms,
+                pilot_id=str(pilot["pilot_id"]),
+            )
+            db.add(attempt)
+    finally:
+        await eng.dispose()
+    return {
+        "score": score,
+        "max_score": max_score,
+        "passed": (score / max_score if max_score else 0.0) >= float(pilot["pass_mark"]),
+        "cohort": attempt.cohort,
+    }
+
+
+@app.get("/reports/comprehension")
+async def comprehension_report(
+    reader: Annotated[str, Depends(authenticated_owner)],
+    module_id: uuid.UUID | None = None,
+    as_markdown: bool = False,
+) -> Any:
+    """Pass rate, mean score and time-on-task by language and by cohort."""
+    from fastapi.responses import PlainTextResponse
+
+    pilot = load_pilot()
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db:
+            query = select(QuizAttempt).where(QuizAttempt.pilot_id == str(pilot["pilot_id"]))
+            if module_id is not None:
+                query = query.where(QuizAttempt.module_id == module_id)
+            rows = (await db.scalars(query)).all()
+    finally:
+        await eng.dispose()
+
+    attempts = [
+        Attempt(
+            module_id=str(r.module_id),
+            language=r.language,
+            employee_id=r.employee_id,
+            score=r.score,
+            max_score=r.max_score,
+            duration_ms=r.duration_ms,
+            cohort=r.cohort,
+        )
+        for r in rows
+    ]
+    report = comprehension(attempts, pilot)
+    if as_markdown:
+        return PlainTextResponse(to_markdown(report), media_type="text/markdown")
+    return report
+
+
+@app.get("/media")
+async def media(
+    uri: Annotated[str, Query(max_length=2000)],
+    employee_id: Annotated[str, Depends(authenticated_owner)],
+) -> Any:
+    """Turn an artifact's storage URI into something a browser can play.
+
+    The URI is checked against the `artifacts` table before anything is signed:
+    without that, this endpoint would sign any object in the bucket for anyone
+    who could name it. Only URIs this app recorded as artifacts are resolvable.
+    """
+    from fastapi.responses import RedirectResponse
+
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db:
+            known = await db.scalar(select(Artifact).where(Artifact.uri == uri))
+    finally:
+        await eng.dispose()
+    if known is None:
+        raise HTTPException(404, "Unknown artifact")
+
+    if not uri.startswith("s3://"):
+        raise HTTPException(
+            503,
+            "This artifact is not in object storage; the deployment has no MinIO configured",
+        )
+    bucket, _, key = uri[len("s3://") :].partition("/")
+    try:
+        from datetime import timedelta
+
+        from training_localizer.storage import client as minio_client
+
+        signed = await run_in_threadpool(
+            minio_client().presigned_get_object, bucket, key, expires=timedelta(minutes=30)
+        )
+    except KeyError as exc:  # missing MINIO_* credentials
+        raise HTTPException(503, "Object storage is not configured") from exc
+    return RedirectResponse(signed, status_code=307)
+
+
+# The UI mount goes LAST, on purpose: a mount at "/" swallows every path that
+# reaches it, so any route declared after it would never be matched. Adding an
+# endpoint below this line is a bug.
 if UI_DIST.is_dir():
     app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="ui")
