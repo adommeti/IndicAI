@@ -1,0 +1,43 @@
+{
+  "id": "uc3-tp-guaranteed_returns-04",
+  "language_mix": "ta-IN",
+  "class": "true_positive",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 2645,
+      "text": "சரி, என்னிடமும் அதே தரவு உள்ளது."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2945,
+      "end_ms": 4822,
+      "text": "ஆம், தெளிவாக இருக்கிறது."
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 5122,
+      "end_ms": 9815,
+      "text": "முதலீடு முழுமையாக பாதுகாப்பானது, வருமானம் உறுதி என்று சொல்லுங்கள்."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 10115,
+      "end_ms": 13016,
+      "text": "சரி, என்னிடமும் அதே தரவு உள்ளது."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 13316,
+      "end_ms": 15620,
+      "text": "இல்லை, முக்கியமானது அதுதான்."
+    }
+  ]
+}

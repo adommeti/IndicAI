@@ -1,0 +1,43 @@
+{
+  "id": "uc3-tp-guaranteed_returns-03",
+  "language_mix": "te-IN",
+  "class": "true_positive",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 1792,
+      "text": "లేదు, ముఖ్యమైనది అదే."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2092,
+      "end_ms": 4908,
+      "text": "ఒక్క నిమిషం, ఫైల్ తెరుస్తున్నాను."
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 5208,
+      "end_ms": 9645,
+      "text": "క్లయింట్‌కి చెప్పండి పన్నెండు శాతం రాబడి గ్యారంటీ, నష్టం అనేది ఉండదు."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 9945,
+      "end_ms": 12249,
+      "text": "లేదు, ముఖ్యమైనది అదే."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12549,
+      "end_ms": 14597,
+      "text": "అవును, స్పష్టంగా ఉంది."
+    }
+  ]
+}

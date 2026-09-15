@@ -1,0 +1,43 @@
+{
+  "id": "uc3-tp-guaranteed_returns-07",
+  "language_mix": "hi-IN",
+  "class": "true_positive",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 1877,
+      "text": "धन्यवाद, कल बात करते हैं।"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2177,
+      "end_ms": 4652,
+      "text": "नमस्ते, आवाज़ ठीक आ रही है?"
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 4952,
+      "end_ms": 10413,
+      "text": "क्लाइंट से कह दो कि बारह प्रतिशत रिटर्न की गारंटी है, नुकसान का सवाल ही नहीं।"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 10713,
+      "end_ms": 12420,
+      "text": "सिस्टम आज थोड़ा धीमा है।"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12720,
+      "end_ms": 14512,
+      "text": "हाँ, बिल्कुल साफ़ है।"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "id": "uc3-clean-001",
+  "language_mix": "en-IN",
+  "class": "clean",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 1707,
+      "text": "Yes, line is clear."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2007,
+      "end_ms": 6530,
+      "text": "Give me a second, the system is slow today."
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 6830,
+      "end_ms": 11950,
+      "text": "The settlement for the Tuesday block broke on the custodian side, I have raised it."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12250,
+      "end_ms": 14213,
+      "text": "Right, that matches what I have."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 14513,
+      "end_ms": 17670,
+      "text": "I will send the summary after this call."
+    }
+  ]
+}

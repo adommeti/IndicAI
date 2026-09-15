@@ -4,6 +4,7 @@ UC1_EVAL_ARGS ?=
 # .claude/rules/eval.md says offline CI uses the checked-in scaffold. The vendor
 # runs are opt-in targets below.
 UC2_EVAL_ARGS ?= --baseline
+UC3_EVAL_ARGS ?= --baseline
 # The uc2/P2 pipeline under the B6 gates. Both extra flags are load-bearing:
 # `--fidelity-source sut` points the judge at this pipeline rather than at
 # uc2/P1's draft references, and `--pre-edit` scores the translate stage before
@@ -16,7 +17,7 @@ UC2_LIVE_ARGS ?= --translate training_localizer.eval_hook:full \
 UC2_SARVAM_ARGS ?= --translate training_localizer.eval_hook:translate_and_enforce \
 	--pre-edit training_localizer.eval_hook:translate_only --baseline
 COMPOSE = docker compose --env-file .env.stack
-.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 ingest-kb voice-test migrate audit \
+.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-diarize ingest-kb voice-test migrate audit \
         check check-quick check-full stack-core stack-obs stack-voice stack-sparse stack-status stack-logs ship plan
 bootstrap:
 	python3 infra/bootstrap.py
@@ -59,8 +60,14 @@ eval-uc2-live:
 	$(UV) run python -m indic_platform.eval.runners.run_uc2 $(UC2_LIVE_ARGS)
 eval-uc2-sarvam:
 	$(UV) run python -m indic_platform.eval.runners.run_uc2 $(UC2_SARVAM_ARGS)
+# uc3: the free baseline (flags nothing) is what CI runs. --diarize measures
+# speaker attribution against live Saaras on the 20 audio items; it prints the
+# estimate (about Rs 4) and refuses to spend without LIVE_API_TESTS=1, so run it
+# as: LIVE_API_TESTS=1 make eval-uc3-diarize
 eval-uc3:
-	$(UV) run python -m indic_platform.eval.runners.run --app uc3
+	$(UV) run python -m indic_platform.eval.runners.run_uc3 $(UC3_EVAL_ARGS)
+eval-uc3-diarize:
+	$(UV) run python -m indic_platform.eval.runners.run_uc3 --diarize --baseline
 ingest-kb:
 	$(UV) run python -m indic_platform.cli ingest-kb
 voice-test:

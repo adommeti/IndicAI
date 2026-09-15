@@ -1,0 +1,43 @@
+{
+  "id": "uc3-tp-guaranteed_returns-01",
+  "language_mix": "en-IN",
+  "class": "true_positive",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 1621,
+      "text": "Sure, speak then."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 1921,
+      "end_ms": 3969,
+      "text": "Yes, line is clear."
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 4269,
+      "end_ms": 9474,
+      "text": "Tell the client the fund is guaranteed to return twelve percent, there is no downside at all."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 9774,
+      "end_ms": 11993,
+      "text": "Give me a second, the system is slow today."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12293,
+      "end_ms": 14256,
+      "text": "Yes, line is clear."
+    }
+  ]
+}

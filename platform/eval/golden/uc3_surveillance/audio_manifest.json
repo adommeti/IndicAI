@@ -1,0 +1,209 @@
+{
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "items": [
+    {
+      "id": "uc3-tp-guaranteed_returns-01",
+      "wav": "audio/uc3-tp-guaranteed_returns-01.wav",
+      "diarization": "audio/uc3-tp-guaranteed_returns-01.diarization.json",
+      "bytes": 641964,
+      "duration_ms": 14256,
+      "turns": 5,
+      "language_mix": "en-IN",
+      "class": "true_positive"
+    },
+    {
+      "id": "uc3-tp-guaranteed_returns-02",
+      "wav": "audio/uc3-tp-guaranteed_returns-02.wav",
+      "diarization": "audio/uc3-tp-guaranteed_returns-02.diarization.json",
+      "bytes": 608096,
+      "duration_ms": 13488,
+      "turns": 5,
+      "language_mix": "hi-IN",
+      "class": "true_positive"
+    },
+    {
+      "id": "uc3-tp-guaranteed_returns-03",
+      "wav": "audio/uc3-tp-guaranteed_returns-03.wav",
+      "diarization": "audio/uc3-tp-guaranteed_returns-03.diarization.json",
+      "bytes": 657016,
+      "duration_ms": 14597,
+      "turns": 5,
+      "language_mix": "te-IN",
+      "class": "true_positive"
+    },
+    {
+      "id": "uc3-tp-guaranteed_returns-04",
+      "wav": "audio/uc3-tp-guaranteed_returns-04.wav",
+      "diarization": "audio/uc3-tp-guaranteed_returns-04.diarization.json",
+      "bytes": 702174,
+      "duration_ms": 15620,
+      "turns": 5,
+      "language_mix": "ta-IN",
+      "class": "true_positive"
+    },
+    {
+      "id": "uc3-tp-guaranteed_returns-06",
+      "wav": "audio/uc3-tp-guaranteed_returns-06.wav",
+      "diarization": "audio/uc3-tp-guaranteed_returns-06.diarization.json",
+      "bytes": 623146,
+      "duration_ms": 13829,
+      "turns": 5,
+      "language_mix": "en-IN",
+      "class": "true_positive"
+    },
+    {
+      "id": "uc3-tp-guaranteed_returns-07",
+      "wav": "audio/uc3-tp-guaranteed_returns-07.wav",
+      "diarization": "audio/uc3-tp-guaranteed_returns-07.diarization.json",
+      "bytes": 653252,
+      "duration_ms": 14512,
+      "turns": 5,
+      "language_mix": "hi-IN",
+      "class": "true_positive"
+    },
+    {
+      "id": "uc3-tp-guaranteed_returns-08",
+      "wav": "audio/uc3-tp-guaranteed_returns-08.wav",
+      "diarization": "audio/uc3-tp-guaranteed_returns-08.diarization.json",
+      "bytes": 664542,
+      "duration_ms": 14768,
+      "turns": 5,
+      "language_mix": "te-IN",
+      "class": "true_positive"
+    },
+    {
+      "id": "uc3-tp-guaranteed_returns-09",
+      "wav": "audio/uc3-tp-guaranteed_returns-09.wav",
+      "diarization": "audio/uc3-tp-guaranteed_returns-09.diarization.json",
+      "bytes": 736046,
+      "duration_ms": 16390,
+      "turns": 5,
+      "language_mix": "ta-IN",
+      "class": "true_positive"
+    },
+    {
+      "id": "uc3-hard-001",
+      "wav": "audio/uc3-hard-001.wav",
+      "diarization": "audio/uc3-hard-001.diarization.json",
+      "bytes": 777440,
+      "duration_ms": 17328,
+      "turns": 5,
+      "language_mix": "en-IN",
+      "class": "hard_negative"
+    },
+    {
+      "id": "uc3-hard-002",
+      "wav": "audio/uc3-hard-002.wav",
+      "diarization": "audio/uc3-hard-002.diarization.json",
+      "bytes": 664544,
+      "duration_ms": 14768,
+      "turns": 5,
+      "language_mix": "hi-IN",
+      "class": "hard_negative"
+    },
+    {
+      "id": "uc3-hard-003",
+      "wav": "audio/uc3-hard-003.wav",
+      "diarization": "audio/uc3-hard-003.diarization.json",
+      "bytes": 777438,
+      "duration_ms": 17329,
+      "turns": 5,
+      "language_mix": "te-IN",
+      "class": "hard_negative"
+    },
+    {
+      "id": "uc3-hard-004",
+      "wav": "audio/uc3-hard-004.wav",
+      "diarization": "audio/uc3-hard-004.diarization.json",
+      "bytes": 811308,
+      "duration_ms": 18096,
+      "turns": 5,
+      "language_mix": "ta-IN",
+      "class": "hard_negative"
+    },
+    {
+      "id": "uc3-clean-001",
+      "wav": "audio/uc3-clean-001.wav",
+      "diarization": "audio/uc3-clean-001.diarization.json",
+      "bytes": 792492,
+      "duration_ms": 17670,
+      "turns": 5,
+      "language_mix": "en-IN",
+      "class": "clean"
+    },
+    {
+      "id": "uc3-clean-002",
+      "wav": "audio/uc3-clean-002.wav",
+      "diarization": "audio/uc3-clean-002.diarization.json",
+      "bytes": 585516,
+      "duration_ms": 12976,
+      "turns": 5,
+      "language_mix": "hi-IN",
+      "class": "clean"
+    },
+    {
+      "id": "uc3-clean-003",
+      "wav": "audio/uc3-clean-003.wav",
+      "diarization": "audio/uc3-clean-003.diarization.json",
+      "bytes": 754862,
+      "duration_ms": 16817,
+      "turns": 5,
+      "language_mix": "te-IN",
+      "class": "clean"
+    },
+    {
+      "id": "uc3-adv-01",
+      "wav": "audio/uc3-adv-01.wav",
+      "diarization": "audio/uc3-adv-01.diarization.json",
+      "bytes": 880982,
+      "duration_ms": 19676,
+      "turns": 6,
+      "language_mix": "en-IN",
+      "class": "adversarial"
+    },
+    {
+      "id": "uc3-adv-02",
+      "wav": "audio/uc3-adv-02.wav",
+      "diarization": "audio/uc3-adv-02.diarization.json",
+      "bytes": 611858,
+      "duration_ms": 13573,
+      "turns": 5,
+      "language_mix": "en-IN",
+      "class": "adversarial"
+    },
+    {
+      "id": "uc3-adv-03",
+      "wav": "audio/uc3-adv-03.wav",
+      "diarization": "audio/uc3-adv-03.diarization.json",
+      "bytes": 963776,
+      "duration_ms": 21554,
+      "turns": 6,
+      "language_mix": "hi-IN",
+      "class": "adversarial"
+    },
+    {
+      "id": "uc3-adv-05",
+      "wav": "audio/uc3-adv-05.wav",
+      "diarization": "audio/uc3-adv-05.diarization.json",
+      "bytes": 937434,
+      "duration_ms": 20956,
+      "turns": 6,
+      "language_mix": "te-IN",
+      "class": "adversarial"
+    },
+    {
+      "id": "uc3-adv-06",
+      "wav": "audio/uc3-adv-06.wav",
+      "diarization": "audio/uc3-adv-06.diarization.json",
+      "bytes": 997644,
+      "duration_ms": 22322,
+      "turns": 6,
+      "language_mix": "ta-IN",
+      "class": "adversarial"
+    }
+  ]
+}

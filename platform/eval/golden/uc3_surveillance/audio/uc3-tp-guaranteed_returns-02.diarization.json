@@ -1,0 +1,43 @@
+{
+  "id": "uc3-tp-guaranteed_returns-02",
+  "language_mix": "hi-IN",
+  "class": "true_positive",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 1963,
+      "text": "एक मिनट, फ़ाइल खोल रहा हूँ।"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2263,
+      "end_ms": 4652,
+      "text": "नमस्ते, आवाज़ ठीक आ रही है?"
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 4952,
+      "end_ms": 8877,
+      "text": "उनसे बोलो पूँजी पूरी तरह सुरक्षित है और रिटर्न निश्चित है।"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 9177,
+      "end_ms": 11908,
+      "text": "नमस्ते, आवाज़ ठीक आ रही है?"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12208,
+      "end_ms": 13488,
+      "text": "हाँ, बिल्कुल साफ़ है।"
+    }
+  ]
+}

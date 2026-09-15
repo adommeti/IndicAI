@@ -1,0 +1,43 @@
+{
+  "id": "uc3-hard-003",
+  "language_mix": "te-IN",
+  "class": "hard_negative",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 2048,
+      "text": "సరే, నా దగ్గర కూడా అదే ఉంది."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2348,
+      "end_ms": 4823,
+      "text": "కాల్ తర్వాత సారాంశం పంపుతాను."
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 5123,
+      "end_ms": 11779,
+      "text": "నా వ్యక్తిగత ట్రేడ్‌కి గత వారం ముందస్తు అనుమతి తీసుకున్నాను, కంప్లయన్స్ ఆమోదించింది."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12079,
+      "end_ms": 14042,
+      "text": "ఇంకేమైనా ఉందా?"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 14342,
+      "end_ms": 17329,
+      "text": "ఒక్క నిమిషం, ఫైల్ తెరుస్తున్నాను."
+    }
+  ]
+}
