@@ -4,7 +4,9 @@ Environment `indicai`, repository `adommeti/IndicAI`, branch `main`, permission 
 `/run-prompt` only exists once this harness is on `main`; before the first session confirm with
 `git ls-tree --name-only origin/main .claude`. Typing `/run-prompt` with no argument always selects
 the correct next row from the table below, so it is the safest kickoff.
-Each session runs one prompt to a merged PR (see `docs/build/RUNBOOK.md`). Rows are in dependency order;
+Start with `/run-prompt program P9-adrs` — no stack, no vendor calls, and it proves the
+branch → gate → PR → CI → merge loop (including whether the session's own merge is attributed to
+your account). Then work the tracks below. Each session runs one prompt to a merged PR (see `docs/build/RUNBOOK.md`). Rows are in dependency order;
 tracks marked with the same letter can run in parallel sessions once their first row is merged.
 
 Standard tail for every kickoff (already implied by the `run-prompt` skill; include it anyway):

@@ -46,16 +46,25 @@ repository and nothing else, so a session started against a branch without `.cla
 answers `Unknown command: /run-prompt`. Confirm with
 `git ls-tree --name-only origin/main .claude` before the first run.
 
-The **first** session must be `program P1-golden-audio`: the UC1 golden WAVs are not in git, so
-every eval-dependent prompt after it would be unmeasurable. `/run-prompt uc1 P3` deliberately
-refuses until that prerequisite is `done` in the plan. `/run-prompt` with no argument always
-picks the correct next prompt, so it is the safest thing to type.
+For the **first** autonomous session, name a cheap prompt explicitly rather than using the
+bare `/run-prompt`. One link in the chain is still untested: the session merges its own PR with
+`gh pr merge`, and whether GitHub attributes that squash commit to your account or to the Claude
+GitHub App installation is not known until a session does it. If it lands as a `[bot]` identity the
+attribution job will (correctly) fail on `main`. Find that out on a documentation PR, not after a
+paid evaluation run.
+
+So start with `program P9-adrs`: it writes ADRs, needs no Docker stack and makes no vendor calls,
+and still exercises the whole loop — branch, gate, report, PR, CI wait, squash merge.
+
+Note that `/run-prompt` with no argument currently selects `uc1/P3-eval`, the most demanding
+prompt in the plan (full stack, 135 live Saaras calls, ~150 Claude calls). Run it second, once the
+loop is proven.
 
 Pick repository `adommeti/IndicAI`, branch `main`, environment `indicai`, permission mode
 **Auto** (fallback: *Accept edits*; both honor the repo's allow/deny rules). Prompt:
 
 ```
-/run-prompt program P1-golden-audio
+/run-prompt program P9-adrs
 Work autonomously to completion. Do not ask me questions; decide, record decisions in the report,
 ship with scripts/ship.sh, and end only when the PR is merged or a hard blocker is recorded in
 docs/build/BLOCKERS.md.
@@ -70,8 +79,7 @@ Work autonomously through the whole range as above.
 
 No-argument form runs the next `pending` prompt whose prerequisites are `done`.
 
-Parallel tracks: start separate sessions for `uc1/…`, `uc2/…`, `uc3/…` once `program/P1-golden-audio`
-is merged; each session works on its own branch and `scripts/ship.sh` rebases before merging.
+Parallel tracks: start separate sessions for `uc1/…`, `uc2/…`, `uc3/…` once the loop is proven; each session works on its own branch and `scripts/ship.sh` rebases before merging.
 
 ## 4. Attribution
 
