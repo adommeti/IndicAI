@@ -8,10 +8,10 @@
 ## Context
 
 The build runs as unattended Claude Code sessions in an ephemeral cloud container: the repository
-is cloned fresh, the container is reclaimed after the session, and nothing a session installs
-survives except what it commits. A session that has to discover its own environment burns its
-budget on setup and fails in ways that look like code failures — a blocked host reads as a vendor
-outage, a cold model download reads as a hung stack.
+is cloned fresh, the container is reclaimed afterwards, and nothing a session installs survives
+except what it commits. A session that has to discover its own environment burns its budget on
+setup and fails in ways that look like code failures — a blocked host reads as a vendor outage, a
+cold model download as a hung stack.
 
 The environment therefore has to be a written contract. The half that lives outside git (the
 cloud environment's network allowlist and variables) must be reproducible from something that is
@@ -35,11 +35,12 @@ and exit 0 — every step is failure-tolerant, because a setup failure must not 
 **3. Environment variables.** `SARVAM_API_KEY`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`,
 `LIVE_API_TESTS=0`, and the commit identity `INDICAI_GIT_NAME` / `INDICAI_GIT_EMAIL`. Keys are
 environment variables, never files in the repository; `.env` and `.env.stack` are gitignored and
-the agent never reads or edits them. `.env.example` is the list of every variable. The Anthropic
-key must be a variable (the proxy attaches no credentials to `api.anthropic.com`); the Sarvam key
-may instead be a host credential for `api.sarvam.ai`, with the variable left as a placeholder so
-the SDK client still constructs. A missing key is not a workaround: live steps are skipped and
-reported blocked.
+the agent never reads or edits them. `.env.example` lists every variable. The Anthropic key must
+be a variable (the proxy attaches no credentials to `api.anthropic.com`); the Sarvam key may
+instead be a host credential for `api.sarvam.ai`, with the variable left as a placeholder so the
+SDK client still constructs. A missing key is not a workaround: live steps are skipped and
+reported blocked. The identity variables are the exception to placeholder tolerance — set to
+placeholder text they override `_lib.sh`'s correct default and fail every commit's attribution.
 
 **4. Memory budget: 16 GB, spent through profiles.** The stack is never started whole. The
 SessionStart hook starts `core` (postgres, redis, qdrant, minio, tei — ≈ 5 GB) in the background;
@@ -52,14 +53,13 @@ a native fallback for when Docker cannot hold it.
   pasted script — rather than from whoever configured the last one.
 - **Positive:** sessions start warm. The expensive, cacheable work (dependency resolution, image
   pulls, the `bge-m3` download) happens once per environment cache, not once per session.
-- **Positive:** the allowlist is a real security boundary, not incidental. Adding a vendor host is
-  a visible change to a documented list.
+- **Positive:** the allowlist is a real boundary: adding a vendor host is a visible change.
 - **Negative:** the snapshot expires (~7 days) and the setup budget is ~5 minutes. If TEI weights
-  are still downloading when a session starts, `scripts/stack.sh wait tei` blocks until healthy —
-  which a session must expect rather than diagnose as a broken stack.
-- **Negative:** 16 GB means no session can verify the whole system at once. Prompts needing voice
-  plus observability plus sparse retrieval must sequence their profiles, and the plan's `verify`
-  column has to be honest about which tier actually ran.
+  are still downloading at session start, `scripts/stack.sh wait tei` blocks until healthy — which
+  a session must expect rather than diagnose as a broken stack.
+- **Negative:** 16 GB means no session verifies the whole system at once. Prompts needing voice,
+  observability and sparse retrieval must sequence their profiles, and the plan's `verify` column
+  has to be honest about which tier actually ran.
 - **Negative:** the allowlist and variables live in the cloud console, so the repository copy can
   drift from reality. The runbook table is the source of truth; a host added in the console
   without a runbook change is a defect.
@@ -71,8 +71,8 @@ a native fallback for when Docker cannot hold it.
 - `scripts/cloud-setup.sh` — the pasted setup script, including the TEI weight warm-up and its
   failure-tolerant structure.
 - `docs/build/RUNBOOK.md` §1 — the environment table (name, network access, variables, setup
-  script) and the notes on key placement; §7 — the troubleshooting table for a blocked host, an
-  unhealthy TEI and a missing Docker daemon.
+  script) and the notes on key and identity placement; §7 — the troubleshooting table for a blocked
+  host, an unhealthy TEI, a missing Docker daemon and a placeholder identity variable.
 - `.env.example` — every variable the platform reads; `.gitignore` — `.env`, `.env.stack`.
 - `scripts/stack.sh:14-27` — the `core` / `obs` / `voice` / `sparse` profiles and `wait`;
   `infra/sparse/README.md` — the native fallback when Docker lacks RAM.
