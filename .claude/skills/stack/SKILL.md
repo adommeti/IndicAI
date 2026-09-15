@@ -34,6 +34,6 @@ never read by the agent — the apps load it via `indic_platform.config.settings
 ## Quick health
 ```
 make stack-status
-curl -fsS localhost:6333/healthz && curl -fsS localhost:8080/health && pg_isready -h localhost -p 5433 -U platform
+curl -fsS localhost:6333/healthz && curl -fsS localhost:8080/health && pg_isready -h localhost -p 15433 -U platform
 make migrate           # alembic upgrade head against the stack
 ```

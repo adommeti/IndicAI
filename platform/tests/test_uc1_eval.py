@@ -89,7 +89,7 @@ async def test_default_batch_and_language_detection(
     (tmp_path / f"{items[0].id}.wav").write_bytes(b"mock-audio")
     report = await evaluate(items[:2], tmp_path)
     batch.assert_awaited_once_with(str(tmp_path / f"{items[0].id}.wav"), language="hi-IN")
-    assert report.metrics["reply_language_match"] == 1
+    assert report.metrics["reply_language_match"] == 0.5  # Devanagari fails the Latn item
     assert report.details[0]["audio_sha256"]
 
 

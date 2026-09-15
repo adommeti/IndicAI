@@ -2,7 +2,7 @@
 name = "helpdesk-agent"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["indic-platform", "fastapi"]
+dependencies = ["indic-platform", "fastapi", "langgraph", "langid", "sqlalchemy[asyncio]"]
 [tool.uv.sources]
 indic-platform = { workspace = true }
 [build-system]
@@ -12,4 +12,4 @@ build-backend = "setuptools.build_meta"
 packages = ["helpdesk_agent"]
 package-dir = { helpdesk_agent = "." }
 [tool.setuptools.package-data]
-helpdesk_agent = ["sample_kb/*.md"]
+helpdesk_agent = ["sample_kb/*.md", "prompts/*.md"]

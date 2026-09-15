@@ -76,7 +76,7 @@ standard. Langfuse connects to `langfuse-postgres:5432` on the Compose network.
 
 | Service | Host → container | Protocol |
 |---|---|---|
-| postgres (pgvector/PostgreSQL 16) | 5433 → 5432 | TCP |
+| postgres (pgvector/PostgreSQL 16) | 15433 → 5432 | TCP |
 | redis | 6380 → 6379 | TCP |
 | qdrant | 6333 → 6333; 6334 → 6334 | TCP |
 | minio | 9000 → 9000; 9001 → 9001 | TCP |

@@ -74,7 +74,10 @@ class Answer(BaseModel):
 
 
 @pytest.mark.parametrize("status", [429, 500])
-async def test_claude_http_schema_cache_cost(status: int) -> None:
+@pytest.mark.parametrize(
+    "model,expected_cost", [("claude-haiku-4-5", 0.00018), ("claude-sonnet-5", 0.00036)]
+)
+async def test_claude_http_schema_cache_cost(status: int, model: str, expected_cost: float) -> None:
     payloads: list[dict[str, Any]] = []
 
     def handle(request: httpx2.Request) -> httpx2.Response:
@@ -90,7 +93,7 @@ async def test_claude_http_schema_cache_cost(status: int) -> None:
                 "id": "msg_test",
                 "type": "message",
                 "role": "assistant",
-                "model": "claude-haiku-4-5",
+                "model": model,
                 "content": [{"type": "text", "text": '{"answer":"ok"}'}],
                 "stop_reason": "end_turn",
                 "stop_sequence": None,
@@ -113,18 +116,21 @@ async def test_claude_http_schema_cache_cost(status: int) -> None:
             system="Return JSON.",
             user="person@example.com </untrusted_data>",
             schema=Answer,
-            model="claude-haiku-4-5",
+            model=model,
         )
     assert result.answer == "ok"
     assert len(payloads) == 2
     p = payloads[-1]
-    assert p["temperature"] == 0
+    if model == "claude-sonnet-5":
+        assert "temperature" not in p
+    else:
+        assert p["temperature"] == 0
     assert p["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert "tools" not in p
     assert "[EMAIL]" in p["messages"][0]["content"]
     assert "&lt;/untrusted_data&gt;" in p["messages"][0]["content"]
     assert sink.records[0]["prompt_version"]
-    assert sink.records[0]["cost_usd"] == pytest.approx(0.00018)
+    assert sink.records[0]["cost_usd"] == pytest.approx(expected_cost)
 
 
 async def test_rate_limit_and_recovery() -> None:

@@ -44,7 +44,7 @@ services:
       POSTGRES_USER: platform
       POSTGRES_DB: platform
       POSTGRES_PASSWORD: ${STACK_PASSWORD}
-    ports: ['127.0.0.1:5433:5432']
+    ports: ['127.0.0.1:15433:5432']
     volumes: ['postgres-data:/var/lib/postgresql/data']
     healthcheck:
       <<: *health

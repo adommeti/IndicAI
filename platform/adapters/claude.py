@@ -39,7 +39,9 @@ class Claude:
                 ],
                 messages=[{"role": "user", "content": wrap_untrusted(redact(user))}],
                 output_format=schema,
-                extra_body={"temperature": 0},
+                # Sonnet 5 rejects legacy sampling controls (SDK MIGRATION.md).
+                # Keep zero on older models; do not claim determinism for Sonnet 5.
+                extra_body={} if model == "claude-sonnet-5" else {"temperature": 0},
                 timeout=self.timeout(model),
             )
             units.update(
