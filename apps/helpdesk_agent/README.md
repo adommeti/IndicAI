@@ -303,7 +303,7 @@ What exists, where it goes, and how long it lives:
 | Transcript text sent to Claude | **Anthropic** (`claude-sonnet-5`), redacted first by `platform/adapters/claude.py` | per Anthropic's API terms |
 | Reply text sent to Bulbul | **Sarvam**, redacted first by `platform/adapters/sarvam_tts.py` | per Sarvam's terms |
 | Synthesized reply audio | LiveKit room → the employee's browser | not persisted here |
-| Latency, units and INR/USD cost | `adapter_calls` rows and Langfuse spans, metadata only — never audio, never transcript text | per the Langfuse retention you configure |
+| Latency, units and INR/USD cost | Langfuse spans, metadata only — never audio, never transcript text. **Not** `adapter_calls`: that table is modelled and migrated but nothing inserts into it, so cost is queryable only in Langfuse today (`docs/build/BLOCKERS.md`) | per the Langfuse retention you configure |
 | LiveKit join tokens | minted locally, signed with `LIVEKIT_API_SECRET` from `.env.stack` | short TTL; a token is a credential to hear the call |
 
 **Sarvam receives the audio itself, unredacted.** `indic_platform.security.redact` is a text
