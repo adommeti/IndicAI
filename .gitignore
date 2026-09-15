@@ -37,3 +37,4 @@ apps/*/ui/dist/
 apps/*/ui/test-results/
 apps/*/ui/playwright-report/
 apps/*/ui/.env.e2e
+apps/*/ui/tsconfig.tsbuildinfo
