@@ -1,8 +1,12 @@
 UV ?= uv
 UC1_EVAL_ARGS ?=
-# uc2/P1 has no pipeline yet, so the default target runs the trivial baseline and
-# the harness gates. uc2/P2 drops --baseline (UC2_EVAL_ARGS=) to gate on B6.
-UC2_EVAL_ARGS ?= --baseline
+# uc2/P2: the default target now runs the real pipeline under the B6 gates.
+# Needs SARVAM_API_KEY and ANTHROPIC_API_KEY, and costs money (the runner prints
+# an estimate first). Two narrower runs:
+#   UC2_EVAL_ARGS='--baseline'  the uc2/P1 trivial baseline, no vendor calls
+#   UC2_EVAL_ARGS='--translate training_localizer.eval_hook:translate_and_enforce --baseline'
+#     Sarvam only: measures terminology adherence without adapt or the judge
+UC2_EVAL_ARGS ?= --translate training_localizer.eval_hook:full --live
 COMPOSE = docker compose --env-file .env.stack
 .PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc3 ingest-kb voice-test migrate audit \
         check check-quick check-full stack-core stack-obs stack-voice stack-sparse stack-status stack-logs ship plan

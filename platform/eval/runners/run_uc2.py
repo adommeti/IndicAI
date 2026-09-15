@@ -556,6 +556,56 @@ def estimate_judge_cost(references: list[Reference], model: str) -> str:
     )
 
 
+def estimate_pipeline_cost(segments: list[Segment], languages: tuple[str, ...]) -> str:
+    """What a full `--translate` pass over the golden set costs in vendor spend.
+
+    uc2/P2's pipeline calls Mayura once per (segment, language) and Claude for
+    adapt and post_edit. Printed before the run so a batch is never a surprise.
+    """
+    pricing = yaml.safe_load(PRICING.read_text())
+    chars = sum(len(s.source_text) for s in segments) * len(languages)
+    mayura = chars / 1000 * float(pricing["models"]["mayura:v1"]["characters"]) * 1000
+    sonnet = pricing["models"].get("claude-sonnet-5")
+    calls = len(segments) * len(languages)  # post_edit, one per segment-language
+    usd = 0.0
+    if sonnet:
+        # adapt batches a module at a time; post_edit is per segment. Rounded up.
+        usd = calls * (900 * sonnet["input_tokens"] + 300 * sonnet["output_tokens"])
+    inr = mayura + usd * float(pricing["fx_inr_per_usd"])
+    return (
+        f"uc2 pipeline: {len(segments)} segments x {len(languages)} languages = {calls} "
+        f"Mayura calls ({chars} chars, Rs {mayura:.2f}) plus Claude adapt/post_edit "
+        f"(~${usd:.2f}); total about Rs {inr:.2f}"
+    )
+
+
+def words_per_second_table() -> str:
+    """Re-derive platform/config/timing.yaml's `words_per_second` from the golden set.
+
+    timing.yaml points here for reproduction: the English word budget adapt works
+    to is the measured target-script expansion divided by the measured speech
+    rate, so both halves are checkable rather than asserted.
+    """
+    import statistics
+
+    timing = load_timing()
+    lines = ["language  chars/en-word  chars/s  ->  en words/s"]
+    references = load_references()
+    for language in LANGUAGES:
+        cps = float(timing["languages"][language]["chars_per_second"])
+        ratios = [
+            len(r.reference_text) / len(r.source_text.split())
+            for r in references
+            if r.language == language and r.source_text.split()
+        ]
+        cpw = statistics.median(ratios)
+        lines.append(
+            f"{language}   {cpw:12.2f}  {cps:7.1f}  ->  {cps / cpw:10.2f} "
+            f"(config: {timing['languages'][language]['words_per_second']})"
+        )
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -571,6 +621,11 @@ def main() -> None:
     )
     parser.add_argument("--output", type=Path, default=Path("docs/eval"))
     parser.add_argument(
+        "--words-per-second",
+        action="store_true",
+        help="Print the measured words-per-second table behind timing.yaml and exit",
+    )
+    parser.add_argument(
         "--live", action="store_true", help="Run the Claude judge (costs money); prints an estimate"
     )
     mode = parser.add_mutually_exclusive_group()
@@ -579,6 +634,10 @@ def main() -> None:
         "--baseline", action="store_true", help="Report B6 failures without gating the harness"
     )
     args = parser.parse_args()
+
+    if args.words_per_second:
+        print(words_per_second_table())
+        return
 
     translate = baseline
     if args.translate:
@@ -593,6 +652,9 @@ def main() -> None:
         references = load_references()
         print(estimate_judge_cost(references, args.judge_model))
         judge = claude_judge(args.judge_model)
+
+    if args.live and args.translate:
+        print(estimate_pipeline_cost(load_segments(), LANGUAGES))
 
     report = evaluate(
         translate=translate,
