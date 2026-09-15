@@ -22,7 +22,7 @@ COMPOSE = docker compose --env-file .env.stack
 ZAMMAD = zammad-postgresql zammad-redis zammad-memcached zammad-init \
 	zammad-railsserver zammad-nginx zammad-scheduler zammad-websocket
 .PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
-        check check-quick check-full stack-core stack-obs stack-voice stack-sparse stack-ticketing stack-status stack-logs ship plan
+        check check-quick check-full test-ticketing stack-core stack-obs stack-voice stack-sparse stack-ticketing stack-status stack-logs ship plan
 bootstrap:
 	python3 infra/bootstrap.py
 up: bootstrap
@@ -50,6 +50,12 @@ check-full:
 	bash scripts/checks.sh --full
 test-integration:
 	$(UV) run pytest -m integration
+# Zammad-dependent tests. They are deselected from `make check` and from CI,
+# which provision no Zammad -- so this target is the only place they run, and a
+# marker with no runner is a test that never executes anywhere. Bring the
+# profile up first: make stack-ticketing && python -m helpdesk_agent.zammad_seed
+test-ticketing:
+	$(UV) run pytest -m ticketing
 ship:
 	bash scripts/ship.sh
 plan:
@@ -62,7 +68,7 @@ lint:
 typecheck:
 	$(UV) run mypy platform apps infra
 test:
-	$(UV) run pytest -m 'not slow and not integration'
+	$(UV) run pytest -m 'not slow and not integration and not ticketing'
 eval-uc1:
 	$(UV) run python -m indic_platform.eval.runners.run_uc1 --chat-only --decide helpdesk_agent.graph:decide $(UC1_EVAL_ARGS)
 eval-uc2:

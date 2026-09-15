@@ -1,4 +1,4 @@
-"""Chat-only helpdesk graph. External actions remain metadata-only stubs."""
+"""Chat helpdesk graph. The act node files the ticket and reads its number back."""
 
 import hashlib
 import html
@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from indic_platform.adapters.runtime import CircuitOpen, status_code
 from indic_platform.adapters.vectorstore import Chunk
@@ -26,6 +26,9 @@ from helpdesk_agent.grounding import (
     is_review_template,
 )
 from helpdesk_agent.retriever import RetrievalResult
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 MODEL = "claude-sonnet-5"
 BASE_SYSTEM = (Path(__file__).parent / "prompts/decide.md").read_text()
@@ -245,6 +248,50 @@ OUTAGE_TICKET = {
 }
 
 
+# A filed ticket reads its number back; a pending file must never imply a number exists.
+TICKET_FILED = {
+    "en-IN": (
+        "Your ticket has been created. The ticket number is {number}. "
+        "Please quote it when you follow up; the support team will contact you."
+    ),
+    "hi-IN": (
+        "आपका टिकट दर्ज हो गया है। टिकट संख्या {number} है। "
+        "कृपया आगे बातचीत में यही संख्या बताइए; सहायता टीम आपसे संपर्क करेगी।"
+    ),
+    "hi-Latn": (
+        "Aapka ticket darj ho gaya hai. Ticket number {number} hai. "
+        "Kripya aage baat karte samay yahi number bataiye; support team aapse sampark karegi."
+    ),
+    "te-IN": (
+        "మీ టికెట్ నమోదైంది. టికెట్ నంబర్ {number}. "
+        "దయచేసి తదుపరి సంప్రదింపులలో ఈ నంబర్ చెప్పండి; సహాయ బృందం మిమ్మల్ని సంప్రదిస్తుంది."
+    ),
+    "ta-IN": (
+        "உங்கள் கோரிக்கை பதிவு செய்யப்பட்டது. கோரிக்கை எண் {number}. "
+        "மேலும் தொடர்பு கொள்ளும்போது இந்த எண்ணைக் குறிப்பிடுங்கள்; உதவிக் குழு உங்களைத் தொடர்பு கொள்ளும்."
+    ),
+}
+TICKET_PENDING = {
+    "en-IN": (
+        "Your request has been recorded. The ticket number is not ready yet; "
+        "it will be emailed to you as soon as the ticket is created."
+    ),
+    "hi-IN": (
+        "आपका अनुरोध दर्ज कर लिया गया है। टिकट संख्या अभी तैयार नहीं है; "
+        "टिकट बनते ही संख्या आपको ईमेल से भेज दी जाएगी।"
+    ),
+    "hi-Latn": (
+        "Aapka anurodh darj kar liya gaya hai. Ticket number abhi taiyar nahi hai; "
+        "ticket bante hi number aapko email se bhej diya jayega."
+    ),
+    "te-IN": ("మీ అభ్యర్థన నమోదైంది. టికెట్ నంబర్ ఇంకా సిద్ధంగా లేదు; టికెట్ తయారైన వెంటనే నంబర్ మీకు ఇమెయిల్‌లో పంపబడుతుంది."),
+    "ta-IN": (
+        "உங்கள் கோரிக்கை பதிவு செய்யப்பட்டது. கோரிக்கை எண் இன்னும் தயாராகவில்லை; "
+        "எண் உருவானதும் அது உங்களுக்கு மின்னஞ்சலில் அனுப்பப்படும்."
+    ),
+}
+
+
 def fallback(state: TurnState, *, evidence: str | None = None, outage: bool = False) -> Decision:
     language = state["language"]
     if language == "hi-IN" and latin_user(state["utterance"]):
@@ -271,9 +318,14 @@ class Agent:
         retrieve: Callable[[str, str], Awaitable[RetrievalResult]],
         structured: Callable[..., Awaitable[Decision]],
         grounder: TicketGrounder | None = None,
+        db: "AsyncSession | None" = None,
+        turn_index: int = 0,
     ) -> None:
         self.retrieve, self.structured = retrieve, structured
         self.grounder = grounder
+        # Ticket filing is idempotent per (session_id, turn_index); the caller owns the
+        # transaction and therefore supplies both. Without a session the act node files nothing.
+        self.db, self.turn_index = db, turn_index
 
     async def run(
         self,
@@ -407,20 +459,59 @@ class Agent:
             timings["guard"] = timings.get("guard", 0) + (time.perf_counter() - start) * 1000
             return {"decision": decision}
 
-        def act_node(s: TurnState) -> dict[str, Any]:
+        async def act_node(s: TurnState) -> dict[str, Any]:
             start = time.perf_counter()
-            logging.getLogger(__name__).info("helpdesk ticket action stub; no ticket submitted")
-            timings["act"] = (time.perf_counter() - start) * 1000
+            log = logging.getLogger(__name__)
             decision = s["decision"]
             assert decision is not None
             language = s["language"]
             if language == "hi-IN" and latin_user(s["utterance"]):
                 language = "hi-Latn"
-            replies = OUTAGE_TICKET if metadata.get("vendor_unavailable") else ESCALATE
-            return {
-                "ticket_id": None,
-                "decision": decision.model_copy(update={"reply_text": replies[language]}),
-            }
+
+            def reply(text: str, ticket_id: str | None) -> dict[str, Any]:
+                timings["act"] = (time.perf_counter() - start) * 1000
+                return {
+                    "ticket_id": ticket_id,
+                    "decision": decision.model_copy(update={"reply_text": text}),
+                }
+
+            db, ticket = self.db, decision.ticket
+            if db is None or ticket is None:
+                log.info("helpdesk ticketing not configured; no ticket submitted")
+                replies = OUTAGE_TICKET if metadata.get("vendor_unavailable") else ESCALATE
+                return reply(replies[language], None)
+
+            # Imported here: ticketing imports Ticket from this module.
+            from helpdesk_agent import ticketing
+
+            try:
+                try:
+                    filed = await ticketing.create_ticket(
+                        db,
+                        ticket,
+                        session_id=uuid.UUID(s["session_id"]),
+                        turn_index=self.turn_index,
+                        employee_id=s["employee_id"],
+                    )
+                except ticketing.TicketingUnavailable:
+                    # create_ticket normally absorbs this into a pending row. If it escapes,
+                    # the ticket is still queued, so promise the number by email - never a number.
+                    log.warning("ticketing unavailable; ticket number will follow by email")
+                    number, pending, replay = None, True, False
+                else:
+                    number, pending = filed.ticket_number, filed.pending
+                    replay = filed.idempotent_replay
+            except Exception:
+                # Any other failure is a defect, not an outage. Do not tell the employee that a
+                # ticket exists, and do not fabricate a pending marker that suppresses the retry.
+                timings["act"] = (time.perf_counter() - start) * 1000
+                log.exception("helpdesk ticket filing failed")
+                raise
+            metadata["ticket"] = {"pending": pending, "idempotent_replay": replay}
+            if pending or not number:
+                return reply(TICKET_PENDING[language], None)
+            metadata["ticket"]["number"] = number
+            return reply(TICKET_FILED[language].format(number=number), number)
 
         graph = StateGraph(TurnState)
         graph.add_node("retrieve", cast(Any, retrieve_node))

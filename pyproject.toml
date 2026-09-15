@@ -37,4 +37,5 @@ asyncio_mode = "auto"
 markers = [
   "slow: live vendor calls; requires LIVE_API_TESTS=1",
   "integration: needs the local Docker stack (postgres, redis, qdrant, minio, tei)",
+  "ticketing: needs the `ticketing` compose profile (Zammad); not provisioned in CI",
 ]
