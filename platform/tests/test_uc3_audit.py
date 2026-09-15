@@ -533,13 +533,31 @@ async def test_ten_thousand_rows_verify_in_under_ten_seconds() -> None:
 
         async with factory() as db:
             began = time.perf_counter()
-            result = await audit.verify_chain(db, "analysis_runs")
+            # No anchor comparison: this measures the walk, and an anchor
+            # written by some earlier test would make the number mean
+            # something else.
+            result = await audit.verify_chain(db, "analysis_runs", check_anchor=False)
             elapsed = time.perf_counter() - began
 
         print(f"\nchain_verify: {result.rows} rows in {elapsed:.2f}s")
         assert result.rows >= 10_000
         assert result.ok, result.reason
         assert elapsed < 10.0, f"{result.rows} rows took {elapsed:.2f}s"
+
+        # Remove exactly the rows this test appended, restoring the head it
+        # started from. Left behind, they accumulate on any database that is
+        # not thrown away after the run, and the measured number drifts upward
+        # until the criterion fails for a reason that has nothing to do with
+        # the code. Deleting the tail is safe precisely because it *is* the
+        # tail: the chain returns to the state it was in before.
+        async with factory() as db:
+            await db.execute(
+                text("delete from analysis_runs where id = any(:ids)"),
+                {"ids": [r["id"] for r in rows]},
+            )
+            await db.commit()
+        async with factory() as db:
+            assert (await audit.head(db, "analysis_runs")) == start_head
     finally:
         await engine.dispose()
 
@@ -570,5 +588,188 @@ async def test_concurrent_appends_produce_a_chain_not_a_fork() -> None:
             result = await audit.verify_chain(db, "analysis_runs")
         assert result.ok, f"{result.reason} at seq {result.first_break_seq}"
         assert result.rows >= 12
+    finally:
+        await engine.dispose()
+
+
+# --- the alert path ----------------------------------------------------------
+#
+# These are pure tests on purpose. The previous version of `emit_chain_metric`
+# built a record the sink could not read and raised KeyError on every call, and
+# because nothing exercised it the defect survived a green CI: the alert for a
+# broken audit chain had never fired once. A control nobody has run is a claim,
+# not a control.
+
+
+def _sink_stub(calls: list[dict[str, object]]) -> object:
+    """A sink that reads exactly the keys the real LangfuseSink reads."""
+
+    class Stub:
+        def emit(self, record: dict[str, object]) -> None:
+            # Mirror platform/obs/langfuse.py: any missing key is a KeyError
+            # here for the same reason it would be there.
+            _ = (
+                f"{record['vendor']}.{record['capability']}",
+                record["model"],
+                record["units"],
+                record["cost_usd"],
+            )
+            calls.append(dict(record))
+
+    return Stub()
+
+
+def test_the_metric_record_is_one_the_real_sink_can_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "indic_platform.obs.langfuse.default_sink", lambda: _sink_stub(calls), raising=True
+    )
+    summary = audit.summarise(
+        [
+            audit.ChainResult(table="analysis_runs", rows=3, ok=True),
+            audit.ChainResult(table="flags", rows=1, ok=False, reason="row was edited"),
+        ]
+    )
+    assert audit.emit_chain_metric(summary) is True
+    (record,) = calls
+    assert record["value"] == 1
+    assert record["status"] == "broken"
+    assert record["tables"] == {"analysis_runs": True, "flags": False}
+
+
+def test_the_metric_never_carries_row_content_or_the_head_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A published head is what a tamperer needs in order to reproduce it."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "indic_platform.obs.langfuse.default_sink", lambda: _sink_stub(calls), raising=True
+    )
+    result = audit.ChainResult(table="flags", rows=2, ok=True)
+    result.head_hash = "a" * 64
+    audit.emit_chain_metric(audit.summarise([result]))
+    (record,) = calls
+    assert "a" * 64 not in json.dumps(record, default=str)
+
+
+def test_a_monitoring_outage_does_not_stop_the_verification_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Broken:
+        def emit(self, record: dict[str, object]) -> None:
+            raise RuntimeError("langfuse unreachable")
+
+    monkeypatch.setattr("indic_platform.obs.langfuse.default_sink", lambda: Broken(), raising=True)
+    summary = audit.summarise([audit.ChainResult(table="flags", rows=1, ok=True)])
+    # Returns False rather than raising: the job still logs, which is the
+    # channel that works when the metrics vendor does not.
+    assert audit.emit_chain_metric(summary) is False
+
+
+def test_the_anchor_table_is_declared_where_alembic_can_see_it() -> None:
+    """Registered from `audit.py` alone, `alembic check` proposes to drop it."""
+    from indic_platform.db.models import Base
+
+    assert audit.ANCHOR_TABLE_NAME in Base.metadata.tables
+    assert audit.ANCHORS is Base.metadata.tables[audit.ANCHOR_TABLE_NAME]
+    assert audit.ANCHOR_TABLE_NAME not in audit.CHAINED
+
+
+@pytest.mark.integration
+async def test_a_truncated_tail_is_detected_although_the_chain_still_walks_clean() -> None:
+    """The hole the walk cannot see on its own.
+
+    Delete rows off the end and what remains is a perfectly valid chain: every
+    `prev_hash` matches, every `row_hash` recomputes. Only the anchor knows the
+    chain used to be longer. This is the realistic shape of an audit-trail
+    attack -- nobody deletes the head, they delete what they did last night.
+    """
+    from sqlalchemy import text
+
+    _skip_without_db()
+    engine, factory = await _engine()
+    try:
+        call_id = await _seed_call(factory)
+        async with factory() as db:
+            kept = await audit.append(db, _run(call_id))
+            await db.commit()
+
+        # Anchor the chain as the nightly job would.
+        async with factory() as db:
+            before = await audit.verify_chain(db, "analysis_runs")
+            assert before.ok
+            await audit.write_anchor(
+                db, "analysis_runs", head_hash=before.head_hash, rows=before.rows
+            )
+            await db.commit()
+
+        async with factory() as db:
+            doomed = await audit.append(db, _run(call_id))
+            await db.commit()
+            doomed_id = doomed.id
+
+        async with factory() as db:
+            # Superuser truncation of the tail.
+            await db.execute(text("delete from analysis_runs where id = :id"), {"id": doomed_id})
+            await db.commit()
+
+            # Without the anchor this reads as clean, which is the whole point.
+            walk_only = await audit.verify_chain(db, "analysis_runs", check_anchor=False)
+            assert walk_only.ok, walk_only.reason
+
+            # With it, the missing rows are visible.
+            anchored = await audit.verify_chain(db, "analysis_runs")
+            assert not anchored.ok
+            assert anchored.anchor_ok is False
+            assert "removed" in anchored.reason or "rewritten" in anchored.reason
+            assert kept.id
+
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.integration
+async def test_the_nightly_job_only_moves_the_anchor_forward_on_a_clean_chain() -> None:
+    """An anchor updated over a break would launder the break into the baseline."""
+    from sqlalchemy import text
+
+    _skip_without_db()
+    engine, factory = await _engine()
+    try:
+        call_id = await _seed_call(factory)
+        async with factory() as db:
+            row = await audit.append(db, _run(call_id))
+            await db.commit()
+            row_id = row.id
+
+        clean = await audit.run_chain_verify(lambda: factory())
+        assert clean["ok"], clean
+        assert "analysis_runs" in clean["anchors_updated"]
+
+        async with factory() as db:
+            anchor_before = await audit.read_anchor(db, "analysis_runs")
+        assert anchor_before is not None
+
+        async with factory() as db:
+            await db.execute(
+                text("update analysis_runs set model = 'tampered' where id = :id"),
+                {"id": row_id},
+            )
+            await db.commit()
+
+        broken = await audit.run_chain_verify(lambda: factory())
+        assert not broken["ok"]
+        assert "analysis_runs" not in broken["anchors_updated"]
+
+        async with factory() as db:
+            anchor_after = await audit.read_anchor(db, "analysis_runs")
+        assert anchor_after is not None
+        assert anchor_after.head_hash == anchor_before.head_hash
+
+        # Put the row back so later tests in this session see a clean chain.
+        async with factory() as db:
+            await db.execute(text("delete from analysis_runs where id = :id"), {"id": row_id})
+            await db.commit()
     finally:
         await engine.dispose()

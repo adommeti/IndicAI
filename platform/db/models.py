@@ -7,12 +7,14 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     CheckConstraint,
+    Column,
     DateTime,
     ForeignKey,
     Identity,
     Index,
     Numeric,
     String,
+    Table,
     Text,
     func,
     text,
@@ -314,3 +316,26 @@ class Disposition(Base):
             name="ck_dispositions_disposition",
         ),
     )
+
+
+# The out-of-chain anchor for the tables above (0009_uc3_chain_anchor).
+#
+# Declared here, with every other table, for one blunt reason: alembic's env.py
+# builds `target_metadata` from this module's `Base` and nothing else. A table
+# registered only from `comms_surveillance.audit` is a table `alembic check`
+# never sees, so it finds one in the database with no model behind it and
+# proposes to drop the evidence store. Core `Table` rather than a mapped class
+# because the verification job reaches it through core select/insert and there
+# is no object to map.
+#
+# Deliberately not chained: chaining the anchor would put the evidence back
+# inside the thing it is evidence about.
+audit_chain_anchors = Table(
+    "audit_chain_anchors",
+    Base.metadata,
+    Column("table_name", String(64), primary_key=True),
+    Column("head_hash", String(64), nullable=False),
+    Column("row_count", BigInteger, nullable=False),
+    Column("recorded_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("row_count >= 0", name="ck_audit_chain_anchors_row_count"),
+)
