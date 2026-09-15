@@ -56,7 +56,10 @@ def _reach_the_scope(monkeypatch: pytest.MonkeyPatch, session: type) -> None:
     The URL is never connected to -- `create_async_engine` is lazy -- so a syntactically
     valid DSN pointing nowhere is enough, and is honest about needing no server.
     """
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://unused:unused@127.0.0.1:1/unused")
+    # No userinfo in the DSN: a `user:password@` shape here is not a credential but it
+    # reads as one to the secret scanner, and a test fixture is a bad reason to teach
+    # anyone to add a pragma next to something that looks like a password.
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://127.0.0.1:1/unused")
     monkeypatch.setattr(persistence, "LangfuseSink", _Sink)
     monkeypatch.setattr(persistence, "default_sink", _Sink)
     monkeypatch.setattr(persistence, "AsyncSession", session)
