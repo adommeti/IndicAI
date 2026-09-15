@@ -40,6 +40,7 @@ description intact to be useful to the IT queue.
 """
 
 import asyncio
+import functools
 import logging
 import os
 import random
@@ -147,13 +148,23 @@ async def _backoff(attempt: int) -> None:
     await asyncio.sleep(RETRY_BASE_S * 2**attempt * random.uniform(0.5, 1.5))
 
 
-async def _get(http: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
-    """A GET, retried on transient failures. Safe to repeat; nothing is created."""
-    for attempt in range(ATTEMPTS):
+async def _get(
+    http: httpx.AsyncClient, url: str, *, attempts: int = ATTEMPTS, **kwargs: Any
+) -> httpx.Response:
+    """A GET, retried on transient failures. Safe to repeat; nothing is created.
+
+    `attempts` exists because this is also called from inside `file_once`'s own
+    retry loop. Left at the default there, the two ladders multiply: three POST
+    attempts each preceded by a three-attempt lookup, every one of them able to
+    burn the full read timeout against a Zammad that accepts connections and
+    then hangs. That is minutes of a turn held open on the reservation row's
+    lock, to produce a reply whose entire purpose is to be fast and honest.
+    """
+    for attempt in range(attempts):
         try:
             return await _send(http, "GET", url, **kwargs)
         except TicketingUnavailable:
-            if attempt == ATTEMPTS - 1:
+            if attempt == attempts - 1:
                 raise
             await _backoff(attempt)
     raise AssertionError("unreachable")
@@ -180,7 +191,9 @@ def _tickets(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
-async def find_filed(http: httpx.AsyncClient, key: str) -> tuple[str, int] | None:
+async def find_filed(
+    http: httpx.AsyncClient, key: str, *, attempts: int = ATTEMPTS
+) -> tuple[str, int] | None:
     """The ticket already filed for `key`, if Zammad holds one.
 
     The match is on the `source_session_id` custom field, never on the free-text
@@ -244,16 +257,34 @@ async def file_once(
 ) -> tuple[str, int]:
     """Create the ticket, or adopt the one a previous attempt already created.
 
-    The search on every attempt after the first is the point. A POST whose
+    The search runs before **every** POST, the first one included. A POST whose
     response never arrived may or may not have committed at Zammad, and blindly
     reposting turns one transient network fault into two tickets in the IT queue.
+
+    Searching only on retries was not enough, and the hole is not hypothetical:
+    the reservation row lives in the *turn's* transaction, and `create_ticket`
+    releases the key when that transaction rolls back. If it aborts after Zammad
+    committed -- a voice client disconnecting mid-turn, a failure persisting the
+    `Turn` row, a COMMIT that fails -- the row disappears while the ticket
+    survives. The retry then computes the same `turn_index` (the `Turn` insert
+    rolled back too, so the count is unchanged), takes a fresh reservation, and
+    arrives here at `attempt == 0`. Without this lookup that is a second ticket
+    in the IT queue for one request, and the employee is read back the second
+    number. A pre-ship review demonstrated exactly that: two tickets, no
+    searches.
+
+    The cost is one GET per filed ticket. Ticket filing is the rare branch of a
+    turn, and a duplicate in a compliance-adjacent queue is worth far more than
+    a lookup.
+
+    `attempts=1` on the lookup deliberately: this loop is already the retry, and
+    a nested ladder multiplies into minutes against a hung Zammad.
     """
     last: TicketingUnavailable | None = None
     for attempt in range(ATTEMPTS):
-        if attempt:
-            existing = await find_filed(http, key)
-            if existing is not None:
-                return existing
+        existing = await find_filed(http, key, attempts=1)
+        if existing is not None:
+            return existing
         try:
             response = await _send(
                 http,
@@ -333,7 +364,7 @@ async def create_ticket(
         row.last_error = type(exc).__name__
         await session.flush()
         await savepoint.commit()
-        enqueue(session_id, turn_index)
+        await enqueue(session_id, turn_index)
         log.warning("zammad unavailable; turn %s queued for retry", key)
         # No number exists. Saying so is the whole point of this branch.
         return Filed(None, True, False)
@@ -378,10 +409,23 @@ TASK = {
 }
 
 
-def enqueue(session_id: uuid.UUID, turn_index: int) -> None:
-    """Hand the turn to the worker. A broker outage must not fail the turn."""
+async def enqueue(session_id: uuid.UUID, turn_index: int) -> None:
+    """Hand the turn to the worker. A broker outage must not fail the turn.
+
+    `apply_async` is synchronous kombu socket I/O, so calling it directly from
+    the event loop stalls every other turn in the process for the broker's
+    connect timeout and publish-retry policy. That cost lands exactly when the
+    system is already degraded -- this is the fallback path -- so it runs on a
+    worker thread instead.
+    """
     try:
-        file_pending_ticket.apply_async((str(session_id), turn_index), countdown=ENQUEUE_DELAY_S)
+        await asyncio.to_thread(
+            functools.partial(
+                file_pending_ticket.apply_async,
+                (str(session_id), turn_index),
+                countdown=ENQUEUE_DELAY_S,
+            )
+        )
     except Exception:
         # The row stays `pending` and is still the record of what is owed.
         log.exception("could not enqueue the pending ticket for turn %s:%s", session_id, turn_index)

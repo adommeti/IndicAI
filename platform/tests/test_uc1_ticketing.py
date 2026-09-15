@@ -588,9 +588,16 @@ async def test_a_dropped_response_does_not_open_a_second_ticket(
         session_of(db), TICKET, session_id=session_id, turn_index=0, employee_id="emp-1"
     )
 
+    key = ticketing.source_key(session_id, 0)
     assert len(fake.created) == 1, "the second attempt must adopt, not create"
     assert filed == Filed(NUMBER, False, False)
-    assert fake.searches == [ticketing.source_key(session_id, 0)]
+    # Two searches, not one: the lookup runs before EVERY post, the first
+    # included. Searching only on retries left a real hole -- the reservation
+    # row lives in the turn's transaction, so a rollback after Zammad committed
+    # deletes the row, frees the key, and the retry arrives at attempt 0 with no
+    # memory of the ticket it already created. This assertion is what keeps the
+    # first-post lookup from being optimised away again.
+    assert fake.searches == [key, key]
 
 
 # --- against a real Postgres --------------------------------------------------
@@ -742,3 +749,40 @@ async def test_a_real_zammad_accepts_the_payload_and_finds_it_again() -> None:
                 break
             await asyncio.sleep(1)
         assert found == (number, ticket_id)
+
+
+async def test_a_rolled_back_turn_does_not_file_a_second_ticket(
+    queue: Enqueued, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The duplicate a pre-ship review demonstrated: two tickets, no searches.
+
+    The reservation row lives in the *turn's* transaction. If that transaction
+    aborts after Zammad has committed -- a voice client disconnecting mid-turn,
+    a failure persisting the `Turn` row, a COMMIT that fails -- the row is gone
+    while the ticket is not. The retry recomputes the same `turn_index`, because
+    the `Turn` insert rolled back too and the count is unchanged, so it takes a
+    fresh reservation and reaches `file_once` at `attempt == 0`.
+
+    Nothing in the database can catch this: the key was released on purpose, so
+    a corrected configuration can refile. Only Zammad knows, and only if it is
+    asked before the first post.
+    """
+    fake = FakeZammad()
+    monkeypatch.setattr(ticketing, "client", fake.client)
+    session_id = uuid.uuid4()
+
+    first = await create_ticket(
+        session_of(FakeDb()), TICKET, session_id=session_id, turn_index=0, employee_id="emp-1"
+    )
+    assert first.ticket_number is not None
+    assert len(fake.created) == 1
+
+    # The turn rolls back: a brand-new database with no reservation row, exactly
+    # what the retry sees. Same session, same turn_index.
+    second = await create_ticket(
+        session_of(FakeDb()), TICKET, session_id=session_id, turn_index=0, employee_id="emp-1"
+    )
+
+    assert len(fake.created) == 1, "the retry filed a second ticket for one request"
+    assert second.ticket_number == first.ticket_number
+    assert not second.pending
