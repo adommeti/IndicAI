@@ -101,14 +101,38 @@ async def append(session: AsyncSession, row: Any) -> Any:
         raise ValueError(f"{table} is not a chained table")
     await session.execute(text("select pg_advisory_xact_lock(:key)"), {"key": LOCK_KEYS[table]})
 
-    if row.created_at is None:
-        row.created_at = datetime.now(UTC)
+    materialise_defaults(row)
     previous = await head(session, table)
     row.prev_hash = previous
     row.row_hash = row_hash(previous, row_payload(row))
     session.add(row)
     await session.flush()
     return row
+
+
+def materialise_defaults(row: Any) -> None:
+    """Apply the column defaults *before* hashing, not during the flush.
+
+    SQLAlchemy fills Python-side defaults (`default=uuid.uuid4`, `default=""`)
+    when it emits the INSERT -- which is after `append` has computed the hash.
+    The row that got hashed therefore had `id=None` and the row that got stored
+    had a UUID, so every chain broke at its first row with "row_hash does not
+    match the row content". It looked exactly like tampering, which is the worst
+    way for this bug to present: the control crying wolf teaches people to
+    ignore it.
+
+    Assigning them here means the hash covers the row that is actually written.
+    """
+    if getattr(row, "created_at", None) is None:
+        row.created_at = datetime.now(UTC)
+    for column in row.__table__.columns:
+        if column.name in NOT_HASHED or getattr(row, column.name, None) is not None:
+            continue
+        default = column.default
+        if default is None:
+            continue
+        value = default.arg
+        setattr(row, column.name, value(None) if callable(value) else value)
 
 
 @dataclass

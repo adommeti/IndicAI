@@ -101,6 +101,60 @@ def test_summarise_reports_a_break_count_a_monitor_can_alert_on() -> None:
     assert audit.summarise(broken)["ok"] is False
 
 
+def test_column_defaults_are_applied_before_the_row_is_hashed() -> None:
+    """The bug CI caught, and the reason a pure test now guards it.
+
+    SQLAlchemy fills Python-side defaults (`default=uuid.uuid4`, `default=""`)
+    when it emits the INSERT, which is *after* `append` computes the hash. The
+    row that got hashed had `id=None`; the row that got stored had a UUID. Every
+    chain broke at its first row with "row_hash does not match the row content"
+    -- indistinguishable from real tampering, which is the worst way for this to
+    present: a control that cries wolf is a control people learn to ignore.
+
+    This needs no database: it is a property of the object, and the whole point
+    is that it should never have taken a Postgres run to find.
+    """
+    from indic_platform.db.models import AnalysisRun, Disposition, Flag
+
+    for model, kwargs in (
+        (AnalysisRun, {"call_id": uuidlib.uuid4(), "stage": "triage", "model": "m"}),
+        (
+            Flag,
+            {
+                "call_id": uuidlib.uuid4(),
+                "run_id": uuidlib.uuid4(),
+                "category": "conduct",
+                "severity": "low",
+                "evidence_span": "x",
+            },
+        ),
+        (
+            Disposition,
+            {"flag_id": uuidlib.uuid4(), "disposition": "confirmed", "reviewer_id": "r"},
+        ),
+    ):
+        row = model(**kwargs)
+        audit.materialise_defaults(row)
+        unset = [
+            column.name
+            for column in row.__table__.columns
+            if column.name not in audit.NOT_HASHED and getattr(row, column.name, None) is None
+        ]
+        assert not unset, f"{model.__tablename__} would hash a row missing {unset}"
+
+
+def test_hashing_the_same_row_twice_agrees_after_defaults_are_applied() -> None:
+    """The round trip the chain depends on: hash, store, read back, re-hash."""
+    from indic_platform.db.models import AnalysisRun
+
+    row = AnalysisRun(call_id=uuidlib.uuid4(), stage="triage", model="m")
+    audit.materialise_defaults(row)
+    first = audit.row_hash("", audit.row_payload(row))
+    # A second call must change nothing: defaults are applied once, not re-drawn.
+    audit.materialise_defaults(row)
+    assert audit.row_hash("", audit.row_payload(row)) == first
+
+
 # --- stack: the acceptance criteria ----------------------------------------------
 
 
@@ -148,29 +202,40 @@ async def test_a_superuser_edit_is_detected_by_chain_verify() -> None:
     """The acceptance criterion: the tamper test.
 
     A direct UPDATE, bypassing the application entirely, must show up as a
-    break. This is the whole reason the chain exists — the app role cannot
-    UPDATE (see the next test), so the threat model is somebody with more
-    privilege, and against them detection is the control.
+    break. That is the whole reason the chain exists -- the app role cannot
+    UPDATE (see below), so the threat model is somebody with more privilege, and
+    against them detection is the control.
+
+    Everything happens inside one transaction that is rolled back. A tamper test
+    that commits leaves the shared chain broken for every test that runs after
+    it, which is how a single deliberate break turns into six spurious failures.
     """
-    from indic_platform.db.models import AnalysisRun
+    from indic_platform.db.models import AnalysisRun, Call
     from sqlalchemy import select, text
 
     _skip_without_db()
     engine, factory = await _engine()
     try:
-        call_id = await _seed_call(factory)
         async with factory() as db:
+            call_id = uuidlib.uuid4()
+            db.add(
+                Call(
+                    id=call_id,
+                    source_uri="s3://t/x.wav",
+                    source_key=f"audit/{call_id}.wav",
+                    status="transcribed",
+                )
+            )
+            await db.flush()
             for stage in ("triage", "deep_analysis", "triage"):
                 await audit.append(db, _run(call_id, stage))
-            await db.commit()
+            await db.flush()
 
-        async with factory() as db:
             before = await audit.verify_chain(db, "analysis_runs")
-        assert before.ok, before.reason
+            assert before.ok, before.reason
 
-        # Tamper: change a stored field without touching the hashes, exactly as
-        # somebody editing the audit trail by hand would.
-        async with factory() as db:
+            # Tamper: change a stored field without touching the hashes, exactly
+            # as somebody editing the audit trail by hand would.
             target = (
                 await db.execute(
                     select(AnalysisRun.id)
@@ -184,13 +249,21 @@ async def test_a_superuser_edit_is_detected_by_chain_verify() -> None:
                 text("update analysis_runs set model = :m where id = :i"),
                 {"m": "some-other-model", "i": target},
             )
-            await db.commit()
 
-        async with factory() as db:
             after = await audit.verify_chain(db, "analysis_runs")
-        assert after.ok is False
-        assert after.first_break_id == str(target)
-        assert "edited" in after.reason
+            assert after.ok is False
+            assert after.first_break_id == str(target)
+            assert "edited" in after.reason
+
+            # Reverting the edit makes the chain verify again: the break is a
+            # property of the content, not a latch that stays set.
+            await db.execute(
+                text("update analysis_runs set model = :m where id = :i"),
+                {"m": "claude-sonnet-5", "i": target},
+            )
+            assert (await audit.verify_chain(db, "analysis_runs")).ok
+
+            await db.rollback()
     finally:
         await engine.dispose()
 
@@ -198,19 +271,28 @@ async def test_a_superuser_edit_is_detected_by_chain_verify() -> None:
 @pytest.mark.integration
 async def test_a_deleted_row_is_detected_as_a_break() -> None:
     """Deletion breaks the link, not the row: the *next* row is where it shows."""
-    from indic_platform.db.models import AnalysisRun
+    from indic_platform.db.models import AnalysisRun, Call
     from sqlalchemy import select, text
 
     _skip_without_db()
     engine, factory = await _engine()
     try:
-        call_id = await _seed_call(factory)
         async with factory() as db:
+            call_id = uuidlib.uuid4()
+            db.add(
+                Call(
+                    id=call_id,
+                    source_uri="s3://t/y.wav",
+                    source_key=f"audit/{call_id}.wav",
+                    status="transcribed",
+                )
+            )
+            await db.flush()
             for _ in range(3):
                 await audit.append(db, _run(call_id))
-            await db.commit()
+            await db.flush()
+            assert (await audit.verify_chain(db, "analysis_runs")).ok
 
-        async with factory() as db:
             middle = (
                 await db.execute(
                     select(AnalysisRun.id)
@@ -221,12 +303,12 @@ async def test_a_deleted_row_is_detected_as_a_break() -> None:
                 )
             ).scalar_one()
             await db.execute(text("delete from analysis_runs where id = :i"), {"i": middle})
-            await db.commit()
 
-        async with factory() as db:
             result = await audit.verify_chain(db, "analysis_runs")
-        assert result.ok is False
-        assert "inserted, deleted or reordered" in result.reason
+            assert result.ok is False
+            assert "inserted, deleted or reordered" in result.reason
+
+            await db.rollback()
     finally:
         await engine.dispose()
 
