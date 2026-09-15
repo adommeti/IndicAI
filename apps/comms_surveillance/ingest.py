@@ -58,6 +58,8 @@ celery_app.conf.update(
     beat_schedule={
         # Nightly, after the working day the recordings come from (E3).
         "uc3-nightly-sweep": {"task": "uc3.sweep", "schedule": crontab(hour=2, minute=0)},
+        # After the sweep, so the night's appends are included (PRD E8).
+        "uc3-chain-verify": {"task": "uc3.chain_verify", "schedule": crontab(hour=5, minute=0)},
     },
 )
 
@@ -421,3 +423,25 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+@celery_app.task(name="uc3.chain_verify", **TASK)
+def chain_verify_task() -> dict[str, Any]:
+    """Nightly re-walk of the audit chains (PRD E8).
+
+    Reads only, so it is safe to run at any time and safe to re-run; the alert
+    is the metric `uc3_audit_chain_breaks`, emitted whether or not a break was
+    found so that a silent job is distinguishable from a clean one.
+    """
+    import asyncio
+
+    from comms_surveillance.audit import run_chain_verify
+
+    async def run() -> dict[str, Any]:
+        db = engine()
+        try:
+            return await run_chain_verify(_factory(db))
+        finally:
+            await db.dispose()
+
+    return asyncio.run(run())

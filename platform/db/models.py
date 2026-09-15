@@ -5,9 +5,11 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Numeric,
     String,
@@ -226,4 +228,82 @@ class TranscriptSegment(Base):
     __table_args__ = (
         CheckConstraint("end_ms >= start_ms", name="ck_transcript_segments_span"),
         Index("ix_transcript_segments_call", "call_id", "start_ms"),
+    )
+
+
+class AnalysisRun(Base):
+    """One detector run over one call (PRD E8), append-only and hash-chained.
+
+    `created_at` is the ordering key for the chain and is set by the
+    application rather than the server, because `server_default=now()` is the
+    statement timestamp and two rows in one transaction would share it. The
+    chain's order has to be total.
+    """
+
+    __tablename__ = "analysis_runs"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("calls.id"), index=True)
+    stage: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(64))
+    policy_version: Mapped[str] = mapped_column(String(64), default="")
+    lexicon_version: Mapped[str] = mapped_column(String(64), default="")
+    prompt_version: Mapped[str] = mapped_column(String(64), default="")
+    input_sha256: Mapped[str] = mapped_column(String(64), default="")
+    output: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # seq is the chain order. A timestamp can tie -- two rows in one
+    # transaction share a statement timestamp -- so the chain walks this.
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=False), unique=True)
+    prev_hash: Mapped[str] = mapped_column(String(64), default="")
+    row_hash: Mapped[str] = mapped_column(String(64))
+
+
+class Flag(Base):
+    """A candidate finding for human review (PRD E8). Append-only, hash-chained."""
+
+    __tablename__ = "flags"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("calls.id"), index=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id"))
+    category: Mapped[str] = mapped_column(String(64))
+    severity: Mapped[str] = mapped_column(String(16))
+    speaker: Mapped[str] = mapped_column(String(64), default="")
+    start_ms: Mapped[int] = mapped_column(default=0)
+    evidence_span: Mapped[str] = mapped_column(Text)
+    english_rendering: Mapped[str] = mapped_column(Text, default="")
+    reasoning: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=False), unique=True)
+    prev_hash: Mapped[str] = mapped_column(String(64), default="")
+    row_hash: Mapped[str] = mapped_column(String(64))
+
+    __table_args__ = (
+        CheckConstraint("severity in ('low','medium','high')", name="ck_flags_severity"),
+    )
+
+
+class Disposition(Base):
+    """A reviewer's decision on a flag (PRD E8). Append-only, hash-chained.
+
+    A changed mind is a new row, never an edit: that is what makes the chain
+    worth having, and it means the queue shows the latest disposition while the
+    audit shows every one.
+    """
+
+    __tablename__ = "dispositions"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    flag_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("flags.id"), index=True)
+    disposition: Mapped[str] = mapped_column(String(32))
+    note: Mapped[str] = mapped_column(Text, default="")
+    reviewer_id: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=False), unique=True)
+    prev_hash: Mapped[str] = mapped_column(String(64), default="")
+    row_hash: Mapped[str] = mapped_column(String(64))
+
+    __table_args__ = (
+        CheckConstraint(
+            "disposition in ('confirmed','false_positive','needs_more_context','escalated')",
+            name="ck_dispositions_disposition",
+        ),
     )
