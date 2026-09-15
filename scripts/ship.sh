@@ -6,7 +6,12 @@
 #
 # Idempotent: re-running after a CI failure reuses the open PR. The merge step
 # is the only place a PR is merged in this repository (the Bash guard blocks
-# direct `gh pr merge`), so CI green and clean attribution are always enforced.
+# `gh pr merge` and a direct call to the REST merge endpoint alike), so CI green
+# and clean attribution are always enforced.
+#
+# Every GitHub call goes through `gh api`, i.e. REST v3. The `gh pr *` porcelain
+# is deliberately avoided: it issues GraphQL queries, and the cloud build
+# environment's proxy serves REST but answers GraphQL with HTTP 403 (ADR 0008).
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 source .claude/hooks/_lib.sh
@@ -30,7 +35,28 @@ fail() { printf 'ship: %s\n' "$1" >&2; exit 1; }
 
 [ "$BRANCH" != "$BASE" ] && [ "$BRANCH" != "HEAD" ] || fail "you are on '$BRANCH'. Create a feature branch first: git switch -c <type>/<uc>-<pn>-<slug>"
 [ -z "$(git status --porcelain)" ] || fail "working tree has uncommitted changes. Commit them with a plain message first."
-command -v gh >/dev/null 2>&1 || fail "gh CLI is required"
+command -v gh >/dev/null 2>&1 || fail "gh CLI is required (cloud environments install it in scripts/cloud-setup.sh)"
+
+# --- REST helpers -----------------------------------------------------------
+# gh expands {owner}/{repo} from the checkout's remote.
+api() { gh api -H "Accept: application/vnd.github+json" "$@"; }
+
+# json_obj KEY VALUE [KEY VALUE ...] — build a JSON object for `api --input -`.
+# Values are strings; a key suffixed ":json" has its value parsed as JSON, so a
+# body that happens to read "true" is never coerced into a boolean.
+json_obj() {
+  python3 - "$@" <<'PY'
+import json, sys
+args = sys.argv[1:]
+obj = {}
+for key, value in zip(args[::2], args[1::2]):
+    if key.endswith(":json"):
+        obj[key[:-5]] = json.loads(value)
+    else:
+        obj[key] = value
+print(json.dumps(obj))
+PY
+}
 
 # 1. Quality gate (cached by fingerprint when the Stop gate already ran it)
 FP="$(tree_fingerprint)"
@@ -81,41 +107,81 @@ fi
 # The PR body must be as clean as the commits.
 grep -Eiq "$FORBIDDEN_TRAILER_RE" "$BODY_TMP" && fail "PR body contains a tool-attribution line"
 
-PR_NUM="$(gh pr view "$BRANCH" --json number --jq .number 2>/dev/null || true)"
+OWNER="$(api "repos/{owner}/{repo}" --jq .owner.login 2>/dev/null)" \
+  || fail "cannot reach the GitHub REST API. Check 'gh auth status' and that github.com is allowlisted."
+PR_NUM="$(api -X GET "repos/{owner}/{repo}/pulls" -f head="$OWNER:$BRANCH" -f state=open \
+            --jq '.[0].number // empty' 2>/dev/null || true)"
 if [ -z "$PR_NUM" ]; then
-  # shellcheck disable=SC2086
-  gh pr create --base "$BASE" --head "$BRANCH" --title "$TITLE" --body-file "$BODY_TMP" $DRAFT >"$STATE_DIR/pr-create.log" 2>&1 \
-    || { cat "$STATE_DIR/pr-create.log" >&2; fail "gh pr create failed"; }
-  PR_NUM="$(gh pr view "$BRANCH" --json number --jq .number)"
+  json_obj title "$TITLE" head "$BRANCH" base "$BASE" body "$(cat "$BODY_TMP")" \
+           "draft:json" "$( [ -n "$DRAFT" ] && echo true || echo false )" \
+    | api -X POST "repos/{owner}/{repo}/pulls" --input - >"$STATE_DIR/pr-create.log" 2>&1 \
+    || { cat "$STATE_DIR/pr-create.log" >&2; fail "creating the pull request failed"; }
+  PR_NUM="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["number"])' <"$STATE_DIR/pr-create.log")" \
+    || fail "pull request created but its number could not be read (see .claude/run/pr-create.log)"
   echo "ship: opened PR #$PR_NUM"
 else
-  gh pr edit "$PR_NUM" --title "$TITLE" --body-file "$BODY_TMP" >/dev/null 2>&1 || true
+  json_obj title "$TITLE" body "$(cat "$BODY_TMP")" \
+    | api -X PATCH "repos/{owner}/{repo}/pulls/$PR_NUM" --input - >/dev/null 2>&1 || true
   echo "ship: reusing PR #$PR_NUM"
 fi
 rm -f "$BODY_TMP"
-PR_URL="$(gh pr view "$PR_NUM" --json url --jq .url)"
+PR_URL="$(api "repos/{owner}/{repo}/pulls/$PR_NUM" --jq .html_url)"
 
 [ "$MERGE" = "1" ] || { echo "ship: PR ready (not merged): $PR_URL"; exit 0; }
 
 # 6. Wait for CI. Checks can take a moment to register after the push.
+#    Check runs are the GitHub Actions jobs; the combined-status endpoint covers
+#    legacy commit statuses and reports total_count 0 (with state "pending") when
+#    a repository uses none, so an empty status set is never read as unfinished.
+HEAD_SHA="$(git rev-parse HEAD)"
 echo "ship: waiting for checks on PR #$PR_NUM (timeout ${CI_TIMEOUT}s)"
 START=$(date +%s)
-until [ "$(gh pr checks "$PR_NUM" --json name --jq 'length' 2>/dev/null || echo 0)" != "0" ]; do
-  [ $(( $(date +%s) - START )) -lt 300 ] || fail "no CI checks registered on PR #$PR_NUM after 5 minutes. Is the workflow enabled? $PR_URL"
-  sleep 15
+while :; do
+  ELAPSED=$(( $(date +%s) - START ))
+  [ "$ELAPSED" -lt "$CI_TIMEOUT" ] || fail "CI did not finish within ${CI_TIMEOUT}s on PR #$PR_NUM ($PR_URL)"
+
+  RUNS="$(api "repos/{owner}/{repo}/commits/$HEAD_SHA/check-runs?per_page=100" \
+            --jq '.check_runs[] | "\(.status)\t\(.conclusion // "")\t\(.name)"' 2>/dev/null || true)"
+  STATUS_LINE="$(api "repos/{owner}/{repo}/commits/$HEAD_SHA/status" \
+                   --jq '"\(.total_count)\t\(.state)"' 2>/dev/null || printf '0\tsuccess')"
+  STATUS_COUNT="${STATUS_LINE%%	*}"; STATUS_STATE="${STATUS_LINE##*	}"
+  [ -n "$STATUS_COUNT" ] || STATUS_COUNT=0
+
+  if [ -z "$RUNS" ] && [ "$STATUS_COUNT" = "0" ]; then
+    [ "$ELAPSED" -lt 300 ] || fail "no CI checks registered on PR #$PR_NUM after 5 minutes. Is the workflow enabled? $PR_URL"
+    sleep 15; continue
+  fi
+
+  # Fail fast on the first conclusive failure, as `gh pr checks --fail-fast` did.
+  FAILED="$(printf '%s\n' "$RUNS" | awk -F'\t' '$1=="completed" && $2!="success" && $2!="neutral" && $2!="skipped" {print $3" ("$2")"}')"
+  if [ -n "$FAILED" ] || { [ "$STATUS_COUNT" != "0" ] && [ "$STATUS_STATE" = "failure" ]; }; then
+    printf '%s\n' "$RUNS" >"$STATE_DIR/ci.log"
+    echo "ship: CI failed on PR #$PR_NUM ($PR_URL):" >&2
+    [ -n "$FAILED" ] && printf '  %s\n' "$FAILED" >&2
+    [ "$STATUS_STATE" = "failure" ] && echo "  combined commit status: failure" >&2
+    echo "ship: inspect with: gh api repos/{owner}/{repo}/commits/$HEAD_SHA/check-runs --jq '.check_runs[]|select(.conclusion!=\"success\")|.html_url'" >&2
+    exit 1
+  fi
+
+  PENDING=0
+  [ -n "$RUNS" ] && PENDING="$(printf '%s\n' "$RUNS" | awk -F'\t' '$1!="completed"' | grep -c . || true)"
+  if [ "$PENDING" = "0" ] && { [ "$STATUS_COUNT" = "0" ] || [ "$STATUS_STATE" = "success" ]; }; then
+    break
+  fi
+  sleep 20
 done
-if ! timeout "$CI_TIMEOUT" gh pr checks "$PR_NUM" --watch --fail-fast --interval 20 >"$STATE_DIR/ci.log" 2>&1; then
-  cat "$STATE_DIR/ci.log" >&2
-  echo "ship: CI failed on PR #$PR_NUM ($PR_URL)." >&2
-  echo "ship: inspect with: gh pr checks $PR_NUM ; gh run view <run-id> --log-failed" >&2
-  exit 1
-fi
+printf '%s\n' "$RUNS" >"$STATE_DIR/ci.log"
 echo "ship: CI green"
 
 # 7. Merge as the repository owner; the squash commit carries the PR author identity.
+#    commit_title is the bare title: GitHub appends " (#N)" to a squash subject.
 MERGE_BODY="$(git log --reverse --format='- %s' "origin/$BASE..HEAD")"
-gh pr merge "$PR_NUM" --squash --delete-branch --subject "$TITLE" --body "$MERGE_BODY" >"$STATE_DIR/merge.log" 2>&1 \
+json_obj merge_method squash commit_title "$TITLE" commit_message "$MERGE_BODY" \
+  | api -X PUT "repos/{owner}/{repo}/pulls/$PR_NUM/merge" --input - >"$STATE_DIR/merge.log" 2>&1 \
   || { cat "$STATE_DIR/merge.log" >&2; fail "merge failed for PR #$PR_NUM ($PR_URL)"; }
+# Delete the head branch, as `gh pr merge --delete-branch` did. Best effort:
+# the merge has already landed and a surviving branch is cosmetic.
+api -X DELETE "repos/{owner}/{repo}/git/refs/heads/$BRANCH" >/dev/null 2>&1 || true
 echo "ship: merged PR #$PR_NUM into $BASE ($PR_URL)"
 
 # 8. Return to an up-to-date base branch and clear the prompt marker.
