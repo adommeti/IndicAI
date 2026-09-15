@@ -103,8 +103,20 @@ export interface PrecisionMetrics {
 }
 
 export interface FalseNegativeEstimate {
+  /** The whole QA sample. */
   sampled: number;
+  /** The reviewed part of it, and the denominator of `rate`. Diverges from
+   *  `sampled` whenever the queue has a backlog, and the gap must be shown:
+   *  a rate over 2 settled calls out of 100 sampled is not a clean bill of
+   *  health for the programme. */
+  settled: number;
   missed: number;
+  /** Sampled calls still carrying an undecided flag. In neither numerator nor
+   *  denominator. */
+  pending: number;
+  /** Settled calls that raised no flag, so no human ever read them — counted
+   *  clean on the detector's own word. This is why the rate is a lower bound. */
+  flagless: number;
   rate: number | null;
   unmeasured: boolean;
 }

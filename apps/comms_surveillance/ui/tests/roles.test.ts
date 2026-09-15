@@ -38,9 +38,21 @@ describe("capabilities", () => {
     expect(defaultView(capabilities([]))).toBeNull();
   });
 
-  it("unions the roles when a person holds more than one", () => {
+  it("does not union governance with a reviewer role — it subtracts", () => {
+    // ADR 0013. The service refuses transcripts to any principal carrying
+    // `governance`, whatever else it carries, so planning this caller as a
+    // reviewer would land them on a queue that can only ever answer 403.
+    // This test asserted the opposite until a pre-ship review caught that the
+    // UI contradicted the ADR shipped beside it.
     const roles: Role[] = ["governance", "compliance_reviewer"];
-    expect(capabilities(roles)).toEqual({ queue: true, qaSample: false, metrics: true });
+    expect(capabilities(roles)).toEqual({ queue: false, qaSample: false, metrics: true });
+    expect(allowedViews(capabilities(roles))).toEqual(["metrics"]);
+    expect(defaultView(capabilities(roles))).toBe("metrics");
+  });
+
+  it("subtracts governance from a lead as well, including the QA sample", () => {
+    const roles: Role[] = ["compliance_lead", "governance"];
+    expect(capabilities(roles)).toEqual({ queue: false, qaSample: false, metrics: true });
   });
 
   it("ignores anything that is not one of the three contract roles", () => {

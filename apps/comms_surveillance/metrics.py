@@ -107,14 +107,31 @@ class CategoryPrecision:
 
 @dataclass(frozen=True)
 class FalseNegativeEstimate:
-    """`missed / sampled` over settled QA-sample calls. See the module docstring.
+    """`missed / settled` over the QA sample. See the module docstring.
 
-    `sampled` and `missed` count *calls*, not flags: the QA sample is drawn per
-    call, so a call with three confirmed flags is one miss, not three.
+    Every field counts *calls*, not flags: the sample is drawn per call, so a
+    call with three confirmed flags is one miss, not three.
+
+    `sampled` is the whole sample. `settled` is the part of it a reviewer has
+    finished with, and is the denominator. They are separate fields because an
+    earlier version of this dataclass had only `sampled`, set to the settled
+    count -- so a programme with 100 sampled calls and 98 still in the queue
+    reported "sampled 2, missed 0, rate 0.0%" and looked like a clean bill of
+    health over a sample almost none of which had been reviewed. A denominator
+    that silently shrinks is the same lie as a zero denominator reported as a
+    number, and CLAUDE.md forbids both.
+
+    `flagless` is the part of `settled` that no reviewer ever actually looked
+    at: this system only puts flags in front of people, so a sampled call that
+    raised nothing is counted clean on the detector's own word. It is carried
+    here so the caveat travels with the number instead of living in a docstring.
     """
 
     sampled: int
+    settled: int
     missed: int
+    pending: int
+    flagless: int
     rate: float | None
 
     @property
@@ -506,7 +523,7 @@ async def false_negative_estimate(
     call still holding an undecided flag counts in neither -- it is reported by
     `false_negative_breakdown` as `pending`, not rounded into the clean side.
 
-    `sampled == 0` -- no sample yet, or none of it reviewed -- returns
+    `settled == 0` -- no sample yet, or none of it reviewed -- returns
     `rate=None`. There is no denominator, so there is no number, and inventing
     one would be the placeholder CLAUDE.md forbids.
     """
@@ -514,7 +531,12 @@ async def false_negative_estimate(
     settled = [call for call in calls if not call.pending]
     missed = sum(1 for call in settled if call.missed)
     return FalseNegativeEstimate(
-        sampled=len(settled), missed=missed, rate=_ratio(missed, len(settled))
+        sampled=len(calls),
+        settled=len(settled),
+        missed=missed,
+        pending=len(calls) - len(settled),
+        flagless=sum(1 for call in settled if call.flagless),
+        rate=_ratio(missed, len(settled)),
     )
 
 
@@ -532,7 +554,7 @@ async def false_negative_breakdown(
     settled = [call for call in calls if not call.pending]
     return {
         "calls": len(calls),
-        "sampled": len(settled),
+        "settled": len(settled),
         "missed": sum(1 for call in settled if call.missed),
         "clean": sum(1 for call in settled if not call.missed),
         "flagless": sum(1 for call in settled if call.flagless),

@@ -166,14 +166,20 @@ async def test_false_negative_rate_is_none_when_the_whole_sample_is_pending() ->
         qa_row("call-b", flag_id="f2", disposition="needs_more_context", seq=1),
     ]
     estimate = await metrics.false_negative_estimate(FakeSession(rows))  # type: ignore[arg-type]
-    assert estimate.sampled == 0
+    # Two calls WERE sampled. The denominator is zero because neither has been
+    # ruled on -- and those are different facts, which is why they are separate
+    # fields. This test previously asserted `sampled == 0`, which is how the
+    # metric came to report a sample of two as a sample of none.
+    assert estimate.sampled == 2
+    assert estimate.settled == 0
+    assert estimate.pending == 2
     assert estimate.missed == 0
     assert estimate.rate is None
 
     breakdown = await metrics.false_negative_breakdown(FakeSession(rows))  # type: ignore[arg-type]
     assert breakdown == {
         "calls": 2,
-        "sampled": 0,
+        "settled": 0,
         "missed": 0,
         "clean": 0,
         "flagless": 0,
@@ -546,7 +552,10 @@ async def test_a_call_analysed_twice_is_still_one_sampled_call() -> None:
         qa_row("call-a", run_id="run-2", flag_id="f2", disposition="confirmed", seq=2),
     ]
     estimate = await metrics.false_negative_estimate(FakeSession(rows))  # type: ignore[arg-type]
-    assert (estimate.sampled, estimate.missed, estimate.rate) == (1, 1, 1.0)
+    assert (estimate.settled, estimate.missed, estimate.rate) == (1, 1, 1.0)
+    # Two analysis runs, one call. `sampled` counts calls, so re-analysing a
+    # call must not inflate the sample.
+    assert (estimate.sampled, estimate.pending) == (1, 0)
 
 
 async def test_a_superseded_confirmation_on_the_sample_is_no_longer_a_miss() -> None:
@@ -565,7 +574,11 @@ async def test_a_pending_call_is_excluded_from_both_sides() -> None:
         qa_row("call-b", flag_id="f2", disposition="needs_more_context", seq=2),
     ]
     estimate = await metrics.false_negative_estimate(FakeSession(rows))  # type: ignore[arg-type]
-    assert (estimate.sampled, estimate.missed, estimate.rate) == (1, 1, 1.0)
+    assert (estimate.settled, estimate.missed, estimate.rate) == (1, 1, 1.0)
+    # The rate is 1/1, but the sample was 2 and the response must say so: a
+    # 100% miss rate over half a sample is a very different claim from a 100%
+    # miss rate over all of it.
+    assert (estimate.sampled, estimate.pending) == (2, 1)
 
     breakdown = await metrics.false_negative_breakdown(FakeSession(rows))  # type: ignore[arg-type]
     assert breakdown["pending"] == 1
@@ -630,7 +643,7 @@ async def test_the_breakdown_separates_flagless_calls_from_reviewed_clean_ones()
     breakdown = await metrics.false_negative_breakdown(FakeSession(rows))  # type: ignore[arg-type]
     assert breakdown == {
         "calls": 4,
-        "sampled": 4,
+        "settled": 4,
         "missed": 1,
         "clean": 3,
         "flagless": 2,

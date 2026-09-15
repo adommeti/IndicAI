@@ -225,7 +225,18 @@ export async function installApi(page: Page, role: FixtureRole): Promise<Fixture
 
   await page.route("**/metrics/false_negative_estimate", (route) => {
     fixture.requested.push("/metrics/false_negative_estimate");
-    return json(route, { sampled: 120, missed: 4, rate: 4 / 120, unmeasured: false });
+    // 160 sampled, 120 reviewed: the gap is deliberate, so the panel has to
+    // show that the rate is over the reviewed subset and 40 calls are still
+    // waiting. `flagless` is the part of the 120 nobody actually read.
+    return json(route, {
+      sampled: 160,
+      settled: 120,
+      missed: 4,
+      pending: 40,
+      flagless: 74,
+      rate: 4 / 120,
+      unmeasured: false,
+    });
   });
 
   await page.route("**/audit/chain_status", (route) => {

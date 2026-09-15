@@ -164,6 +164,8 @@ class Wiring:
     precision_over_time: AsyncMock
     false_negatives: AsyncMock
     verify_all: AsyncMock
+    counts: AsyncMock
+    read_anchor: AsyncMock
 
     @property
     def transcript_loaders(self) -> tuple[AsyncMock, ...]:
@@ -231,7 +233,9 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Any:
         ]
     )
     false_negatives = AsyncMock(
-        return_value=api.metrics.FalseNegativeEstimate(sampled=0, missed=0, rate=None)
+        return_value=api.metrics.FalseNegativeEstimate(
+            sampled=0, settled=0, missed=0, pending=0, flagless=0, rate=None
+        )
     )
     monkeypatch.setattr(api.metrics, "precision_by_category", by_category)
     monkeypatch.setattr(api.metrics, "precision_over_time", over_time)
@@ -262,6 +266,25 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Any:
     )
     monkeypatch.setattr(api.audit, "verify_all", verify_all)
 
+    # `chain_status` deliberately does NOT call `verify_all`: re-hashing every
+    # row of three append-only tables inside the event loop, on a route the
+    # least-privileged role can reach, is an availability hole that grows with
+    # the data. It reads the anchor the nightly job wrote instead. `verify_all`
+    # stays wired so a test can prove it is never awaited.
+    anchored_at = datetime(2026, 9, 15, 5, 0, tzinfo=UTC)
+    counts = AsyncMock(return_value={"analysis_runs": 40, "flags": 12, "dispositions": 2})
+    read_anchor = AsyncMock(
+        side_effect=lambda _session, table: {
+            "analysis_runs": audit_anchor("analysis_runs", 40, anchored_at),
+            # Fewer rows than the anchor counted: a truncated tail.
+            "flags": audit_anchor("flags", 99, anchored_at),
+            # Never anchored -- not a break, and not a pass either.
+            "dispositions": None,
+        }[table]
+    )
+    monkeypatch.setattr(api.audit, "counts", counts)
+    monkeypatch.setattr(api.audit, "read_anchor", read_anchor)
+
     api.app.dependency_overrides[api.db_session] = lambda: session
     yield Wiring(
         session=session,
@@ -273,8 +296,17 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Any:
         precision_over_time=over_time,
         false_negatives=false_negatives,
         verify_all=verify_all,
+        counts=counts,
+        read_anchor=read_anchor,
     )
     api.app.dependency_overrides.clear()
+
+
+def audit_anchor(table: str, rows: int, recorded_at: datetime) -> Any:
+    """A stored anchor, as `audit.read_anchor` returns one."""
+    from comms_surveillance.audit import ChainAnchor
+
+    return ChainAnchor(table=table, head_hash="d" * 64, rows=rows, recorded_at=recorded_at)
 
 
 # --- the contract's endpoint table ---------------------------------------------
@@ -868,17 +900,38 @@ def test_the_false_negative_estimate_says_unmeasured_rather_than_zero(
     wired: Wiring,
 ) -> None:
     payload = client(ROLE_GOVERNANCE).get("/metrics/false_negative_estimate").json()
-    assert payload == {"sampled": 0, "missed": 0, "rate": None, "unmeasured": True}
+    assert payload == {
+        "sampled": 0,
+        "settled": 0,
+        "missed": 0,
+        "pending": 0,
+        "flagless": 0,
+        "rate": None,
+        "unmeasured": True,
+    }
+    assert payload["rate"] is None
 
 
 def test_the_false_negative_rate_is_reported_once_there_is_a_denominator(
     wired: Wiring,
 ) -> None:
+    # 100 sampled, only 40 reviewed. The rate is over the 40, and the response
+    # has to say so: reporting "sampled 40" alone -- which it used to -- turned a
+    # sample that was 60% unreviewed into a clean bill of health.
     wired.false_negatives.return_value = api.metrics.FalseNegativeEstimate(
-        sampled=40, missed=2, rate=0.05
+        sampled=100, settled=40, missed=2, pending=60, flagless=31, rate=0.05
     )
     payload = client(ROLE_GOVERNANCE).get("/metrics/false_negative_estimate").json()
-    assert payload == {"sampled": 40, "missed": 2, "rate": 0.05, "unmeasured": False}
+    assert payload == {
+        "sampled": 100,
+        "settled": 40,
+        "missed": 2,
+        "pending": 60,
+        "flagless": 31,
+        "rate": 0.05,
+        "unmeasured": False,
+    }
+    assert payload["settled"] != payload["sampled"]
 
 
 def test_chain_status_is_metadata_and_never_a_row_hash_or_a_row_id(wired: Wiring) -> None:
@@ -891,23 +944,55 @@ def test_chain_status_is_metadata_and_never_a_row_hash_or_a_row_id(wired: Wiring
     """
     response = client(ROLE_GOVERNANCE).get("/audit/chain_status")
     payload = response.json()
-    assert set(payload) == {"tables", "breaks", "ok", "checked_at"}
+    assert set(payload) == {"tables", "breaks", "ok", "unverified", "checked_at"}
     for table in payload["tables"]:
-        assert set(table) == {"table", "rows", "ok", "anchor_ok", "reason"}
+        assert set(table) == {"table", "rows", "ok", "anchor_ok", "verified_at", "reason"}
     assert payload["breaks"] == 1
-    assert payload["ok"] is False
     assert not SHA256.search(response.text), "a row hash reached a read-only endpoint"
     assert FLAG_ID not in response.text
     assert "head_hash" not in response.text
+
+
+def test_chain_status_does_not_re_walk_the_chains_on_every_request(wired: Wiring) -> None:
+    """The availability half of this endpoint.
+
+    `verify_all` recomputes a sha256 for every row of three append-only tables.
+    Doing that inside the event loop, on the one route the least-privileged role
+    can reach, lets any authenticated caller hold the API down by refreshing a
+    dashboard -- and the cost grows for ever, because these tables only grow.
+    The endpoint reads the anchor the nightly job wrote instead.
+    """
+    for _ in range(3):
+        assert client(ROLE_GOVERNANCE).get("/audit/chain_status").status_code == 200
+    wired.verify_all.assert_not_awaited()
+    assert wired.read_anchor.await_count == 3 * len(api.audit.CHAINED)
+
+
+def test_a_chain_that_has_never_been_verified_is_not_reported_as_healthy(
+    wired: Wiring,
+) -> None:
+    """ "We have not checked" must not render as "no breaks found"."""
+    payload = client(ROLE_GOVERNANCE).get("/audit/chain_status").json()
+    tables = {table["table"]: table for table in payload["tables"]}
+    assert tables["dispositions"]["ok"] is None
+    assert tables["dispositions"]["verified_at"] is None
+    assert "no verification recorded yet" in tables["dispositions"]["reason"]
+    assert payload["unverified"] == ["dispositions"]
+    # One table broken, one never checked: the overall answer is not True.
+    assert payload["ok"] is not True
 
 
 def test_chain_status_keeps_the_reason_so_a_break_is_actionable(wired: Wiring) -> None:
     tables = {
         t["table"]: t for t in client(ROLE_GOVERNANCE).get("/audit/chain_status").json()["tables"]
     }
-    assert tables["dispositions"]["ok"] is False
-    assert "the row was edited" in tables["dispositions"]["reason"]
-    assert tables["flags"]["anchor_ok"] is True
+    # `flags` holds fewer rows than the anchor counted: a truncated tail, which
+    # the walk alone cannot see and only the anchor reveals.
+    assert tables["flags"]["ok"] is False
+    assert tables["flags"]["anchor_ok"] is False
+    assert "rows dropped from 99 to 12" in tables["flags"]["reason"]
+    assert tables["analysis_runs"]["ok"] is True
+    assert tables["analysis_runs"]["verified_at"].startswith("2026-09-15T05:00")
 
 
 def test_health_needs_no_identity() -> None:

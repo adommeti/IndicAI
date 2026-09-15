@@ -465,8 +465,16 @@ async def false_negative_estimate(
 ) -> dict[str, Any]:
     estimate = await metrics.false_negative_estimate(session)
     return {
+        # `sampled` is the whole sample; `settled` is the denominator. Both are
+        # projected because they diverge, and the gap is the story: a sample
+        # that is 98% unreviewed must not render as a clean bill of health over
+        # the 2% that came back. `flagless` is the part of `settled` no human
+        # actually read -- the detector's own word that there was nothing there.
         "sampled": estimate.sampled,
+        "settled": estimate.settled,
         "missed": estimate.missed,
+        "pending": estimate.pending,
+        "flagless": estimate.flagless,
         "rate": estimate.rate,
         "unmeasured": estimate.rate is None,
     }
@@ -477,28 +485,70 @@ async def chain_status(
     session: Session,
     caller: Annotated[Principal, MetricsReader],
 ) -> dict[str, Any]:
-    """Whether the three chains still verify. Metadata only.
+    """The last nightly verification, not a fresh one. Metadata only.
 
-    `audit.summarise` hands back `head_hash` and `first_break_id` per table.
-    Neither is projected here. A head hash is the value an anchor is compared
-    against, so publishing it on a read-only endpoint hands a would-be tamperer
-    the target to re-chain to, and `first_break_id` names a flag or disposition
-    row -- an identifier from the evidence store, on the one endpoint that
-    governance can reach.
+    This reports the stored anchor -- written by `uc3.chain_verify` only after a
+    clean walk -- plus each table's current row count. It deliberately does not
+    call `audit.verify_all`.
+
+    Re-walking here was the first implementation and it was wrong twice over.
+    Cost: `verify_all` recomputes a sha256 for every row in all three chains,
+    synchronously, inside the event loop; at uc3/P5's own measured rate that is
+    roughly half a second of CPU per ten thousand rows, it blocks the loop for
+    every other request while it runs, and it grows without bound because these
+    tables only ever grow. Any authenticated caller -- including `governance`,
+    the least privileged role in the system -- could hold the API down by
+    refreshing a dashboard. Meaning: a fresh walk proves the chain is internally
+    consistent *right now*, which is not the question. The chain's guarantee
+    comes from the anchor recorded outside it, and that is a nightly fact. A
+    per-request walk would also re-verify against an anchor nobody has updated,
+    so it could only ever repeat last night's answer more expensively.
+
+    `head_hash` and `first_break_id` are not projected. A head hash is the value
+    an anchor is compared against, so publishing it hands a would-be tamperer
+    the target to re-chain to, and `first_break_id` names a row in the evidence
+    store, on the one endpoint governance can reach.
     """
-    summary = audit.summarise(await audit.verify_all(session))
-    return {
-        "tables": [
+    rows = await audit.counts(session)
+    tables = []
+    for table in audit.CHAINED:
+        anchor = await audit.read_anchor(session, table)
+        current = rows.get(table, 0)
+        if anchor is None:
+            # Never verified. Not a break, and not a pass either.
+            tables.append(
+                {
+                    "table": table,
+                    "rows": current,
+                    "ok": None,
+                    "anchor_ok": None,
+                    "verified_at": None,
+                    "reason": "no verification recorded yet",
+                }
+            )
+            continue
+        shrank = current < anchor.rows
+        tables.append(
             {
-                "table": table["table"],
-                "rows": table["rows"],
-                "ok": table["ok"],
-                "anchor_ok": table["anchor_ok"],
-                "reason": table["reason"],
+                "table": table,
+                "rows": current,
+                "ok": not shrank,
+                "anchor_ok": not shrank,
+                "verified_at": anchor.recorded_at.isoformat(),
+                "reason": (
+                    f"rows dropped from {anchor.rows} to {current} since the last verification"
+                    if shrank
+                    else ""
+                ),
             }
-            for table in summary["tables"]
-        ],
-        "breaks": summary["breaks"],
-        "ok": summary["ok"],
-        "checked_at": summary.get("checked_at") or datetime.now(UTC).isoformat(),
+        )
+    return {
+        "tables": tables,
+        "breaks": sum(1 for table in tables if table["ok"] is False),
+        # `ok` is False only on a real break. A chain that has never been
+        # verified is `None` here, not True: "we have not checked" must not
+        # render as "no breaks found".
+        "ok": None if any(t["ok"] is None for t in tables) else all(t["ok"] for t in tables),
+        "unverified": [table["table"] for table in tables if table["ok"] is None],
+        "checked_at": datetime.now(UTC).isoformat(),
     }

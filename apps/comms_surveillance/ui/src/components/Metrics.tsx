@@ -218,10 +218,20 @@ export function FalseNegativePanel({ estimate }: { estimate: FalseNegativeEstima
       <p className="mt-1 max-w-prose text-xs text-muted">
         From the random QA sample: how much the detector is missing, not how much it catches.
       </p>
-      <dl className="mt-3 grid grid-cols-3 gap-4">
+      {/* `sampled` and `settled` are both shown, and deliberately adjacent. The
+          rate is over `settled`; showing only that number would let a sample
+          that is almost entirely unreviewed read as a clean bill of health for
+          the whole programme. */}
+      <dl className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <div>
           <dt className="text-xs uppercase tracking-wider text-muted">Sampled</dt>
           <dd className="mt-0.5 font-mono text-lg tabular-nums">{formatCount(estimate.sampled)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wider text-muted">Reviewed</dt>
+          <dd className="mt-0.5 font-mono text-lg tabular-nums" data-testid="fn-settled">
+            {formatCount(estimate.settled)}
+          </dd>
         </div>
         <div>
           <dt className="text-xs uppercase tracking-wider text-muted">Missed</dt>
@@ -234,8 +244,27 @@ export function FalseNegativePanel({ estimate }: { estimate: FalseNegativeEstima
           </dd>
         </div>
       </dl>
+      <p className="mt-3 text-xs text-muted">
+        Rate is <span className="font-mono">missed ÷ reviewed</span>, not ÷ sampled. It is a{" "}
+        <strong className="font-semibold">lower bound</strong>: {formatCount(estimate.flagless)} of
+        the reviewed calls raised no flag, so no person read them — they count clean on the
+        detector&rsquo;s own word.
+      </p>
+      {estimate.pending > 0 ? (
+        <p
+          className="mt-2 rounded border border-border bg-surface-2 p-2 text-xs text-muted"
+          data-testid="fn-pending"
+        >
+          {formatCount(estimate.pending)} sampled{" "}
+          {estimate.pending === 1 ? "call is" : "calls are"} still awaiting a ruling and{" "}
+          {estimate.pending === 1 ? "is" : "are"} in neither the numerator nor the denominator.
+          {estimate.settled < estimate.pending
+            ? " Most of this sample has not been reviewed yet; read the rate accordingly."
+            : null}
+        </p>
+      ) : null}
       {estimate.unmeasured || estimate.rate === null ? (
-        <p className="mt-3 rounded border border-border bg-surface-2 p-2 text-xs text-muted">
+        <p className="mt-2 rounded border border-border bg-surface-2 p-2 text-xs text-muted">
           Nothing has been sampled and ruled on yet, so there is no rate. This is reported as
           unmeasured — it is not a rate of zero and must not be read as one.
         </p>

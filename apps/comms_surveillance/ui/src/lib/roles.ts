@@ -20,8 +20,15 @@ export function capabilities(roles: readonly Role[]): Capabilities {
   const reviewer = lead || roles.includes("compliance_reviewer");
   const governance = roles.includes("governance");
   return {
-    queue: reviewer,
-    qaSample: lead,
+    // `governance` SUBTRACTS, it does not add (ADR 0013). The service refuses
+    // transcripts and audio to any principal carrying it, even one that also
+    // carries a reviewer role, so a dual-hatted claim must not be planned as a
+    // reviewer here. Getting this wrong was not a security hole -- the server
+    // still answered 403 -- but the UI would land such a caller on a queue that
+    // could never load, suppress the governance scope notice, and fill the
+    // audit log with refusals that look like probing.
+    queue: reviewer && !governance,
+    qaSample: lead && !governance,
     // The contract lets a plain reviewer read /metrics/* too, but P6 assigns the
     // quality analytics to the lead and to governance; a reviewer's screen stays
     // the queue. Widening this is a product decision, not a permission change.
