@@ -1,0 +1,26 @@
+# Grafana dashboard provider. Mounted read-only at
+# /etc/grafana/provisioning/dashboards by the grafana service in docker-compose.yml.
+#
+# This is the file that makes `infra/grafana/dashboards/*.json` actually load. It points
+# Grafana at that directory (mounted read-only at /etc/grafana/dashboards) and Grafana
+# imports every dashboard JSON it finds there, keyed by the `uid` inside each file:
+# uc1.json as uc1-helpdesk-agent and uc2.json as uc2-training-localizer. Adding a
+# dashboard is dropping a JSON file in that directory; nothing here lists them.
+#
+# allowUiUpdates is false so the files stay the source of truth: an edit made in the
+# browser is not written back and would be reverted on the next scan, which is what
+# keeps a dashboard reviewable in a PR.
+apiVersion: 1
+
+providers:
+  - name: indic-ai
+    orgId: 1
+    folder: Indic AI
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards
+      # The directory is flat; do not invent a folder per subdirectory.
+      foldersFromFilesStructure: false

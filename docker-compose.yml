@@ -236,8 +236,21 @@ services:
     image: grafana/grafana:12.1.0
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${STACK_PASSWORD}
+      # Read by infra/grafana/provisioning/datasources/platform.yaml, which expands
+      # STACK_PASSWORD from Grafana's own environment so the Postgres password is
+      # never written into the repo.
+      STACK_PASSWORD: ${STACK_PASSWORD}
     ports: ['127.0.0.1:3001:3000']
-    volumes: ['grafana-data:/var/lib/grafana']
+    # Until uc1/P6 only the data volume was mounted, so the dashboards under
+    # infra/grafana/dashboards were never loaded by anything. The two provisioning
+    # directories below are what actually loads them. They are mounted as individual
+    # subdirectories rather than as the whole /etc/grafana/provisioning tree so the
+    # image's own alerting/ and plugins/ provisioning directories survive.
+    volumes:
+      - 'grafana-data:/var/lib/grafana'
+      - './infra/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro'
+      - './infra/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro'
+      - './infra/grafana/dashboards:/etc/grafana/dashboards:ro'
     healthcheck:
       <<: *health
       test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/api/health']

@@ -1,0 +1,47 @@
+# Grafana datasource provisioning. Mounted read-only at
+# /etc/grafana/provisioning/datasources by the grafana service in docker-compose.yml.
+#
+# Before uc1/P6 no provisioning existed at all: the grafana service mounted only its
+# own data volume, so infra/grafana/dashboards/uc2.json had never been loaded by any
+# Grafana and no datasource existed for it to query. This file and its sibling under
+# ../dashboards are the mechanism that makes both uc1.json and uc2.json real.
+#
+# The name AND the uid are both `platform` deliberately. Both dashboards select their
+# datasource through a `datasource` template variable whose stored current value is the
+# string "platform"; a datasource variable resolves that against the uid in current
+# Grafana and against the name in older ones, so setting both makes the existing uc2
+# dashboard work without editing its JSON.
+#
+# The password is NOT in the repo. Grafana expands $STACK_PASSWORD in a provisioning
+# file from its own environment, and the compose grafana service passes it through from
+# .env.stack, which the agent never reads or edits.
+apiVersion: 1
+
+datasources:
+  - name: platform
+    uid: platform
+    type: postgres
+    access: proxy
+    # The compose service name and its in-network port, not the 127.0.0.1:15433
+    # published mapping: Grafana reaches Postgres over the compose network.
+    url: postgres:5432
+    user: platform
+    isDefault: true
+    # Provisioned, so the UI must not let it drift from this file.
+    editable: false
+    # `database` moved into jsonData in recent Grafana and the top-level key is kept
+    # for backwards compatibility. Both are set so the datasource resolves whichever
+    # key this image's version reads.
+    database: platform
+    jsonData:
+      database: platform
+      # The stack's Postgres is container-local on a private compose network and
+      # serves no TLS; disable is what it actually speaks.
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+    secureJsonData:
+      password: $STACK_PASSWORD
