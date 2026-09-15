@@ -91,12 +91,17 @@ local `user.email` as the committer. The attribution check is strict about the a
 rejects tool identities (claude/anthropic/copilot/bot) as the committer, so any personal or
 GitHub identity there is fine. If your local git identity is unset, set it before applying.
 
-Identity: the existing history uses `Anantha Dommeti <anantha.dommeti@users.noreply.github.com>`.
-That address is not a GitHub-verified address for the `adommeti` account, so GitHub will not link
-those commits to your profile/contribution graph. To have them linked, set `INDICAI_GIT_EMAIL`
-in the environment to an address verified on the account (for example the account's real
-`<id>+adommeti@users.noreply.github.com`) and set the repository variable `ALLOWED_AUTHOR_EMAILS`
-to both addresses.
+Identity, as observed on the first real merge: branch commits are authored
+`Anantha Dommeti <anantha.dommeti@users.noreply.github.com>`, and the squash-merge commit GitHub
+writes on `main` is authored by the merging account, `adommeti <asdommeti@gmail.com>`, with
+`GitHub <noreply@github.com>` as committer and a `Co-authored-by` trailer naming the branch author.
+All three are expected. The allowlist covers both addresses; set the `ALLOWED_AUTHOR_EMAILS`
+repository variable (comma-separated) to change it. Because the merge commits carry the account's
+own verified address, they do link to the profile and contribution graph.
+
+The check is strict about the **author** and lenient about the mechanical parts: the committer and
+any co-author are rejected only when they are tool identities (claude, anthropic, copilot, `[bot]`).
+A blanket ban on `Co-authored-by` would fail every GitHub squash merge.
 
 ## 5. What a session does (for reference)
 
