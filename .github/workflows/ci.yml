@@ -58,18 +58,52 @@ jobs:
       - run: make lint typecheck test
       - run: uv run python -m indic_platform.eval.runners.run --app uc1
       - run: make eval-uc2 eval-uc3
+      # The B6 regression gate (uc1/P7 acceptance: "CI runs eval-uc1 and fails on
+      # regression thresholds from Part B6"). The thresholds are data in
+      # platform/eval/thresholds.yaml, so ratcheting one is a reviewable diff rather
+      # than a code change, and --strict turns a breach into a non-zero exit instead
+      # of a printed warning. --chat-only keeps live STT (and its spend) out of CI.
+      # What this gates is the adversarial threshold (build-blocking at 0%), not agent
+      # quality: the target runs --mocked-decisions, because the real graph stage needs
+      # TEI, Qdrant, an ingested KB and an Anthropic key that this job does not have.
+      # Action accuracy, reply-language match and hit@3 are reported UNMEASURED there
+      # rather than scored against a stand-in. See docs/build/BLOCKERS.md.
+      - name: eval-uc1-regression
+        run: make eval-uc1-regression
       - name: ui packages (when present)
         run: |
           for pkg in apps/*/ui; do
             [ -f "$pkg/package.json" ] || continue
             echo "== $pkg"; (cd "$pkg" && npm ci --no-audit --no-fund && npm run lint --if-present && npm run typecheck --if-present && npm run build --if-present && npm test --if-present -- --run)
           done
+      # A hook config nobody runs is not a control, and nobody runs this one: the repo
+      # pins core.hooksPath to .githooks (commit-msg, pre-push), and pre-commit refuses
+      # to install alongside that setting -- `pre-commit install` in scripts/dev-setup.sh
+      # fails and is swallowed by `|| true`. So no contributor's commit has ever executed
+      # these hooks, and CI is the only place they are enforced. Running every hook here
+      # re-runs ruff over a tree `make lint` already covered; that is ~2s and is the price
+      # of the config actually being exercised, so the ruff hooks cannot rot unnoticed.
+      # Hook environments are rebuilt from scratch otherwise: ~60s per run for two
+      # cloned repos, against ~5s warm. Keyed on the config, so changing a rev or
+      # adding a hook builds fresh rather than reusing a stale environment.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: pre-commit hooks
+        run: uv run pre-commit run --all-files --show-diff-on-failure
       # Ignored findings are justified one by one in docs/security/audit-exceptions.md,
       # each with the reachability argument that makes it an exception rather than a
-      # silencing. Adding an id here without an entry there is not allowed.
+      # silencing. Adding an id here without an entry there is not allowed. This runs the
+      # audit a second time (the pre-commit step ran the same hook) because only this
+      # invocation emits the SBOM artifact below; ~8s, and dropping either one would cost
+      # either the SBOM or hook parity.
       - run: >
           uv run pip-audit --skip-editable --ignore-vuln PYSEC-2026-3740
           --format cyclonedx-json --output sbom.json
+      # Kept alongside the detect-secrets pre-commit hook rather than folded into it: the
+      # hook carries `exclude: uv.lock`, and this step scans every tracked file including
+      # uv.lock. It is the wider scan, not a duplicate of the hook.
       - name: secret scan against baseline
         run: uv run detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
       - uses: actions/upload-artifact@v4

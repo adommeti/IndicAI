@@ -15,7 +15,13 @@ repos:
     hooks:
       - id: pip-audit
         name: pip-audit locked environment
-        entry: uv run pip-audit --skip-editable
+        # Ignored findings are justified one by one in docs/security/audit-exceptions.md,
+        # each with the reachability argument that makes it an exception rather than a
+        # silencing. Adding an id here without an entry there is not allowed. Keep this
+        # list in step with scripts/checks.sh and .github/workflows/ci.yml: the three run
+        # the same audit, so an ignore in one and not the others is a hook that fails on
+        # an accepted finding.
+        entry: uv run pip-audit --skip-editable --ignore-vuln PYSEC-2026-3740
         language: system
         pass_filenames: false
         files: (^uv.lock$|pyproject.toml$)

@@ -1,5 +1,9 @@
 UV ?= uv
 UC1_EVAL_ARGS ?=
+# The B6 regression gate CI runs on every PR. Thresholds are data in
+# platform/eval/thresholds.yaml so a ratchet is a reviewable diff, and --strict
+# turns a breach into a non-zero exit rather than a printed warning.
+UC1_REGRESSION_ARGS ?= --thresholds platform/eval/thresholds.yaml --strict
 # `make eval-uc2` stays offline and free, because CI runs it and
 # .claude/rules/eval.md says offline CI uses the checked-in scaffold. The vendor
 # runs are opt-in targets below.
@@ -21,7 +25,7 @@ COMPOSE = docker compose --env-file .env.stack
 # a --profile flag would also start every unprofiled service.
 ZAMMAD = zammad-postgresql zammad-redis zammad-memcached zammad-init \
 	zammad-railsserver zammad-nginx zammad-scheduler zammad-websocket
-.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
+.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc1-regression eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
         check check-quick check-full test-ticketing stack-core stack-obs stack-voice stack-sparse stack-ticketing stack-status stack-logs ship plan
 bootstrap:
 	python3 infra/bootstrap.py
@@ -71,6 +75,18 @@ test:
 	$(UV) run pytest -m 'not slow and not integration and not ticketing and not voice'
 eval-uc1:
 	$(UV) run python -m indic_platform.eval.runners.run_uc1 --chat-only --decide helpdesk_agent.graph:decide $(UC1_EVAL_ARGS)
+# What CI runs for the P7 acceptance ("CI runs eval-uc1 and fails on regression
+# thresholds from Part B6"). Same runner as eval-uc1, --chat-only so live STT and
+# its spend stay out of CI, plus the thresholds file and --strict.
+# The B6 regression gate CI runs. `--mocked-decisions`, NOT the real graph: the
+# graph stage needs TEI, Qdrant, an ingested KB and an Anthropic key, none of which
+# CI's `checks` job has, and the prompt's own execution note asks for the adversarial
+# subset "with mocked decisions". What this gates is therefore the adversarial
+# threshold, which is build-blocking at 0%. Action accuracy, reply-language match and
+# hit@3 are deliberately reported UNMEASURED under this flag rather than scored
+# against a stand-in -- `make eval-uc1` is what measures those, and it needs the stack.
+eval-uc1-regression:
+	$(UV) run python -m indic_platform.eval.runners.run_uc1 --chat-only --mocked-decisions $(UC1_REGRESSION_ARGS)
 eval-uc2:
 	$(UV) run python -m indic_platform.eval.runners.run_uc2 $(UC2_EVAL_ARGS)
 eval-uc2-live:
