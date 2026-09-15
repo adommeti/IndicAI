@@ -47,9 +47,7 @@ def put(data: bytes, *, key: str, content_type: str, minio: Any | None = None) -
     minio = minio or client()
     if not minio.bucket_exists(BUCKET):
         minio.make_bucket(BUCKET)
-    minio.put_object(
-        BUCKET, key, io.BytesIO(data), length=len(data), content_type=content_type
-    )
+    minio.put_object(BUCKET, key, io.BytesIO(data), length=len(data), content_type=content_type)
     return Stored(uri=f"s3://{BUCKET}/{key}", sha256=digest(data), bytes=len(data))
 
 

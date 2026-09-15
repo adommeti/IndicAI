@@ -274,33 +274,49 @@ def test_production_refuses_a_partially_approved_module() -> None:
     assert load_approved.__doc__ and "partially approved" in load_approved.__doc__
 
 
-def test_manifest_shape_carries_what_d8_calls_the_audit_record() -> None:
-    """Built from a hand-assembled row set so the shape is pinned without a DB."""
-    glossary_version = (
-        __import__("training_localizer.terminology", fromlist=["load_glossary"])
-        .load_glossary()
-        .version
-    )
-    manifest = {
-        "module_id": str(MODULE),
-        "language": "hi-IN",
-        "segments": 5,
-        "approved_versions": {"1": 1, "2": 2},
-        "artifacts": {
-            "captions": {"uri": "s3://b/c.vtt", "sha256": "a" * 64, "bytes": 10},
-            "dubbed_video": {"uri": "s3://b/d.mp4", "sha256": "b" * 64, "bytes": 20},
-        },
-        "versions": {
-            "glossary": glossary_version,
-            "prompts": {name: stages.prompt_version(name) for name in ("adapt", "summary")},
-            "models": {"dub": "sarvam-dubbing", "tts": "bulbul:v3"},
-        },
-        "timing": {"timing_fit_rate": 1.0},
+def test_manifest_versions_names_every_input_that_could_change_the_output() -> None:
+    """D8: the manifest is the audit record of what was delivered in which version."""
+    from training_localizer.terminology import load_glossary
+
+    versions = production.manifest_versions()
+    assert versions["glossary"] == load_glossary().version
+    assert set(versions["prompts"]) == set(production.PROMPT_NAMES)
+    assert all(len(v) == 16 for v in versions["prompts"].values())
+    assert versions["models"]["dub"] == "sarvam-dubbing"
+    assert versions["models"]["tts"] == "bulbul:v3"
+    assert versions["models"]["translate"] == "mayura:v1"
+
+
+def test_a_prompt_edit_changes_the_manifest(tmp_path: Path) -> None:
+    """The version block is only an audit record if it moves when an input does."""
+    before = production.manifest_versions()["prompts"]["summary"]
+    original = (stages.PROMPTS / "summary.md").read_text()
+    try:
+        (stages.PROMPTS / "summary.md").write_text(original + "\nOne more rule.\n")
+        assert production.manifest_versions()["prompts"]["summary"] != before
+    finally:
+        (stages.PROMPTS / "summary.md").write_text(original)
+    assert production.manifest_versions()["prompts"]["summary"] == before
+
+
+def test_artifacts_carry_a_checksum_of_what_was_stored() -> None:
+    """Assembled with the real builders, so the manifest's artifact block is the
+    shape production actually writes."""
+    segments = approved(5)
+    storage = InMemoryStorage()
+    vtt, srt = production.build_captions(segments, language="hi-IN")
+    stored = {
+        "captions": storage.put(vtt.encode(), key="m/hi-IN/captions.vtt", content_type="text/vtt"),
+        "script_srt": storage.put(
+            srt.encode(), key="m/hi-IN/script.srt", content_type="application/x-subrip"
+        ),
     }
-    # Every field D8 asks for: what, where, which bytes, produced by which versions.
-    assert set(manifest) >= {"module_id", "language", "artifacts", "versions", "timing"}
-    assert all(len(a["sha256"]) == 64 for a in manifest["artifacts"].values())
-    assert manifest["versions"]["glossary"] == glossary_version
+    artifacts = {
+        kind: {"uri": s.uri, "sha256": s.sha256, "bytes": s.bytes} for kind, s in stored.items()
+    }
+    assert all(len(a["sha256"]) == 64 for a in artifacts.values())
+    assert artifacts["captions"]["sha256"] == digest(storage.get("m/hi-IN/captions.vtt"))
+    assert artifacts["script_srt"]["sha256"] != artifacts["captions"]["sha256"]
 
 
 # --- end to end against Postgres ----------------------------------------------

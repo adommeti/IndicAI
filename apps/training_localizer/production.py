@@ -334,6 +334,30 @@ async def write_artifact(
         existing.meta = {**meta, "bytes": stored.bytes}
 
 
+PROMPT_NAMES = ("adapt", "post_edit", "backtranslate", "qa_judge", "quiz", "summary")
+
+
+def manifest_versions() -> dict[str, Any]:
+    """Everything that shaped the delivered bytes.
+
+    PRD D8 calls the manifest "the audit record of what was delivered in which
+    version", so this has to name every input whose change would change the
+    output: the terminology, each prompt by content hash, and each model.
+    """
+    return {
+        "glossary": load_glossary().version,
+        "prompts": {name: stages.prompt_version(name) for name in PROMPT_NAMES},
+        "models": {
+            "adapt": stages.ADAPT_MODEL,
+            "post_edit": stages.POST_EDIT_MODEL,
+            "judge": stages.JUDGE_MODEL,
+            "translate": "mayura:v1",
+            "dub": "sarvam-dubbing",
+            "tts": "bulbul:v3",
+        },
+    }
+
+
 async def build_manifest(
     db: AsyncSession, *, module_id: uuid.UUID, language: str
 ) -> dict[str, Any]:
@@ -347,7 +371,6 @@ async def build_manifest(
             select(Artifact).where(Artifact.module_id == module_id, Artifact.language == language)
         )
     ).all()
-    glossary = load_glossary()
     dub = next((r for r in rows if r.kind == "dubbed_video"), None)
     return {
         "module_id": str(module_id),
@@ -359,21 +382,7 @@ async def build_manifest(
             r.kind: {"uri": r.uri, "sha256": r.sha256, "bytes": r.meta.get("bytes")}
             for r in sorted(rows, key=lambda r: r.kind)
         },
-        "versions": {
-            "glossary": glossary.version,
-            "prompts": {
-                name: stages.prompt_version(name)
-                for name in ("adapt", "post_edit", "backtranslate", "qa_judge", "quiz", "summary")
-            },
-            "models": {
-                "adapt": stages.ADAPT_MODEL,
-                "post_edit": stages.POST_EDIT_MODEL,
-                "judge": stages.JUDGE_MODEL,
-                "translate": "mayura:v1",
-                "dub": "sarvam-dubbing",
-                "tts": "bulbul:v3",
-            },
-        },
+        "versions": manifest_versions(),
         "timing": (dub.meta or {}).get("timing") if dub else None,
     }
 
