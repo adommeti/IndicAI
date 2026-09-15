@@ -84,6 +84,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 import pytest
+from helpdesk_agent import voice_pipeline
 from indic_platform.eval.runners import run_uc1
 from livekit import api, rtc
 
@@ -112,7 +113,9 @@ REPLY_TIMEOUT_S = 20.0
 # seconds in the MIDDLE of a reply. A quiet gap shorter than this would call that
 # pause "the previous reply finished", and the flush that follows -- residue from the
 # previous item -- would be timed as the next item's first audio.
-TTS_IDLE_TIMEOUT_S = 2.0
+# Imported, never retyped: a change to the pipeline's timeout must move this gap with
+# it, and a silently stale copy here reports a latency better than the real one.
+TTS_IDLE_TIMEOUT_S = voice_pipeline.TTS_IDLE_TIMEOUT_S
 # And the gap has to outlast the flush itself, not just the wait for it: after the
 # iterator ends, Bulbul still has to return the first chunk of that last sentence.
 # Two seconds is generous against a gate that allows 3.5s for STT, the graph and TTS

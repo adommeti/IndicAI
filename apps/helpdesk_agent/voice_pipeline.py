@@ -146,6 +146,15 @@ PREROLL_MS = 400
 # signal is not a control, and the cost of failing closed is one lost session.
 GREETING_ACK_TIMEOUT_S = 30.0
 
+# How long synthesis waits for the next sentence of the same reply before treating the
+# reply as finished and letting the adapter flush. Exported because `make voice-test`
+# has to outlast it: the agent can be silent for this long in the MIDDLE of a reply, so
+# a harness that called a shorter silence "the previous reply ended" would time the
+# flush that follows as the next item's first audio, and report a latency better than
+# the one a caller experiences. `platform/tests/test_uc1_voice_latency.py` derives its
+# quiet gap from this name rather than repeating the number.
+TTS_IDLE_TIMEOUT_S = 2.0
+
 _SENTENCE_END = re.compile("(?<=[\u0964\u0965.!?\u2047\u2048\u2049])[\\s\u200b]+")
 
 
@@ -868,7 +877,7 @@ class SarvamTTSProcessor(FrameProcessor):
         async def chunks() -> AsyncIterator[str]:
             while True:
                 try:
-                    text = await asyncio.wait_for(queue.get(), 2.0)
+                    text = await asyncio.wait_for(queue.get(), TTS_IDLE_TIMEOUT_S)
                 except TimeoutError:
                     # A turn's reply is complete when no further sentence arrives; the
                     # adapter needs the iterator to end so it can flush the last one.
@@ -1137,6 +1146,7 @@ __all__: Sequence[str] = (
     "SarvamSTTProcessor",
     "SarvamTTSProcessor",
     "StageLatency",
+    "TTS_IDLE_TIMEOUT_S",
     "VoiceSettings",
     "build_pipeline",
     "decode_mp3_stream",
