@@ -32,6 +32,23 @@ measured: true
 measured_from: docs/adr/assets/0003/bulbul-*.mp3 (uc2/P0-spike, bulbul:v3, speaker shreya, pace 1.0)
 tolerance: 0.15 # +/- 15% of the segment duration counts as fitting (D10)
 
+# `words_per_second` is the ENGLISH word budget the `adapt` stage works to
+# (uc2/P2). adapt rewrites English, but what has to fit the segment is the
+# *translation*, so the budget is how many English words survive rendering into
+# that language within a second of speech. Derived per language from the 90
+# golden reference translations: median target characters per English source
+# word, divided by that language's chars_per_second above.
+#
+#   hi-IN  6.89 chars/word / 13.3 = 0.518 s/word -> 1.93 words/s
+#   te-IN  6.28 chars/word / 12.3 = 0.510 s/word -> 1.96 words/s
+#   ta-IN  7.57 chars/word / 14.0 = 0.541 s/word -> 1.85 words/s
+#
+# Reproduce with `platform/eval/runners/run_uc2.py --words-per-second`. This is
+# why adapt has to compress: the golden scripts were authored at 15 English
+# chars/s, about 2.5 words/s, so roughly a quarter of the words must go.
+# The expansion ratio comes from DRAFT references, so it inherits their caveat;
+# uc2/P4 should re-derive it from approved text and from dubbed durations.
+
 languages:
   en-IN:
     chars_per_second: 15.0
@@ -39,10 +56,16 @@ languages:
     note: source pace, used only to sanity-check the authored sample timings
   hi-IN:
     chars_per_second: 13.3
+    words_per_second: 1.93
+    chars_per_source_word: 6.89
     script: Devanagari
   te-IN:
     chars_per_second: 12.3
+    words_per_second: 1.96
+    chars_per_source_word: 6.28
     script: Telugu
   ta-IN:
     chars_per_second: 14.0
+    words_per_second: 1.85
+    chars_per_source_word: 7.57
     script: Tamil

@@ -420,3 +420,43 @@ def test_eval_and_app_judge_prompts_agree() -> None:
         if not app_copy.exists():
             continue
         assert run_uc2.prompt_body(app_copy) == run_uc2.prompt_body(eval_dir / name), name
+
+
+def test_pre_edit_adherence_is_the_number_that_can_fail() -> None:
+    """`terminology_adherence` alone cannot fail against this pipeline.
+
+    `training_localizer.terminology.enforce` implements exactly the predicate
+    `score_terminology` tests, so a translator that returns the literal string
+    "zzz" and then enforces scores a perfect 1.0 -- identical to a real run.
+    That is why `--pre-edit` exists: it scores the text before the enforcer,
+    which is the number that says what the translation vendor actually did.
+    """
+    from training_localizer.terminology import enforce, load_glossary, resolve_locked_id
+
+    glossary = load_glossary()
+
+    def useless(segment: Segment, language: str) -> str:
+        return "zzz"
+
+    def useless_then_enforced(segment: Segment, language: str) -> str:
+        text, _ = enforce(
+            source_text=segment.source_text,
+            translated="zzz",
+            language=language,
+            glossary=glossary,
+            locked_id=segment.locked_id or resolve_locked_id(segment.source_text, glossary),
+        )
+        return text
+
+    report = evaluate(translate=useless_then_enforced, pre_edit=useless, strict=False)
+    assert report.metrics["terminology_adherence"] == 1.0, "enforcement always wins"
+    assert report.metrics["terminology_adherence_pre_edit"] == 0.0, (
+        "and the pre-edit metric exposes that nothing was translated"
+    )
+    assert report.metrics["keep_english_retention_pre_edit"] == 0.0
+    assert "terminology_adherence_pre_edit" not in report.quality_gates, "reported, not gated"
+
+
+def test_pre_edit_metrics_are_absent_unless_asked_for() -> None:
+    report = evaluate(strict=False)
+    assert "terminology_adherence_pre_edit" not in report.metrics

@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -50,3 +50,86 @@ class Turn(Base):
     model: Mapped[str] = mapped_column(String(128))
     trace_id: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- UC2 training localizer (PRD D6) -----------------------------------------
+
+
+class Module(Base):
+    __tablename__ = "modules"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(Text)
+    source_lang: Mapped[str] = mapped_column(String(16), default="en-IN")
+    status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Segment(Base):
+    __tablename__ = "segments"
+    module_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("modules.id"), primary_key=True)
+    seg_id: Mapped[int] = mapped_column(primary_key=True)
+    start_ms: Mapped[int]
+    end_ms: Mapped[int]
+    source_text: Mapped[str] = mapped_column(Text)
+    locked: Mapped[bool] = mapped_column(default=False)
+
+
+class Localization(Base):
+    """One stage's output for one segment in one language, versioned.
+
+    The primary key is what makes a stage re-runnable on its own: a re-run
+    writes a new `version` rather than overwriting, so a reviewer edit
+    triggers re-production and never re-translation (PRD D5).
+    """
+
+    __tablename__ = "localizations"
+    # Declared here as well as in 0003_uc2_modules so `alembic check` does not
+    # see the migration's index as drift and autogenerate a drop.
+    __table_args__ = (Index("ix_localizations_module_language", "module_id", "language", "stage"),)
+    module_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("modules.id"), primary_key=True)
+    seg_id: Mapped[int] = mapped_column(primary_key=True)
+    language: Mapped[str] = mapped_column(String(16), primary_key=True)
+    stage: Mapped[str] = mapped_column(String(32), primary_key=True)
+    version: Mapped[int] = mapped_column(primary_key=True)
+    text: Mapped[str] = mapped_column(Text)
+    # rationale, change_log, qa_score, glossary_hits, glossary_version, model,
+    # prompt_version — every persisted row records what produced it.
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class QuizItem(Base):
+    __tablename__ = "quiz_items"
+    module_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("modules.id"), primary_key=True)
+    language: Mapped[str] = mapped_column(String(16), primary_key=True)
+    item_id: Mapped[int] = mapped_column(primary_key=True)
+    seg_id: Mapped[int]
+    question: Mapped[str] = mapped_column(Text)
+    options: Mapped[list[str]] = mapped_column(JSONB)
+    answer: Mapped[int]
+    rationale: Mapped[str] = mapped_column(Text)
+    approved: Mapped[bool] = mapped_column(default=False)
+
+
+class Artifact(Base):
+    __tablename__ = "artifacts"
+    module_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("modules.id"), primary_key=True)
+    language: Mapped[str] = mapped_column(String(16), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    uri: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class QuizAttempt(Base):
+    __tablename__ = "quiz_attempts"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    module_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("modules.id"), index=True
+    )  # ix_quiz_attempts_module_id
+    language: Mapped[str] = mapped_column(String(16))
+    employee_id: Mapped[str] = mapped_column(String(128))
+    score: Mapped[int]
+    max_score: Mapped[int]
+    taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
