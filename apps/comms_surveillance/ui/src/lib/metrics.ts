@@ -42,8 +42,31 @@ export interface CategorySeries {
   points: PrecisionPoint[];
 }
 
+/** The axis, keyed on `bucket_start`. Not on `bucket`: that field is the
+ *  granularity the server was asked for ("week"), identical on every point, so
+ *  keying on it collapses the whole series into one column. */
 export function bucketsOf(points: readonly PrecisionPoint[]): string[] {
-  return [...new Set(points.map((point) => point.bucket))].sort((a, b) => a.localeCompare(b));
+  return [...new Set(points.map((point) => point.bucket_start))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+
+/** How a bucket is named to a reader. ISO week for weekly buckets, because
+ *  "2026-W36" is how a compliance report refers to a week; a plain date
+ *  otherwise. */
+export function bucketLabel(point: Pick<PrecisionPoint, "bucket" | "bucket_start">): string {
+  const start = new Date(point.bucket_start);
+  if (Number.isNaN(start.getTime())) return point.bucket_start;
+  if (point.bucket === "week") {
+    const thursday = new Date(
+      Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + 3),
+    );
+    const firstOfYear = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1));
+    const week = Math.ceil(((thursday.getTime() - firstOfYear.getTime()) / 86_400_000 + 1) / 7);
+    return `${thursday.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+  }
+  if (point.bucket === "month") return point.bucket_start.slice(0, 7);
+  return point.bucket_start.slice(0, 10);
 }
 
 /** One series per category, aligned on the full bucket axis so a category that
@@ -53,24 +76,31 @@ export function groupOverTime(points: readonly PrecisionPoint[]): CategorySeries
   const byCategory = new Map<string, Map<string, PrecisionPoint>>();
   for (const point of points) {
     const series = byCategory.get(point.category) ?? new Map<string, PrecisionPoint>();
-    series.set(point.bucket, point);
+    series.set(point.bucket_start, point);
     byCategory.set(point.category, series);
   }
   return [...byCategory.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([category, series]) => ({
       category,
-      points: axis.map(
-        (bucket) =>
-          series.get(bucket) ?? {
-            bucket,
-            category,
-            confirmed: 0,
-            false_positive: 0,
-            decided: 0,
-            precision: null,
-          },
-      ),
+      points: axis.map((bucketStart) => {
+        const found = series.get(bucketStart);
+        if (found) return found;
+        // A category that went quiet for a week: a gap on the axis, carrying
+        // precision null so it breaks the line rather than reading as zero.
+        const sibling = points.find((point) => point.bucket_start === bucketStart);
+        return {
+          bucket: sibling?.bucket ?? "week",
+          bucket_start: bucketStart,
+          bucket_end: sibling?.bucket_end ?? bucketStart,
+          category,
+          flags: 0,
+          confirmed: 0,
+          false_positive: 0,
+          decided: 0,
+          precision: null,
+        };
+      }),
     }));
 }
 

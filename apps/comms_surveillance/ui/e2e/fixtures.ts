@@ -7,6 +7,12 @@ import type { Page, Route } from "@playwright/test";
  *  here only mirrors what the service already enforces and what the API role
  *  tests prove. Set E2E_LIVE=1 to skip all of this and drive a real API. */
 
+// Three consecutive Mondays, UTC. Half-open: each bucket_end is the next start.
+const W35 = "2026-08-24T00:00:00+00:00";
+const W36 = "2026-08-31T00:00:00+00:00";
+const W37 = "2026-09-07T00:00:00+00:00";
+const W38 = "2026-09-14T00:00:00+00:00";
+
 export type FixtureRole = "compliance_reviewer" | "compliance_lead" | "governance";
 
 const HINDI_TRANSCRIPT = [
@@ -198,13 +204,20 @@ export async function installApi(page: Page, role: FixtureRole): Promise<Fixture
         // Nothing decided: the UI must print "unmeasured", never 0.0.
         { category: "off_channel_contact", confirmed: 0, false_positive: 0, decided: 0, precision: null },
       ],
+      // Shaped exactly as `metrics.precision_over_time` returns it: `bucket` is
+      // the granularity and is the same on every row, the week is carried by
+      // `bucket_start`. An earlier version of this fixture put the label in
+      // `bucket`, so the screenshots showed three tidy week columns while the
+      // real API would have rendered "week" three times. A fixture that
+      // disagrees with the server is worse than no fixture: it makes the demo
+      // pass and the product fail.
       over_time: [
-        { bucket: "2026-W35", category: "guaranteed_returns", confirmed: 5, false_positive: 2, decided: 7, precision: 5 / 7 },
-        { bucket: "2026-W36", category: "guaranteed_returns", confirmed: 6, false_positive: 1, decided: 7, precision: 6 / 7 },
-        { bucket: "2026-W37", category: "guaranteed_returns", confirmed: 7, false_positive: 0, decided: 7, precision: 1 },
-        { bucket: "2026-W35", category: "pressure_selling", confirmed: 2, false_positive: 3, decided: 5, precision: 0.4 },
+        { bucket: "week", bucket_start: W35, bucket_end: W36, category: "guaranteed_returns", flags: 9, confirmed: 5, false_positive: 2, decided: 7, precision: 5 / 7 },
+        { bucket: "week", bucket_start: W36, bucket_end: W37, category: "guaranteed_returns", flags: 8, confirmed: 6, false_positive: 1, decided: 7, precision: 6 / 7 },
+        { bucket: "week", bucket_start: W37, bucket_end: W38, category: "guaranteed_returns", flags: 7, confirmed: 7, false_positive: 0, decided: 7, precision: 1 },
+        { bucket: "week", bucket_start: W35, bucket_end: W36, category: "pressure_selling", flags: 6, confirmed: 2, false_positive: 3, decided: 5, precision: 0.4 },
         // W36 missing on purpose: the line must break, not interpolate.
-        { bucket: "2026-W37", category: "pressure_selling", confirmed: 2, false_positive: 3, decided: 5, precision: 0.4 },
+        { bucket: "week", bucket_start: W37, bucket_end: W38, category: "pressure_selling", flags: 5, confirmed: 2, false_positive: 3, decided: 5, precision: 0.4 },
       ],
       unmeasured: ["off_channel_contact"],
     });
@@ -221,7 +234,9 @@ export async function installApi(page: Page, role: FixtureRole): Promise<Fixture
       tables: [
         { table: "flags", rows: 4210, ok: true, anchor_ok: true, reason: null },
         { table: "dispositions", rows: 1877, ok: true, anchor_ok: true, reason: null },
-        { table: "calls", rows: 903, ok: true, anchor_ok: true, reason: null },
+        // `anchor_ok: null` is a chain the nightly verify has not anchored yet.
+        // It is not a mismatch, and the dashboard must not paint it red.
+        { table: "calls", rows: 903, ok: true, anchor_ok: null, reason: null },
       ],
       breaks: 0,
       ok: true,

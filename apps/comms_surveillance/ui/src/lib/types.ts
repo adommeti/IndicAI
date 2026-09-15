@@ -83,8 +83,16 @@ export interface CategoryPrecision {
 }
 
 export interface PrecisionPoint extends CategoryPrecision {
-  /** Bucket label from precision_over_time(bucket="week"). */
+  /** The *granularity* -- "day" | "week" | "month" -- not a label. The server
+   *  sets this to the `bucket` argument it was called with, so every point in
+   *  a response carries the same value. Labelling an axis with it renders
+   *  "week" three times; the label comes from `bucket_start`. */
   bucket: string;
+  /** Start of the window, ISO-8601 UTC, half-open with `bucket_end`. This is
+   *  what identifies a point on the axis. */
+  bucket_start: string;
+  bucket_end: string;
+  flags: number;
 }
 
 export interface PrecisionMetrics {
@@ -105,7 +113,11 @@ export interface ChainTable {
   table: string;
   rows: number;
   ok: boolean;
-  anchor_ok: boolean;
+  /** `null` when this chain has never been anchored -- a first run, before the
+   *  nightly verify has written a baseline. That is not a mismatch, and
+   *  rendering it as one would put a red "break" on the governance dashboard
+   *  of a healthy new deployment. */
+  anchor_ok: boolean | null;
   reason: string | null;
 }
 

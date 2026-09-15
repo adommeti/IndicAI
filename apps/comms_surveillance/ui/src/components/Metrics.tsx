@@ -1,5 +1,6 @@
 import {
   UNMEASURED,
+  bucketLabel,
   bucketsOf,
   formatCount,
   formatPrecision,
@@ -105,6 +106,11 @@ const SPARK_H = 40;
 export function PrecisionOverTime({ metrics }: { metrics: PrecisionMetrics }) {
   const series = groupOverTime(metrics.over_time);
   const axis = bucketsOf(metrics.over_time);
+  // The axis is keyed on `bucket_start`; readers get the ISO week.
+  const labelFor = (bucketStart: string) => {
+    const point = metrics.over_time.find((row) => row.bucket_start === bucketStart);
+    return point ? bucketLabel(point) : bucketStart;
+  };
 
   if (series.length === 0)
     return (
@@ -121,7 +127,7 @@ export function PrecisionOverTime({ metrics }: { metrics: PrecisionMetrics }) {
       <div className="border-b border-border px-4 py-3">
         <h2 id="overtime-heading" className="text-sm font-semibold">Precision over time</h2>
         <p className="mt-1 text-xs text-muted">
-          {axis.length} buckets, {axis[0]} → {axis[axis.length - 1]}. A break in a line is a bucket
+          {axis.length} buckets, {labelFor(axis[0] ?? "")} → {labelFor(axis[axis.length - 1] ?? "")}. A break in a line is a bucket
           with nothing decided, not a drop to zero.
         </p>
       </div>
@@ -180,8 +186,10 @@ export function PrecisionOverTime({ metrics }: { metrics: PrecisionMetrics }) {
           <thead>
             <tr className="border-b border-border text-left uppercase tracking-wider text-muted">
               <th scope="col" className="px-4 py-2 font-semibold">Category</th>
-              {axis.map((bucket) => (
-                <th key={bucket} scope="col" className="px-3 py-2 text-right font-semibold">{bucket}</th>
+              {axis.map((bucketStart) => (
+                <th key={bucketStart} scope="col" className="px-3 py-2 text-right font-semibold">
+                  {labelFor(bucketStart)}
+                </th>
               ))}
             </tr>
           </thead>
@@ -190,7 +198,7 @@ export function PrecisionOverTime({ metrics }: { metrics: PrecisionMetrics }) {
               <tr key={row.category}>
                 <th scope="row" className="px-4 py-1.5 text-left font-medium">{row.category}</th>
                 {row.points.map((point) => (
-                  <td key={point.bucket} className="px-3 py-1.5 text-right">
+                  <td key={point.bucket_start} className="px-3 py-1.5 text-right">
                     <Measure value={formatPrecision(point.precision, 0)} />
                   </td>
                 ))}
@@ -276,8 +284,25 @@ export function ChainStatusPanel({ status }: { status: ChainStatus }) {
                 <td className={`px-4 py-2 font-mono text-xs ${table.ok ? "text-ok" : "text-danger"}`}>
                   {table.ok ? "✓ intact" : "✗ broken"}
                 </td>
-                <td className={`px-4 py-2 font-mono text-xs ${table.anchor_ok ? "text-ok" : "text-danger"}`}>
-                  {table.anchor_ok ? "✓ anchored" : "✗ mismatch"}
+                <td
+                  className={`px-4 py-2 font-mono text-xs ${
+                    table.anchor_ok === null
+                      ? "text-muted"
+                      : table.anchor_ok
+                        ? "text-ok"
+                        : "text-danger"
+                  }`}
+                >
+                  {/* Three states, not two. `null` means this chain has never
+                      been anchored -- a new deployment before the first nightly
+                      verify. Folding that into "mismatch" would paint a red
+                      break across a healthy dashboard, which is how an audit
+                      control teaches people to ignore it. */}
+                  {table.anchor_ok === null
+                    ? "— not yet anchored"
+                    : table.anchor_ok
+                      ? "✓ anchored"
+                      : "✗ mismatch"}
                 </td>
                 <td className="px-4 py-2 text-xs text-muted">{table.reason ?? "—"}</td>
               </tr>

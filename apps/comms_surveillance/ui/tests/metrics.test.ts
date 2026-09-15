@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   UNMEASURED,
+  bucketLabel,
   bucketsOf,
   formatCount,
   formatPrecision,
@@ -17,7 +18,19 @@ function cat(over: Partial<CategoryPrecision> = {}): CategoryPrecision {
 }
 
 function point(over: Partial<PrecisionPoint> = {}): PrecisionPoint {
-  return { ...cat(), bucket: "2026-W36", ...over };
+  // `bucket` is the granularity the server was asked for, identical on every
+  // point; `bucket_start` is what identifies the point on the axis. An earlier
+  // version of this helper put the label in `bucket`, which is what the real
+  // API does not do -- so the fixtures agreed with the UI and both disagreed
+  // with the server.
+  return {
+    ...cat(),
+    bucket: "week",
+    bucket_start: "2026-08-31T00:00:00+00:00",
+    bucket_end: "2026-09-07T00:00:00+00:00",
+    flags: 0,
+    ...over,
+  };
 }
 
 describe("formatting a measurement that may not exist", () => {
@@ -71,20 +84,39 @@ describe("overallPrecision", () => {
 });
 
 describe("groupOverTime", () => {
+  // Three consecutive Mondays. These differ by `bucket_start`, which is what
+  // the server varies; `bucket` stays "week" on every point, as it does in a
+  // real response.
+  const W36 = "2026-08-31T00:00:00+00:00";
+  const W37 = "2026-09-07T00:00:00+00:00";
+  const W38 = "2026-09-14T00:00:00+00:00";
   const points = [
-    point({ category: "a", bucket: "2026-W36", precision: 0.5, decided: 2 }),
-    point({ category: "a", bucket: "2026-W38", precision: 1, decided: 1 }),
-    point({ category: "b", bucket: "2026-W37", precision: 0.25, decided: 4 }),
+    point({ category: "a", bucket_start: W36, precision: 0.5, decided: 2 }),
+    point({ category: "a", bucket_start: W38, precision: 1, decided: 1 }),
+    point({ category: "b", bucket_start: W37, precision: 0.25, decided: 4 }),
   ];
 
   it("lists every bucket that appears anywhere, in order", () => {
-    expect(bucketsOf(points)).toEqual(["2026-W36", "2026-W37", "2026-W38"]);
+    expect(bucketsOf(points)).toEqual([W36, W37, W38]);
+  });
+
+  it("does not collapse the axis when every point shares one granularity", () => {
+    // The defect this pins: keying the axis on `bucket` -- "week" on all three
+    // points -- rendered one column labelled "week" instead of three weeks.
+    expect(new Set(points.map((p) => p.bucket)).size).toBe(1);
+    expect(bucketsOf(points)).toHaveLength(3);
+  });
+
+  it("labels a weekly bucket by its ISO week, not by its granularity", () => {
+    expect(bucketLabel(point({ bucket: "week", bucket_start: W36 }))).toBe("2026-W36");
+    expect(bucketLabel(point({ bucket: "month", bucket_start: W36 }))).toBe("2026-08");
+    expect(bucketLabel(point({ bucket: "day", bucket_start: W36 }))).toBe("2026-08-31");
   });
 
   it("aligns each category on the full axis", () => {
     const series = groupOverTime(points);
     expect(series.map((s) => s.category)).toEqual(["a", "b"]);
-    expect(series[0]?.points.map((p) => p.bucket)).toEqual(["2026-W36", "2026-W37", "2026-W38"]);
+    expect(series[0]?.points.map((p) => p.bucket_start)).toEqual([W36, W37, W38]);
   });
 
   it("fills a missing bucket as unmeasured, not as zero", () => {
