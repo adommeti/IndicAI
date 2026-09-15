@@ -211,7 +211,7 @@ def translate_task(self: Any, module_id: str, language: str) -> dict[str, Any]:
 
 async def _translate(module_id: uuid.UUID, language: str) -> dict[str, Any]:
     eng = engine()
-    mayura = SarvamTranslate()
+    mayura = SarvamTranslate()  # SarvamAdapter holds no closable resource of its own
     glossary = load_glossary()
     try:
         async with AsyncSession(eng) as db, db.begin():
@@ -258,7 +258,6 @@ async def _translate(module_id: uuid.UUID, language: str) -> dict[str, Any]:
             "segments": len(texts),
         }
     finally:
-        await mayura.close()
         await eng.dispose()
 
 

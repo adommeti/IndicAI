@@ -8,17 +8,19 @@ them directly and the numbers still describe the shipped code.
 Two entry points, named for exactly what they run, because the difference shows
 up in the metrics and a report must not blur it:
 
-  `full`                 adapt (Claude) -> translate (Mayura) -> post_edit
-                         (Claude + enforcement). Needs ANTHROPIC_API_KEY and
-                         SARVAM_API_KEY.
+  `full`                  adapt (Claude) -> translate (Mayura) -> post_edit
+                          (Claude + enforcement). Needs ANTHROPIC_API_KEY and
+                          SARVAM_API_KEY.
   `translate_and_enforce` translate (Mayura) -> post_edit (enforcement only).
-                         Needs SARVAM_API_KEY. No adapt, so nothing compresses
-                         and timing-fit is expected to fail; terminology
-                         adherence is still a real measurement of the shipped
-                         enforcer.
+                          Needs SARVAM_API_KEY. No adapt, so nothing compresses
+                          and timing-fit is expected to fail; terminology
+                          adherence is still a real measurement of the shipped
+                          enforcer.
 
-Both are synchronous because the runner's Translator contract is, and both
-memoise per (seg_id, language) so a language's adapt pass runs once.
+The runner's Translator contract is synchronous, so a whole (module, language)
+is localized inside one event loop on the first call for it and served from
+cache after that. Doing it per segment would open a vendor client per segment
+and re-run adapt, which is a per-module call, once for every segment in it.
 """
 
 import asyncio
@@ -28,6 +30,13 @@ from typing import Any, Protocol
 from training_localizer import stages
 from training_localizer.stages import SourceSegment
 from training_localizer.terminology import load_glossary, resolve_locked_id
+
+# Segments per module translated at once. Sequential by default: Sarvam's
+# account rate limit rejected a concurrency of 4 with 429s that outlasted the
+# adapter runtime's three retries, and a golden run that dies two thirds of the
+# way through has cost money and measured nothing. Raise it with
+# UC2_EVAL_CONCURRENCY only against an account whose limit you know.
+CONCURRENCY = int(os.environ.get("UC2_EVAL_CONCURRENCY", "1"))
 
 
 class RunnerSegment(Protocol):
@@ -54,104 +63,96 @@ def _source(segment: RunnerSegment) -> SourceSegment:
 
 
 class Localizer:
-    """One pipeline run over the golden set, cached per (module, seg, language)."""
+    """One pipeline run over the golden set, batched per (module, language)."""
 
     def __init__(self, *, use_claude: bool) -> None:
         self.use_claude = use_claude
         self.glossary = load_glossary()
-        self._adapted: dict[tuple[str, str], dict[int, str]] = {}
-        self._cache: dict[tuple[str, int, str], str] = {}
+        self._done: dict[tuple[str, str], dict[int, str]] = {}
         self.change_log: list[dict[str, Any]] = []
         self.meta: dict[str, Any] = {"adapt": {}, "post_edit_model": use_claude}
 
     def __call__(self, segment: RunnerSegment, language: str) -> str:
-        key = (segment.module_id, segment.seg_id, language)
-        if key not in self._cache:
-            self._cache[key] = asyncio.run(self._localize(segment, language))
-        return self._cache[key]
+        key = (segment.module_id, language)
+        if key not in self._done:
+            self._done[key] = asyncio.run(self._module(segment.module_id, language))
+        return self._done[key][segment.seg_id]
 
-    async def _adapt_module(self, segment: RunnerSegment, language: str) -> dict[int, str]:
-        """adapt runs per module, not per segment: it sees the whole script."""
+    def _segments(self, module_id: str) -> list[SourceSegment]:
         from indic_platform.eval.runners.run_uc2 import load_segments
 
-        key = (segment.module_id, language)
-        if key in self._adapted:
-            return self._adapted[key]
-        module = [
-            _source(s)  # type: ignore[arg-type]
-            for s in load_segments()
-            if s.module_id == segment.module_id
-        ]
-        from indic_platform.adapters.claude import Claude
+        out: list[SourceSegment] = []
+        for s in load_segments():
+            if s.module_id != module_id:
+                continue
+            source = _source(s)  # type: ignore[arg-type]
+            if source.locked and source.locked_id is None:
+                source = SourceSegment(
+                    seg_id=source.seg_id,
+                    start_ms=source.start_ms,
+                    end_ms=source.end_ms,
+                    source_text=source.source_text,
+                    locked=True,
+                    locked_id=resolve_locked_id(source.source_text, self.glossary),
+                )
+            out.append(source)
+        return out
 
-        claude = Claude()
-        try:
-            adapted, meta = await stages.adapt(module, language, structured=claude.structured)
-        finally:
-            await claude.client.close()
-        self.meta["adapt"][f"{segment.module_id}:{language}"] = meta
-        self._adapted[key] = {seg_id: item.text for seg_id, item in adapted.items()}
-        return self._adapted[key]
-
-    async def _localize(self, segment: RunnerSegment, language: str) -> str:
+    async def _module(self, module_id: str, language: str) -> dict[int, str]:
         from indic_platform.adapters.sarvam_translate import SarvamTranslate
 
-        locked_id = segment.locked_id or (
-            resolve_locked_id(segment.source_text, self.glossary) if segment.locked else None
-        )
-        english = segment.source_text
-        if self.use_claude:
-            english = (await self._adapt_module(segment, language)).get(
-                segment.seg_id, segment.source_text
-            )
+        segments = self._segments(module_id)
+        english = {s.seg_id: s.source_text for s in segments}
+        claude = None
+        try:
+            if self.use_claude:
+                from indic_platform.adapters.claude import Claude
 
-        locked_text = (
-            str(self.glossary.statements[locked_id][language]) if locked_id is not None else None
-        )
-        if locked_text is not None:
-            translated = locked_text
-        else:
+                claude = Claude()
+                adapted, meta = await stages.adapt(segments, language, structured=claude.structured)
+                self.meta["adapt"][f"{module_id}:{language}"] = meta
+                english = {seg_id: item.text for seg_id, item in adapted.items()}
+
             mayura = SarvamTranslate()
-            try:
-                translated = await stages.translate(
-                    english,
-                    language,
-                    translator=lambda t, lang: mayura.translate(t, target=lang, mode="formal"),
+            limit = asyncio.Semaphore(CONCURRENCY)
+
+            async def one(segment: SourceSegment) -> tuple[int, str]:
+                locked_text = (
+                    str(self.glossary.statements[segment.locked_id][language])
+                    if segment.locked_id is not None
+                    else None
                 )
-            finally:
-                await mayura.close()
-
-        structured = None
-        if self.use_claude:
-            from indic_platform.adapters.claude import Claude
-
-            claude = Claude()
-            try:
+                async with limit:
+                    translated = await stages.translate(
+                        english[segment.seg_id],
+                        language,
+                        translator=lambda t, lang: mayura.translate(t, target=lang, mode="formal"),
+                        locked_text=locked_text,
+                    )
                 text, changes, _ = await stages.post_edit(
-                    source_text=english,
+                    source_text=english[segment.seg_id],
                     translated=translated,
                     language=language,
                     glossary=self.glossary,
-                    structured=claude.structured,
-                    locked_id=locked_id,
+                    structured=claude.structured if claude else None,
+                    locked_id=segment.locked_id,
                 )
-            finally:
+                self.change_log += [
+                    {
+                        "module_id": module_id,
+                        "seg_id": segment.seg_id,
+                        "language": language,
+                        **change.as_json(),
+                    }
+                    for change in changes
+                ]
+                return segment.seg_id, text
+
+            results = await asyncio.gather(*(one(s) for s in segments))
+        finally:
+            if claude is not None:
                 await claude.client.close()
-        else:
-            text, changes, _ = await stages.post_edit(
-                source_text=english,
-                translated=translated,
-                language=language,
-                glossary=self.glossary,
-                structured=structured,
-                locked_id=locked_id,
-            )
-        self.change_log += [
-            {"module_id": segment.module_id, "seg_id": segment.seg_id, "language": language}
-            | change.as_json()
-            for change in changes
-        ]
-        return text
+        return dict(results)
 
 
 _full: Localizer | None = None
@@ -181,4 +182,5 @@ def translate_and_enforce(segment: RunnerSegment, language: str) -> str:
 
 def change_log() -> list[dict[str, Any]]:
     """Every post_edit change from the run, for the report."""
-    return (_full or _enforce_only or Localizer(use_claude=False)).change_log
+    active = _full or _enforce_only
+    return active.change_log if active else []

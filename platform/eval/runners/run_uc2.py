@@ -438,6 +438,7 @@ def evaluate(
     judge: Judge | None = None,
     strict: bool = True,
     fidelity_source: str = "references",
+    sut: str = "baseline (untranslated source)",
 ) -> Report:
     segments = load_segments()
     references = load_references()
@@ -514,7 +515,7 @@ def evaluate(
         "quiz_loaded": len(quiz) == 30,
         "terminology_check_ran": metrics["terminology_expectations"] > 0,
     }
-    stage = "P1 harness; " + (
+    stage = f"harness P1; SUT {sut}; " + (
         "provisional: " + ", ".join(provisional) if provisional else "measured"
     )
     report = Report(
@@ -661,6 +662,7 @@ def main() -> None:
         judge=judge,
         strict=not args.baseline,
         fidelity_source=args.fidelity_source,
+        sut=args.translate or "baseline (untranslated source)",
     )
     report.write(args.output)
     print(
