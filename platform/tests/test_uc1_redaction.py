@@ -84,6 +84,11 @@ NATIONAL_ID = "1234 5678 9012"
 GROUPED_PHONE = "9876 543 210"
 EMPLOYEE_ID = "EMP-48213"
 EMPLOYEE_NAME = "Asha Rao"
+# A PAN-shaped string. Five letters, four digits, a letter reads as a high-entropy
+# token to the secret scanner, so it is marked here rather than in `.secrets.baseline`:
+# a baseline entry hides the finding for the whole file, an inline pragma hides exactly
+# this literal and nothing else.
+PAN = "ABCDE1234F"  # pragma: allowlist secret
 
 PROBE = (
     f"{EMPLOYEE_NAME} ({EMPLOYEE_ID}) ka number {PHONE} hai, email {EMAIL}, "
@@ -667,7 +672,7 @@ def test_redaction_gaps_are_asserted_not_wished_away() -> None:
     assert redact("ticket 4521") == "ticket 4521", "short reference numbers are untouched"
     assert redact(EMPLOYEE_ID) == EMPLOYEE_ID, "internal identifiers are not patterns"
     assert redact(EMPLOYEE_NAME) == EMPLOYEE_NAME, "names are not redacted; nothing claims they are"
-    assert redact("ABCDE1234F") == "ABCDE1234F", "PAN is not in the pattern list"
+    assert redact(PAN) == PAN, "PAN is not in the pattern list"
     assert redact("nau aath saat chhah paanch") == "nau aath saat chhah paanch"
     # Masked, but as the wrong label: a 12-digit run reads as an id before it reads as a
     # number with a country code. It is still masked, which is what the control requires.
