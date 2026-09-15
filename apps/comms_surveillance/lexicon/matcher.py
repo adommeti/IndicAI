@@ -85,6 +85,10 @@ class Hit:
     speaker: str
     # "term" for a literal, "regex" for a pattern. Auditors ask.
     kind: str
+    # The lexicon that produced this hit (PRD E7). Carried on the hit rather
+    # than looked up later, so a persisted flag is self-describing: whoever
+    # reads it a year on can resolve exactly which YAML raised it.
+    lexicon_version: str
 
 
 @dataclass(frozen=True)
@@ -153,6 +157,7 @@ class Lexicon:
                         segment_index=index,
                         speaker=speaker,
                         kind="term",
+                        lexicon_version=self.version,
                     )
                 )
 
@@ -172,6 +177,7 @@ class Lexicon:
                         segment_index=index,
                         speaker=speaker,
                         kind="regex",
+                        lexicon_version=self.version,
                     )
                 )
         return hits

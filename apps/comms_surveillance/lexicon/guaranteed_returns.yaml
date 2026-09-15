@@ -35,7 +35,10 @@ entries:
       - return guaranteed hai
       - guaranteed return milega
       - return ki guarantee
-    regex: '\bguarantee\w*\s+(?:\w+\s+){0,2}returns?\b'
+    # Negative lookbehind for the standard disclaimer. "past performance is
+    # not a guarantee of future returns" is the sentence this category
+    # exists to allow; "guarantee of returns" is the one it exists to catch.
+    regex: '(?<!not a )(?<!no )(?<!never a )\bguarantee\w*\s+(?:\w+\s+){0,2}returns?\b'
 
   - id: gr-002
     note: assured or certain return, without the word guarantee
@@ -350,4 +353,6 @@ entries:
     severity: medium
     weight: 0.5
     terms: []
-    regex: '\b(?:promise|promising|assure|assuring|guarantee|guaranteeing)\b[^.!?]{0,40}\b(?:return|returns|profit|yield|payout)\b'
+    # Same disclaimer guard as gr-001: this catch-all is the wider net, so
+    # without it the lookbehind on gr-001 just moves the false positive here.
+    regex: '(?<!not a )(?<!no )(?<!never a )\b(?:promise|promising|assure|assuring|guarantee|guaranteeing)\b[^.!?]{0,40}\b(?:return|returns|profit|yield|payout)\b'

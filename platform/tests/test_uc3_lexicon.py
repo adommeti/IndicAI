@@ -297,3 +297,46 @@ def test_a_transcript_scans_in_under_fifty_milliseconds() -> None:
 
     assert worst < 50.0, f"worst transcript took {worst:.1f}ms"
     print(f"\nlexicon scan: worst {worst:.2f}ms, mean {mean:.2f}ms over {len(transcripts)}")
+
+
+def test_the_standard_risk_disclaimer_does_not_fire() -> None:
+    """The canonical false positive for this category, and the reason gr-001
+    carries a negative lookbehind.
+
+    "past performance is not a guarantee of future returns" is the sentence
+    every compliant fund manager is required to say. A lexicon that flags it
+    buries the reviewer in the one phrase they will see most often. The promise
+    it is meant to catch -- "I guarantee returns of twelve percent" -- must
+    still fire, so this test asserts both directions.
+    """
+    lexicon = matcher.load()
+
+    def guarantee_regex(text: str) -> list[matcher.Hit]:
+        return [
+            h
+            for h in lexicon.scan([Segment(text=text)])
+            if h.entry_id == "gr-001" and h.kind == "regex"
+        ]
+
+    assert not guarantee_regex(
+        "Historically the fund returned about twelve percent, but past performance "
+        "is not a guarantee of future returns."
+    )
+    assert not guarantee_regex("There is no guarantee of returns in this product.")
+    assert guarantee_regex("I can guarantee returns of twelve percent.")
+    assert guarantee_regex("the fund is guaranteed to return twelve percent")
+
+
+def test_every_hit_carries_the_lexicon_version() -> None:
+    """PRD E7: a flag has to say which lexicon raised it.
+
+    On the hit rather than fetched later, so a row persisted by P5 is
+    self-describing when an auditor reads it a year on.
+    """
+    lexicon = matcher.load()
+    hits = lexicon.scan(
+        [Segment(text="send it to my gmail"), Segment(text="मैंने अप्रकाशित नतीजे देखे हैं")]
+    )
+    assert hits
+    assert all(h.lexicon_version == lexicon.version for h in hits)
+    assert all(h.lexicon_version for h in hits)
