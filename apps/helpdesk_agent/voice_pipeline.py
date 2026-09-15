@@ -1053,6 +1053,8 @@ async def run_session(
     """
     greeting_audio = load_greeting(settings.greeting_path)
 
+    from indic_platform.adapters import budget
+
     from helpdesk_agent.graph import session_decide
     from helpdesk_agent.persistence import record_voice_latency
 
@@ -1132,7 +1134,16 @@ async def run_session(
     )
     runner = WorkerRunner()
     await runner.add_workers(worker)
-    await runner.run()
+    # The whole session runs inside the budget scope, not just the graph call. Saaras and
+    # Bulbul are driven by Pipecat processors in their own background tasks, and those
+    # tasks are created while this context is active, so they inherit it -- without this,
+    # the two vendor legs that bill by the second and by the character would be bounded by
+    # the day and month caps only, never by the per-session one, and a stuck room could
+    # spend a day's budget by itself. `run_turn` opens its own scope for the same session
+    # further in; entering it twice is harmless, and the nesting is what keeps the chat
+    # path correct when `decide` is called from somewhere else entirely.
+    with budget.session_scope(session_id):
+        await runner.run()
 
 
 __all__: Sequence[str] = (

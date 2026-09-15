@@ -37,8 +37,13 @@ async def run_turn(state: TurnState, *, existing: bool = False) -> TurnState:
     if not isinstance(sink, LangfuseSink):
         raise RuntimeError("A Langfuse sink is required for chat turns")
     try:
-        # Every adapter call this turn makes -- retrieval embeddings and Claude, and on
-        # the voice path Saaras and Bulbul -- is charged to this session's counter. The
+        # Every adapter call made INSIDE this block -- the retrieval embeddings and the
+        # Claude turn -- is charged to this session's counter. Saaras and Bulbul are NOT
+        # among them: on the voice path they are driven by Pipecat processors that never
+        # enter this function, so `voice_pipeline.run_session` opens its own scope around
+        # the whole session to cover them. Said explicitly because an earlier version of
+        # this comment claimed the voice legs were covered here, which was wrong and is
+        # exactly the kind of claim a reader would trust rather than check. The
         # per-session cap in `indic_platform.adapters.budget` is what stands between a
         # retry loop and an unbounded bill (PRD threat T9), and it is INERT unless
         # somebody opens the scope. This is that somebody: a turn is the unit of work
