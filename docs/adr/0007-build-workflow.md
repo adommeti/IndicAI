@@ -1,8 +1,7 @@
 # ADR 0007 — Build workflow: one PR per prompt, squash-merged, gated by CI
 
 - **Status:** Accepted
-- **Date:** 2026-09-15
-- **Owner:** `program/P0`
+- **Date:** 2026-09-15 · **Owner:** `program/P0`
 - **Relates to:** ADR 0008 (the environment this workflow runs in), ADR 0002
 
 ## Context
@@ -34,7 +33,8 @@ sessions; `ship.sh`'s rebase reconciles the shared files, and two alembic heads 
 - `attribution` — every commit is authored by the repository owner; messages are plain and
   conventional, with no trailers, emoji, tool names or session links; the PR body is checked too.
 - `checks` — lint, format, typecheck, unit tests, the three offline eval runners, the UI packages
-  when present, a `pip-audit` SBOM, and a `detect-secrets` scan against the baseline.
+  when present, a `pip-audit` SBOM, and a `detect-secrets` scan. The local `make check` gate is a
+  subset: it skips the UI packages, and runs `pip-audit` only under `--full`.
 - `integration` — Postgres/pgvector, Redis and Qdrant service containers; `alembic upgrade head`
   then `alembic check`, then the integration-marked tests.
 
@@ -54,12 +54,11 @@ number never substitutes for a live one.
 
 - **Positive:** every merge is one prompt, so `git log` on `main` reads as the build plan, and a
   bad prompt reverts as one commit.
-- **Positive:** the same gate runs in-session and in CI, so a session that is green locally is
-  almost always green in CI; the PR body is the verification report, so review starts from
-  evidence rather than from a diff.
+- **Positive:** the same gate runs in-session and in CI, so a locally green session is almost
+  always green in CI; the PR body is the verification report, so review starts from evidence.
 - **Negative:** tier K/L cannot run in CI, so the most expensive claims (WER, hit@3, adversarial
   rate) are verified only in a session with Docker and keys, and stay UNMEASURED until one runs
-  them — which is why several plan rows are `partial`.
+  them — which is why `program/P1-golden-audio` is `partial` in the plan.
 - **Negative:** squash plus rebase-before-push rewrites branch history; parallel sessions must not
   share a branch.
 - **Negative:** CI green is a landing precondition, so a flaky job blocks the autonomous loop; the
@@ -71,7 +70,7 @@ number never substitutes for a live one.
 
 - `scripts/run-prompt.sh` — prerequisite check, branch, marker; `scripts/ship.sh:35-126` — gate,
   rebase, attribution re-check, PR, CI wait, squash step.
-- `scripts/checks.sh:23-38` — gate stages and the `--full` tier; `Makefile` — `check`,
+- `scripts/checks.sh:20-38` — gate stages and the `--full` tier; `Makefile` — `check`,
   `check-full`, `test-integration`, `eval-uc1|uc2|uc3`, `voice-test`.
 - `.github/workflows/ci.yml` — the three jobs and `LIVE_API_TESTS: '0'`.
 - `scripts/attribution-check.sh`, `.githooks/`, `.claude/hooks/stop-gate.sh`,

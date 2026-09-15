@@ -58,13 +58,14 @@ One shared Python package plus three thin FastAPI apps on one Docker Compose sta
 
 - `platform/pyproject.toml:16-17` — `packages = ["indic_platform", …]` with
   `package-dir = { indic_platform = "." }`: the directory/import-name split.
-- `platform/adapters/base.py` — the Protocols (STT, TTS, Translate, Dubbing, LLM, VectorStore);
-  the interface table in `README.md` restates them.
+- `platform/adapters/base.py:24-53` — the STT, TTS, Translate, Dubbing and LLM Protocols;
+  `platform/adapters/vectorstore.py:27` — `VectorStore`. `README.md`'s interface table restates them.
 - `platform/adapters/runtime.py` — the single path every vendor call takes: shared token bucket,
   bounded retries, circuit breaker, timeouts, cost spans from `platform/config/pricing.yaml`.
 - `platform/security/harden.py`, `platform/security/redact.py`, `platform/obs/langfuse.py` —
   shared controls; `platform/eval/` — shared harness and golden sets.
 - `.claude/rules/adapters.md` — the boundary stated as a rule for the coding agent.
-- `docker-compose.yml` with `scripts/stack.sh:14-16` — one stack, four profiles.
-- `platform/tests/test_adapters.py` — adapter contracts exercised against mocked SDK clients;
-  the only place `sarvamai` / `anthropic` appear outside `platform/adapters/`.
+- `docker-compose.yml` with `scripts/stack.sh:14-23` — one stack, four profiles (`sparse` at `:23`).
+- `platform/tests/test_adapters.py:14,24` and `platform/tests/test_jobs.py:12` — adapter contracts
+  against mocked SDK clients; these and `platform/adapters/` are the only vendor-SDK importers, and
+  no file under `apps/` imports `sarvamai` or `anthropic`.

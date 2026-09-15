@@ -25,7 +25,8 @@ If meeting minutes is built, it is a **separate app** — `apps/meeting_minutes`
 - its own **opt-in per meeting**, recorded with the meeting, not a blanket organizational consent;
 - its own **storage**, with **no access to the surveillance tables** (`calls`,
   `transcript_segments`, `analysis_runs`, `flags`, `dispositions`) and no shared transcript store.
-  Separation is enforced by database role and schema, not by application convention;
+  Separation must be enforced by database role and schema, not by application convention — the
+  surveillance roles are defined by `uc3/P5`; a minutes role would be that app's own first task;
 - its own retention rule, set by the team that owns the meetings;
 - reuse of `platform/adapters` **only** — the vendor boundary from ADR 0002, and nothing else
   from UC3.

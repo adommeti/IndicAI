@@ -17,7 +17,7 @@ or verify the decision. Anything not yet built is written as "not implemented �
 | [0002](0002-one-platform-three-apps.md) | One shared platform package, three thin apps, one Compose stack; adapters are the only vendor boundary | Accepted | `program/P0` |
 | 0003 | Dubbing API contract and the UC2 production path (D9 a or b) | **Reserved** | `uc2/P0-spike` |
 | 0004 | Surveillance scope: perimeter, lawful basis, retention, access | **Reserved** | Gate 0 (Compliance/Legal/HR), PRD E2 |
-| [0005](0005-hybrid-detection-hardened-analysis.md) | Hybrid lexicon + LLM detection with tool-less, verified, canaried analysis | Accepted (design) | `uc3/P3`–`uc3/P4` |
+| [0005](0005-hybrid-detection-hardened-analysis.md) | Hybrid lexicon + LLM detection with tool-less, verified, canaried analysis | Accepted (design) | `uc3/P1` (adversarial set), `uc3/P3`–`uc3/P5` |
 | [0006](0006-meeting-minutes-separate-module.md) | Meeting minutes is a separate, separately-consented module | Accepted | — |
 | [0007](0007-build-workflow.md) | One PR per build prompt, squash-merged, gated by three CI jobs and three verification tiers | Accepted | `program/P0` |
 | [0008](0008-cloud-build-environment.md) | The cloud build environment is a contract held in the repository | Accepted | `program/P0` |

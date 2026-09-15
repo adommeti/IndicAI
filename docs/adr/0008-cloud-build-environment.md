@@ -1,8 +1,7 @@
 # ADR 0008 — The cloud build environment is a contract, held in the repository
 
 - **Status:** Accepted
-- **Date:** 2026-09-15
-- **Owner:** `program/P0`
+- **Date:** 2026-09-15 · **Owner:** `program/P0`
 - **Relates to:** ADR 0007 (the workflow that runs in it), ADR 0002
 
 ## Context
