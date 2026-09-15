@@ -27,6 +27,7 @@ or verify the decision. Anything not yet built is written as "not implemented â€
 | [0012](0012-multiple-alembic-revisions-in-uc3-p5.md) | Four alembic revisions in one prompt, split by rollback semantics | Accepted | `uc3/P5` |
 | [0013](0013-governance-role-is-subtractive.md) | The `governance` role subtracts transcript and audio access rather than granting a subset | Accepted | `uc3/P6` |
 | [0014](0014-uc1-cross-border-claude-leg.md) | UC1 accepts the cross-border Claude leg for redacted text only; audio never leaves India, and real data waits on a DPA | Accepted | `uc1/P7` |
+| [0015](0015-governance-is-app-scoped-not-a-shared-claim.md) | `governance` denies content in uc3 and grants it in uc1; the role is app-scoped and the two must be different Entra groups | Accepted | `uc1/P6` |
 
 ## Reserved number
 
