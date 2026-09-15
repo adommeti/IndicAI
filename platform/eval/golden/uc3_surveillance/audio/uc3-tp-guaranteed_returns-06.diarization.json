@@ -1,0 +1,43 @@
+{
+  "id": "uc3-tp-guaranteed_returns-06",
+  "language_mix": "en-IN",
+  "class": "true_positive",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 2389,
+      "text": "Right, that matches what I have."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2689,
+      "end_ms": 4566,
+      "text": "No, that was the main thing."
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 4866,
+      "end_ms": 9474,
+      "text": "Say it is capital protected and assured returns, that will close the deal today."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 9774,
+      "end_ms": 12249,
+      "text": "I will send the summary after this call."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12549,
+      "end_ms": 13829,
+      "text": "Anything else on the agenda?"
+    }
+  ]
+}

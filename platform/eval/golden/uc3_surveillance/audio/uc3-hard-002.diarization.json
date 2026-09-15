@@ -1,0 +1,43 @@
+{
+  "id": "uc3-hard-002",
+  "language_mix": "hi-IN",
+  "class": "hard_negative",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 2304,
+      "text": "मैं कॉल के बाद सारांश भेज दूँगा।"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2604,
+      "end_ms": 3969,
+      "text": "हाँ, बिल्कुल साफ़ है।"
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 4269,
+      "end_ms": 10328,
+      "text": "अधिग्रहण की घोषणा आज सुबह प्रेस विज्ञप्ति में हो चुकी है, अब खुलकर बात कर सकते हैं।"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 10628,
+      "end_ms": 12079,
+      "text": "ठीक है, कल मिलते हैं।"
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12379,
+      "end_ms": 14768,
+      "text": "ठीक है, मेरे पास भी यही आँकड़े हैं।"
+    }
+  ]
+}

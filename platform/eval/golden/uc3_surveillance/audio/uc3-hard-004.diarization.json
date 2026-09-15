@@ -1,0 +1,43 @@
+{
+  "id": "uc3-hard-004",
+  "language_mix": "ta-IN",
+  "class": "hard_negative",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 2304,
+      "text": "சரி, நாளை சந்திப்போம்."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2604,
+      "end_ms": 5420,
+      "text": "சரி, என்னிடமும் அதே தரவு உள்ளது."
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 5720,
+      "end_ms": 12632,
+      "text": "கடந்த ஆண்டுகளில் நிதி சுமார் பன்னிரண்டு சதவீதம் கொடுத்தது, ஆனால் கடந்த செயல்திறன் எதிர்காலத்திற்கு உத்தரவாதம் அல்ல."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12932,
+      "end_ms": 15065,
+      "text": "சரி, நாளை சந்திப்போம்."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 15365,
+      "end_ms": 18096,
+      "text": "சரி, என்னிடமும் அதே தரவு உள்ளது."
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "id": "uc3-tp-guaranteed_returns-09",
+  "language_mix": "ta-IN",
+  "class": "true_positive",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 1792,
+      "text": "சரி, நாளை சந்திப்போம்."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2092,
+      "end_ms": 4311,
+      "text": "நன்றி, நாளை பேசுவோம்."
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 4611,
+      "end_ms": 10414,
+      "text": "வாடிக்கையாளரிடம் பன்னிரண்டு சதவீதம் வருமானம் உறுதி என்று சொல்லுங்கள், நஷ்டமே இல்லை."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 10714,
+      "end_ms": 13445,
+      "text": "சரி, என்னிடமும் அதே தரவு உள்ளது."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 13745,
+      "end_ms": 16390,
+      "text": "வணக்கம், குரல் சரியாக கேட்கிறதா?"
+    }
+  ]
+}

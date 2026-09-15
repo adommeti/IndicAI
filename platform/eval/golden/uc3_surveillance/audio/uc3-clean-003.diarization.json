@@ -1,0 +1,43 @@
+{
+  "id": "uc3-clean-003",
+  "language_mix": "te-IN",
+  "class": "clean",
+  "sample_rate": 22050,
+  "gap_ms": 300,
+  "voices": {
+    "SPEAKER_00": "shreya",
+    "SPEAKER_01": "rahul"
+  },
+  "turns": [
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 0,
+      "end_ms": 2219,
+      "text": "ధన్యవాదాలు, రేపు మాట్లాడదాం."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 2519,
+      "end_ms": 5335,
+      "text": "కాల్ తర్వాత సారాంశం పంపుతాను."
+    },
+    {
+      "speaker": "SPEAKER_00",
+      "start_ms": 5635,
+      "end_ms": 11779,
+      "text": "మంగళవారం బ్లాక్ సెటిల్‌మెంట్ కస్టోడియన్ వైపు ఆగిపోయింది, నేను లేవనెత్తాను."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 12079,
+      "end_ms": 14298,
+      "text": "సరే, రేపు కలుద్దాం."
+    },
+    {
+      "speaker": "SPEAKER_01",
+      "start_ms": 14598,
+      "end_ms": 16817,
+      "text": "అవును, స్పష్టంగా ఉంది."
+    }
+  ]
+}
