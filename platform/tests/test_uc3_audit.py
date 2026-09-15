@@ -414,7 +414,7 @@ async def test_the_app_role_cannot_update_or_delete_the_audit_tables() -> None:
     _skip_without_db()
     from sqlalchemy import text
     from sqlalchemy.exc import ProgrammingError
-    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     engine, factory = await _engine()
     login = f"uc3_app_test_{uuidlib.uuid4().hex[:8]}"
@@ -428,7 +428,9 @@ async def test_the_app_role_cannot_update_or_delete_the_audit_tables() -> None:
         async with factory() as db:
             await db.execute(text(f"create role {login} login password 'test-only-not-a-secret'"))
             await db.execute(text(f"grant uc3_app to {login}"))
-            await db.execute(text("grant usage on schema public to uc3_app"))
+            # No grants beyond role membership: everything else this role can
+            # do has to come from migration 0008, or the test is proving a
+            # privilege set that no deployment actually produces.
             await db.commit()
 
         url = os.environ["DATABASE_URL"]
@@ -439,6 +441,17 @@ async def test_the_app_role_cannot_update_or_delete_the_audit_tables() -> None:
             async with as_app.begin() as conn:
                 # It can read.
                 await conn.execute(text("select count(*) from analysis_runs"))
+
+            # And it can still append -- a role that cannot write the audit
+            # trail is not least privilege, it is a broken application. This
+            # also covers the identity columns: `generated always` means an
+            # INSERT-only role needs no sequence grant, so migration 0008 is
+            # right to grant none.
+            app_factory = async_sessionmaker(as_app, expire_on_commit=False)
+            async with app_factory() as db:
+                appended = await audit.append(db, _run(call_id))
+                await db.commit()
+            assert appended.seq is not None
             for statement in (
                 "update analysis_runs set model = 'tampered'",
                 "delete from analysis_runs",

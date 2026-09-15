@@ -170,3 +170,27 @@ overrides.
 | TEI unhealthy for >15 min | Weights still downloading; check `docker compose --env-file .env.stack logs tei`; verify `huggingface.co`/`*.hf.co` are allowlisted. |
 | `docker info` fails | Docker not available in the environment; stack-dependent criteria are reported UNMEASURED. |
 | Sarvam 401/402 or Anthropic credit errors | Key/credit issue; the session records a blocker and ships the mocked path. |
+
+## 8. Deploying the UC3 append-only role
+
+`0008_uc3_audit_role` creates `uc3_app` as a `NOLOGIN` role with `select, insert` only on
+`analysis_runs`, `flags` and `dispositions`, and revokes `update`/`delete` on those tables
+from `PUBLIC`. It sets no password: a credential in a migration would be a secret in git.
+
+The deploy provisions the application's login role itself and runs
+`grant uc3_app to <login_role>`; the runtime `DATABASE_URL` uses that login role, not the
+migration role.
+
+That login role **must not own** `analysis_runs`, `flags` or `dispositions`, and must hold
+no direct grants on them beyond its membership of `uc3_app`. A table owner carries `UPDATE`
+and `DELETE` implicitly and can re-grant them to itself, so a deployment where one role both
+runs the migrations and serves the app has no append-only control at all — the hash chain
+still makes tampering detectable, but nothing prevents it. Run migrations as a separate
+owner role.
+
+A new chained table added in a later revision needs its own explicit
+`grant select, insert ... to uc3_app` in the revision that creates it; the
+`alter default privileges` in 0008 only keeps `PUBLIC` off it.
+
+`audit_chain_anchors` (`0009_uc3_chain_anchor`) is deliberately not one of them: only the
+verification job writes it, and `uc3_app` is granted nothing on it.
