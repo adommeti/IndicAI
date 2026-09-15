@@ -36,4 +36,5 @@ never read by the agent — the apps load it via `indic_platform.config.settings
 make stack-status
 curl -fsS localhost:6333/healthz && curl -fsS localhost:8080/health && pg_isready -h localhost -p 15433 -U platform
 make migrate           # alembic upgrade head against the stack
+uv run alembic check   # fails if a model has drifted from its shipped migration
 ```
