@@ -466,12 +466,14 @@ source = { editable = "apps/comms_surveillance" }
 dependencies = [
     { name = "fastapi" },
     { name = "indic-platform" },
+    { name = "indic-transliteration" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi" },
     { name = "indic-platform", editable = "platform" },
+    { name = "indic-transliteration", specifier = ">=2.3.82" },
 ]
 
 [[package]]

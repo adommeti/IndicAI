@@ -2,7 +2,11 @@
 name = "comms-surveillance"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["indic-platform", "fastapi"]
+dependencies = [
+    "indic-platform",
+    "fastapi",
+    "indic-transliteration>=2.3.82",
+]
 [tool.uv.sources]
 indic-platform = { workspace = true }
 [build-system]

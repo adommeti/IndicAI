@@ -161,3 +161,69 @@ class QuizAttempt(Base):
         CheckConstraint("score >= 0 and score <= max_score", name="ck_quiz_attempts_score"),
         Index("ix_quiz_attempts_report", "pilot_id", "language", "cohort"),
     )
+
+
+class Call(Base):
+    """A recorded call, as ingested from object storage (PRD E8).
+
+    `source_key` is the object key it came from and is unique: re-running the
+    nightly sweep over a prefix must not create a second row for a recording
+    already transcribed. That uniqueness is the idempotency guarantee, enforced
+    by the database rather than by a check the task could race past.
+    """
+
+    __tablename__ = "calls"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    source_uri: Mapped[str] = mapped_column(Text)
+    source_key: Mapped[str] = mapped_column(String(512), unique=True)
+    recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_s: Mapped[int] = mapped_column(default=0)
+    participants: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    languages: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    # What the transcription of this call actually cost, from the adapter's own
+    # metrics rather than a per-minute estimate.
+    stt_cost_inr: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=Decimal("0"))
+    stt_model: Mapped[str] = mapped_column(String(64), default="")
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('pending','transcribing','transcribed','failed')",
+            name="ck_calls_status",
+        ),
+        CheckConstraint("duration_s >= 0", name="ck_calls_duration"),
+    )
+
+
+class TranscriptSegment(Base):
+    """One diarized turn, in the language it was spoken plus a Roman rendering.
+
+    The PRD's E8 schema has no `text_roman` column; it is added here because
+    lexicon matching (P3) has to see Hinglish written either way -- the same
+    phrase reaches us as Devanagari from STT and as Roman from a chat export,
+    and a matcher that only sees one of them misses half the corpus. The native
+    text stays authoritative: evidence spans are quoted from `text`, never from
+    the transliteration.
+    """
+
+    __tablename__ = "transcript_segments"
+    call_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("calls.id"), primary_key=True)
+    seg_id: Mapped[int] = mapped_column(primary_key=True)
+    speaker: Mapped[str] = mapped_column(String(64), default="")
+    start_ms: Mapped[int] = mapped_column(default=0)
+    end_ms: Mapped[int] = mapped_column(default=0)
+    text: Mapped[str] = mapped_column(Text)
+    text_roman: Mapped[str] = mapped_column(Text, default="")
+    language: Mapped[str] = mapped_column(String(16), default="")
+    # Which transliteration produced `text_roman`: "indic-transliteration:<scheme>"
+    # or "sarvam:<model>". Without it a corpus mixes two romanisations and
+    # nobody can tell which row came from which.
+    roman_source: Mapped[str] = mapped_column(String(64), default="")
+
+    __table_args__ = (
+        CheckConstraint("end_ms >= start_ms", name="ck_transcript_segments_span"),
+        Index("ix_transcript_segments_call", "call_id", "start_ms"),
+    )
