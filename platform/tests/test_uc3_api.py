@@ -24,6 +24,7 @@ ordering is marked `integration`.
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -706,14 +707,126 @@ def test_the_queue_orders_high_then_medium_then_low() -> None:
 
 
 @pytest.mark.integration
-def test_the_queue_sorts_and_joins_the_latest_disposition_against_postgres() -> None:
+async def test_the_queue_sorts_and_joins_the_latest_disposition_against_postgres() -> None:
     """The one thing a fake session cannot prove: that the SQL is right.
 
     `flag_summaries` leans on a `max(seq)` group-by joined back to the
-    dispositions table and on JSONB containment for the QA sample; neither has
-    meaning outside Postgres. Needs `make stack-core` and `make migrate`.
+    dispositions table, and on JSONB containment for the QA sample; neither has
+    meaning outside Postgres.
+
+    This used to be an unconditional `pytest.skip`, which is worse than no test:
+    its docstring claimed to prove the SQL while it never ran anywhere, and the
+    skip was invisible under `pytest -q`. CI's evidence guard caught it. The
+    join it exercises is worth the run -- `Disposition.seq == latest.c.seq`
+    matches on a sequence that is global across every flag, so a bug there would
+    attach one flag's ruling to another's, and only real rows show it.
     """
-    pytest.skip("requires the docker stack; run under make check-full")
+    import os
+    import socket
+    from urllib.parse import urlparse
+
+    from comms_surveillance import audit
+    from indic_platform.db.models import AnalysisRun, Call
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    # Skip only when there is genuinely no database to talk to. CI provisions
+    # one, so this runs there -- and the job's evidence guard fails the build if
+    # it skips anyway, which is what turned this test from a permanent
+    # `pytest.skip` placeholder into a real one.
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        pytest.skip("DATABASE_URL is not set; run `make stack-core` and `make migrate`")
+    parsed = urlparse(url)
+    try:
+        with socket.create_connection((parsed.hostname or "localhost", parsed.port or 5432), 1):
+            pass
+    except OSError:
+        pytest.skip(f"Postgres at {parsed.hostname}:{parsed.port} is not reachable")
+
+    engine = create_async_engine(url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    now = datetime.now(UTC)
+    key = f"api-queue-test/{uuid.uuid4()}"
+    try:
+        async with factory() as session:
+            call = Call(source_uri=f"s3://{key}", source_key=key, recorded_at=now)
+            session.add(call)
+            await session.flush()
+
+            run = AnalysisRun(
+                call_id=call.id,
+                stage="deep_analysis",
+                model="claude-sonnet-5",
+                created_at=now,
+                output={"escalation_reasons": ["qa_sample"]},
+            )
+            await audit.append(session, run)
+
+            made = {}
+            # Deliberately inserted low-first, so passing the ordering assertion
+            # cannot be an accident of insertion order.
+            for severity in ("low", "medium", "high"):
+                flag = Flag(
+                    call_id=call.id,
+                    run_id=run.id,
+                    category="guaranteed_returns",
+                    severity=severity,
+                    evidence_span=f"{severity} span",
+                    created_at=now,
+                )
+                await audit.append(session, flag)
+                made[severity] = flag.id
+
+            # Two rulings on the high flag, in one transaction: same timestamp,
+            # different seq. Only the later may appear in the queue.
+            for verdict in ("confirmed", "false_positive"):
+                await audit.append(
+                    session,
+                    Disposition(
+                        flag_id=made["high"],
+                        disposition=verdict,
+                        reviewer_id="tester",
+                        created_at=now,
+                    ),
+                )
+            # A ruling on a *different* flag, written last so it holds the
+            # highest seq in the table. If the join matched on the global max
+            # rather than per flag, this would be the answer for every flag.
+            await audit.append(
+                session,
+                Disposition(
+                    flag_id=made["low"],
+                    disposition="escalated",
+                    reviewer_id="tester",
+                    created_at=now,
+                ),
+            )
+            await session.commit()
+
+        async with factory() as session:
+            rows = await api.flag_summaries(session)
+            mine = [row for row in rows if row["call_id"] == str(call.id)]
+
+            assert [row["severity"] for row in mine] == ["high", "medium", "low"]
+            by_severity = {row["severity"]: row for row in mine}
+            assert by_severity["high"]["disposition"] == "false_positive"
+            assert by_severity["medium"]["disposition"] is None
+            assert by_severity["low"]["disposition"] == "escalated"
+
+            # `undispositioned=true` is the reviewer's "open only" filter.
+            open_only = await api.flag_summaries(session, undispositioned=True)
+            open_ids = {row["flag_id"] for row in open_only}
+            assert str(made["medium"]) in open_ids
+            assert str(made["high"]) not in open_ids
+
+            # JSONB containment against a real jsonb column.
+            sampled = await api.flag_summaries(session, qa_sample=True)
+            assert {row["flag_id"] for row in sampled} >= {str(id_) for id_ in made.values()}
+
+            filtered = await api.flag_summaries(session, severity="high")
+            assert {row["severity"] for row in filtered} == {"high"}
+    finally:
+        await engine.dispose()
 
 
 # --- metrics and chain status --------------------------------------------------
