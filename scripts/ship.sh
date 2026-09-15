@@ -111,6 +111,34 @@ OWNER="$(api "repos/{owner}/{repo}" --jq .owner.login 2>/dev/null)" \
   || fail "cannot reach the GitHub REST API. Check 'gh auth status' and that github.com is allowlisted."
 PR_NUM="$(api -X GET "repos/{owner}/{repo}/pulls" -f head="$OWNER:$BRANCH" -f state=open \
             --jq '.[0].number // empty' 2>/dev/null || true)"
+
+# GitHub authors a squash commit as the PULL REQUEST's author. In a cloud
+# session `gh api` writes go out under the Claude GitHub App, so a PR created
+# here is authored `claude[bot]` — and so is the commit it eventually lands on
+# $BASE, whoever merges it. Measured: PR #3 (created through the GitHub MCP
+# server, author adommeti) landed as adommeti; PRs #4 and #5 (created by this
+# script with `gh api`, author claude[bot]) both landed as claude[bot], #5 even
+# though a human merged it in the UI. So the PR must be OPENED under the owner's
+# identity; everything else here is identity-neutral. Stop and let the caller
+# open it with the MCP tool, then re-run: the lookup above finds it and the CI
+# wait and merge proceed normally.
+if [ -z "$PR_NUM" ] && [ -n "${CLAUDE_CODE_REMOTE:-}" ] && [ "${INDICAI_ALLOW_BOT_PR:-}" != "1" ]; then
+  cp "$BODY_TMP" "$STATE_DIR/pr-body.md"; rm -f "$BODY_TMP"
+  cat >&2 <<EOF
+ship: branch pushed to origin/$BRANCH, but not opening the PR from a cloud session.
+      A PR opened here would be authored 'claude[bot]', and GitHub would then author
+      the squash commit on $BASE the same way, failing scripts/attribution-check.sh.
+      Open it as $OWNER through the GitHub MCP server, then re-run this script:
+        create_pull_request(base="$BASE", head="$BRANCH", title=..., body=...)
+      Title: $TITLE
+      Body:  .claude/run/pr-body.md
+      Then:  bash scripts/ship.sh
+      The re-run finds the PR by head branch and carries on with CI and the merge.
+      (INDICAI_ALLOW_BOT_PR=1 opens it here anyway; $BASE will go red.)
+EOF
+  exit 1
+fi
+
 if [ -z "$PR_NUM" ]; then
   json_obj title "$TITLE" head "$BRANCH" base "$BASE" body "$(cat "$BODY_TMP")" \
            "draft:json" "$( [ -n "$DRAFT" ] && echo true || echo false )" \
@@ -176,21 +204,9 @@ echo "ship: CI green"
 # 7. Merge as the repository owner; the squash commit carries the PR author identity.
 #    commit_title is the bare title: GitHub appends " (#N)" to a squash subject.
 #
-#    In a cloud session the write goes out under the Claude GitHub App's own
-#    credentials, whatever `gh api user` reports, so GitHub authors the squash
-#    commit `claude[bot]` — which attribution-check.sh rejects, leaving `main`
-#    red and a tool identity in the history. Reads and the PR steps above are
-#    fine; only the merge carries an identity. So the merge is refused here and
-#    left to a human or a local checkout, which is what the repository's
-#    "author is always the owner" rule requires.
-if [ -n "${CLAUDE_CODE_REMOTE:-}" ] && [ "${INDICAI_ALLOW_BOT_MERGE:-}" != "1" ]; then
-  echo "ship: PR #$PR_NUM is green and mergeable: $PR_URL"
-  fail "refusing to merge from a cloud session: GitHub would author the squash commit 'claude[bot]',
-      which scripts/attribution-check.sh rejects and which turns the attribution job on $BASE red.
-      Merge it from the GitHub UI or a local checkout. Set INDICAI_ALLOW_BOT_MERGE=1 to override
-      (and add the bot address to ALLOWED_AUTHOR_EMAILS first, or $BASE will go red)."
-fi
-
+#    GitHub authors the squash commit as the PULL REQUEST's author — not as
+#    whoever merges it — so the identity is settled at step 5, not here. That is
+#    why this step does not care who runs it (see the note above step 5).
 MERGE_BODY="$(git log --reverse --format='- %s' "origin/$BASE..HEAD")"
 json_obj merge_method squash commit_title "$TITLE" commit_message "$MERGE_BODY" \
   | api -X PUT "repos/{owner}/{repo}/pulls/$PR_NUM/merge" --input - >"$STATE_DIR/merge.log" 2>&1 \
