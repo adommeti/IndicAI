@@ -4,6 +4,12 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TypeVar
 
+from indic_platform.adapters.budget import (
+    Reservation,
+    SpendLedger,
+    current_session_id,
+    default_ledger,
+)
 from indic_platform.adapters.ratelimit import SHARED_BUCKET, Limiter
 from indic_platform.obs.langfuse import Sink, cost, default_sink
 from indic_platform.obs.metrics import CALLS, DEGRADED, LATENCY
@@ -33,6 +39,8 @@ class AdapterRuntime:
         retry_base: float = 0.5,
         failure_threshold: int = 5,
         recovery_seconds: float = 30,
+        ledger: SpendLedger | None = None,
+        session_id: str | None = None,
     ) -> None:
         self.vendor, self.capability = vendor, capability
         self.sink, self.limiter = sink, limiter
@@ -41,6 +49,28 @@ class AdapterRuntime:
         self.failures = 0
         self.opened_at: float | None = None
         self.probing = False
+        self._ledger = ledger
+        #: Spend is charged to this session when set; otherwise to whatever
+        #: `budget.session_scope` the calling task is inside, and to no session at all when
+        #: neither is present (the day and month scopes still apply).
+        self.session_id = session_id
+
+    @property
+    def ledger(self) -> SpendLedger:
+        return self._ledger if self._ledger is not None else default_ledger()
+
+    def session(self) -> str | None:
+        return self.session_id or current_session_id()
+
+    async def reserve(self, projected_inr: float, *, estimated: bool) -> Reservation:
+        """Take budget headroom before the vendor is touched; raises `BudgetExceeded`."""
+        return await self.ledger.reserve(
+            projected_inr,
+            estimated=estimated,
+            session_id=self.session(),
+            vendor=self.vendor,
+            capability=self.capability,
+        )
 
     @property
     def degraded(self) -> bool:
@@ -79,7 +109,7 @@ class AdapterRuntime:
         status: str,
         attempts: int,
         prompt_version: str | None = None,
-    ) -> None:
+    ) -> tuple[float, float]:
         inr, usd = cost(model, units)
         elapsed = time.monotonic() - started
         CALLS.labels(self.vendor, self.capability, status).inc()
@@ -98,6 +128,7 @@ class AdapterRuntime:
                 "attempts": attempts,
             }
         )
+        return inr, usd
 
     async def call(
         self,
@@ -109,6 +140,10 @@ class AdapterRuntime:
         prompt_version: str | None = None,
     ) -> T:
         cost(model, {})  # Validate pricing before incurring spend.
+        # Units are given up front here, so the cost is projected exactly and the call is
+        # refused before the operation runs if it would cross a cap.
+        projected, _ = cost(model, units or {})
+        reservation = await self.reserve(projected, estimated=False)
         started, attempts, status = time.monotonic(), 0, "error"
         billed: dict[str, float] = {}
         admitted = False
@@ -136,7 +171,8 @@ class AdapterRuntime:
         finally:
             if admitted:
                 self.probing = False
-            self.record(model, billed, started, status, attempts, prompt_version)
+            inr, _ = self.record(model, billed, started, status, attempts, prompt_version)
+            await self.ledger.settle(reservation, inr)
 
     async def stream(
         self,
@@ -147,6 +183,12 @@ class AdapterRuntime:
         prompt_version: str | None = None,
     ) -> AsyncIterator[T]:
         cost(model, {})
+        # `units` is filled in as the stream runs (a streaming STT bills on audio duration
+        # the caller cannot know up front), so the value here is a lower bound, not a cost.
+        # The call is admitted only when a floor of headroom is free and is charged for
+        # what it really spent afterwards -- including a stream that failed mid-flight.
+        projected, _ = cost(model, units)
+        reservation = await self.reserve(projected, estimated=True)
         started, status, attempts = time.monotonic(), "error", 0
         emitted = False
         admitted = False
@@ -181,4 +223,5 @@ class AdapterRuntime:
         finally:
             if admitted:
                 self.probing = False
-            self.record(model, units, started, status, attempts, prompt_version)
+            inr, _ = self.record(model, units, started, status, attempts, prompt_version)
+            await self.ledger.settle(reservation, inr)

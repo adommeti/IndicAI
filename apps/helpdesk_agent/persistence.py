@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
+from indic_platform.adapters import budget
 from indic_platform.adapters.claude import Claude
 from indic_platform.adapters.embeddings import TEIEmbedder
 from indic_platform.adapters.vectorstore import QdrantVectorStore
@@ -36,110 +37,125 @@ async def run_turn(state: TurnState, *, existing: bool = False) -> TurnState:
     if not isinstance(sink, LangfuseSink):
         raise RuntimeError("A Langfuse sink is required for chat turns")
     try:
-        async with AsyncSession(engine) as db, db.begin():
-            session_id = uuid.UUID(state["session_id"])
-            evidence = session_utterances(state)
-            if existing:
-                session = await db.scalar(
-                    select(Session).where(Session.id == session_id).with_for_update()
-                )
-                if session is None or session.app != "helpdesk_agent":
-                    raise LookupError("Unknown helpdesk session")
-                if session.metadata_json.get("employee_id") != state["employee_id"]:
-                    raise PermissionError("Session employee mismatch")
-                turns = list(
-                    (
-                        await db.scalars(
-                            select(Turn)
-                            .where(Turn.session_id == session_id)
-                            .order_by(Turn.created_at, Turn.id)
+        # Every adapter call made INSIDE this block -- the retrieval embeddings and the
+        # Claude turn -- is charged to this session's counter. Saaras and Bulbul are NOT
+        # among them: on the voice path they are driven by Pipecat processors that never
+        # enter this function, so `voice_pipeline.run_session` opens its own scope around
+        # the whole session to cover them. Said explicitly because an earlier version of
+        # this comment claimed the voice legs were covered here, which was wrong and is
+        # exactly the kind of claim a reader would trust rather than check. The
+        # per-session cap in `indic_platform.adapters.budget` is what stands between a
+        # retry loop and an unbounded bill (PRD threat T9), and it is INERT unless
+        # somebody opens the scope. This is that somebody: a turn is the unit of work
+        # that owns a session id, so it is the honest place for the boundary. The scope
+        # is task-local, so concurrent turns never charge each other.
+        with budget.session_scope(state["session_id"]):
+            async with AsyncSession(engine) as db, db.begin():
+                session_id = uuid.UUID(state["session_id"])
+                evidence = session_utterances(state)
+                if existing:
+                    session = await db.scalar(
+                        select(Session).where(Session.id == session_id).with_for_update()
+                    )
+                    if session is None or session.app != "helpdesk_agent":
+                        raise LookupError("Unknown helpdesk session")
+                    if session.metadata_json.get("employee_id") != state["employee_id"]:
+                        raise PermissionError("Session employee mismatch")
+                    turns = list(
+                        (
+                            await db.scalars(
+                                select(Turn)
+                                .where(Turn.session_id == session_id)
+                                .order_by(Turn.created_at, Turn.id)
+                            )
+                        ).all()
+                    )
+                    state["history"] = [
+                        {
+                            "utterance": t.utterance,
+                            **{k: v for k, v in t.decision_json.items() if not k.startswith("_")},
+                        }
+                        for t in turns[-8:]
+                    ]
+                    evidence = "\n".join([t.utterance for t in turns] + [state["utterance"]])
+                    state["clarify_count"] = sum(
+                        t.decision_json["action"] == "clarify" for t in turns
+                    )
+                else:
+                    db.add(
+                        Session(
+                            id=session_id,
+                            app="helpdesk_agent",
+                            metadata_json={"employee_id": state["employee_id"]},
                         )
-                    ).all()
-                )
-                state["history"] = [
-                    {
-                        "utterance": t.utterance,
-                        **{k: v for k, v in t.decision_json.items() if not k.startswith("_")},
-                    }
-                    for t in turns[-8:]
-                ]
-                evidence = "\n".join([t.utterance for t in turns] + [state["utterance"]])
-                state["clarify_count"] = sum(t.decision_json["action"] == "clarify" for t in turns)
-            else:
-                db.add(
-                    Session(
-                        id=session_id,
-                        app="helpdesk_agent",
-                        metadata_json={"employee_id": state["employee_id"]},
                     )
+                    await db.flush()
+                # Retrieval translation stays disabled for this chat-only path.
+                retriever = Retriever(
+                    QdrantVectorStore(client, embedder),
+                    settings=RetrievalSettings(parallel_translate=False),
                 )
-                await db.flush()
-            # Retrieval translation stays disabled for this chat-only path.
-            retriever = Retriever(
-                QdrantVectorStore(client, embedder),
-                settings=RetrievalSettings(parallel_translate=False),
-            )
-            metadata: dict[str, Any] = {}
-            with sink.client.start_as_current_observation(
-                name="helpdesk.turn",
-                as_type="span",
-                metadata={"model": MODEL, "policy_version": POLICY_VERSION},
-            ) as span:
-                trace_id = str(span.trace_id)
-                claude = Claude()
-                try:
-                    result = await Agent(
-                        retrieve=retriever.retrieve,
-                        structured=claude.structured,
-                        grounder=TicketGrounder(structured=claude.structured),
-                        # The act node files the ticket, so it needs the session
-                        # this turn is already running in -- it does not commit;
-                        # this transaction owns that.
-                        db=db,
-                        # The real count of turns already persisted, NOT
-                        # `len(state["history"])`. History is truncated to the
-                        # last 8 turns both here and in `initial_state`, so
-                        # turns 9 and 10 would both present a `turn_index` of 8
-                        # and the second ticket would be swallowed as an
-                        # idempotent replay of the first. Idempotency keyed on a
-                        # value that repeats is silent data loss, and the
-                        # employee would be told their ticket was filed.
-                        turn_index=len(turns) if existing else 0,
-                    ).run(state, metadata=metadata, evidence=evidence)
-                finally:
-                    await claude.client.close()
-                decision = result["decision"]
-                assert decision is not None
-                # Keep persisted content locally; vendor/log exports are redacted by adapters.
-                db.add(
-                    Turn(
-                        session_id=session_id,
-                        utterance=state["utterance"],
-                        language=state["language"],
-                        decision_json={
-                            **decision.model_dump(mode="json"),
-                            "_grounding": metadata["ticket_grounding"],
-                            "_guard_errors": metadata["guard_errors"],
-                        },
-                        retrieval_json=metadata["retrieval_json"],
-                        latency_ms=metadata["latency_ms"],
-                        policy_version=POLICY_VERSION,
-                        prompt_version=PROMPT_VERSION,
-                        model=MODEL,
-                        trace_id=trace_id,
+                metadata: dict[str, Any] = {}
+                with sink.client.start_as_current_observation(
+                    name="helpdesk.turn",
+                    as_type="span",
+                    metadata={"model": MODEL, "policy_version": POLICY_VERSION},
+                ) as span:
+                    trace_id = str(span.trace_id)
+                    claude = Claude()
+                    try:
+                        result = await Agent(
+                            retrieve=retriever.retrieve,
+                            structured=claude.structured,
+                            grounder=TicketGrounder(structured=claude.structured),
+                            # The act node files the ticket, so it needs the session
+                            # this turn is already running in -- it does not commit;
+                            # this transaction owns that.
+                            db=db,
+                            # The real count of turns already persisted, NOT
+                            # `len(state["history"])`. History is truncated to the
+                            # last 8 turns both here and in `initial_state`, so
+                            # turns 9 and 10 would both present a `turn_index` of 8
+                            # and the second ticket would be swallowed as an
+                            # idempotent replay of the first. Idempotency keyed on a
+                            # value that repeats is silent data loss, and the
+                            # employee would be told their ticket was filed.
+                            turn_index=len(turns) if existing else 0,
+                        ).run(state, metadata=metadata, evidence=evidence)
+                    finally:
+                        await claude.client.close()
+                    decision = result["decision"]
+                    assert decision is not None
+                    # Keep persisted content locally; vendor/log exports are redacted by adapters.
+                    db.add(
+                        Turn(
+                            session_id=session_id,
+                            utterance=state["utterance"],
+                            language=state["language"],
+                            decision_json={
+                                **decision.model_dump(mode="json"),
+                                "_grounding": metadata["ticket_grounding"],
+                                "_guard_errors": metadata["guard_errors"],
+                            },
+                            retrieval_json=metadata["retrieval_json"],
+                            latency_ms=metadata["latency_ms"],
+                            policy_version=POLICY_VERSION,
+                            prompt_version=PROMPT_VERSION,
+                            model=MODEL,
+                            trace_id=trace_id,
+                        )
                     )
-                )
-                span.update(
-                    metadata={
-                        "model": MODEL,
-                        "policy_version": POLICY_VERSION,
-                        "action": decision.action,
-                        "fallback": metadata.get("fallback", False),
-                        "guard_errors": metadata["guard_errors"],
-                        "grounding_checks": len(metadata["ticket_grounding"]["checks"]),
-                        "latency_ms": metadata["latency_ms"],
-                    }
-                )
+                    span.update(
+                        metadata={
+                            "model": MODEL,
+                            "policy_version": POLICY_VERSION,
+                            "action": decision.action,
+                            "fallback": metadata.get("fallback", False),
+                            "guard_errors": metadata["guard_errors"],
+                            "grounding_checks": len(metadata["ticket_grounding"]["checks"]),
+                            "latency_ms": metadata["latency_ms"],
+                        }
+                    )
         return result
     finally:
         await embedder.close()

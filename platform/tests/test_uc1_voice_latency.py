@@ -85,6 +85,7 @@ from urllib.parse import urlparse
 import numpy as np
 import pytest
 from helpdesk_agent import voice_pipeline
+from indic_platform.eval.report import Thresholds
 from indic_platform.eval.runners import run_uc1
 from livekit import api, rtc
 
@@ -96,8 +97,13 @@ AUDIO = GOLDEN / "audio"
 REQUIRED_ITEMS = 30
 PER_LANGUAGE = 10
 LANGUAGES = ("hi-IN", "te-IN", "ta-IN")
-P50_GATE_S = 2.0
-P95_GATE_S = 3.5
+# Read from platform/eval/thresholds.yaml, not retyped. These are B6 numbers and they
+# already have a home; a second copy here is a gate that can silently disagree with the
+# one `make eval-uc1-regression` enforces, and this run costs real money, so nobody
+# would discover the disagreement cheaply.
+_B6 = Thresholds.load(app="uc1")
+P50_GATE_S = _B6.metrics["latency_to_first_audio_p50_s"].value
+P95_GATE_S = _B6.metrics["latency_to_first_audio_p95_s"].value
 
 # The golden WAVs are 16 kHz mono 16-bit; publish them unchanged.
 SAMPLE_RATE = 16_000

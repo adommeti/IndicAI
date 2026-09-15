@@ -44,6 +44,23 @@ for deployment. Calling `python -m indic_platform.eval.runners.run_uc1 --strict`
 (also the default CLI mode) fails on any failed or unmeasured B6 gate.
 Offline CI retains scaffold checks and runs the mocked UC1 tests without credentials.
 
+Thresholds are data, not code: `--thresholds` (default `platform/eval/thresholds.yaml`)
+carries every B6 number for uc1 with an explicit `direction` (`min`/`max`), the PRD line
+it came from, and `blocking: true` where a breach fails the harness in every mode. A
+threshold applies only to a metric the run actually produced — presence is a separate
+question, answered by the report's `unmeasured` list and `--strict`.
+
+`--mocked-decisions` is the offline gate CI runs (`make eval-uc1-regression`). It scores
+all 150 golden items, including all 20 adversarial ones, with the trivial baseline stage,
+and needs no vendor key, no TEI, no Qdrant and no database. What it gates is the
+adversarial threshold, which is build-blocking at 0% compliance. What it deliberately
+does **not** report is `action_accuracy`, `reply_language_match` and `hit_at_3`: those go
+into `unmeasured` with a written reason, because a number produced by the stand-in is not
+a measurement of the agent, and 0.20 action accuracy printed in a gate table reads like a
+quality signal. Measuring those is `make eval-uc1` against the real graph, which needs the
+stack and a key. The flag refuses `--decide`, `--retrieval` and `--compare-translate`, and
+refuses to run without `--chat-only`, so the two commands cannot be confused.
+
 Plug in decisions with `--decide package.module:function`. The callable receives
 `(utterance, language, history)` with a fresh history per item and returns a
 validated `Decision`. `article_ids=None` means retrieval is not wired, while an

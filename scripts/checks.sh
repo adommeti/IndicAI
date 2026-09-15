@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Single entry point for "is this tree acceptable?".
-#   --gate  : lint, typecheck, unit tests, offline evals, attribution (default)
-#   --full  : gate + integration tests (needs the core stack) + audit
+#   --gate  : lint, typecheck, unit tests, offline evals, attribution, secrets, audit (default)
+#   --full  : gate + migrations round-trip + integration tests (needs the core stack)
 #   --quick : lint + typecheck only
 # Exit non-zero on the first failing stage; prints a stage summary.
 set -uo pipefail
@@ -48,17 +48,29 @@ done
 
 stage attribution bash scripts/attribution-check.sh || exit 1
 stage secrets     bash -c 'uv run --frozen detect-secrets-hook --baseline .secrets.baseline $(git ls-files)' || exit 1
+# The hooks themselves are enforced in CI (`pre-commit run --all-files`), not here:
+# every hook's underlying tool already runs above as its own stage, and executing the
+# hooks locally would download a hook environment per repo on first use and make this
+# gate need the network for work it has already done. What is worth catching locally is
+# a config that no longer parses or names a hook id that does not exist -- that is this
+# stage, and it is offline and instant.
+stage pre-commit-config uv run --frozen pre-commit validate-config .pre-commit-config.yaml || exit 1
+# Moved out of --full and into the gate (uc1/P7). An advisory that fails CI has to fail
+# `make check` too: while this ran only under --full, a finding that was red in CI was
+# green locally, and the divergence was found by the PR rather than by the developer.
+# ~8s. Ignores are justified one by one, with their reachability argument, in
+# docs/security/audit-exceptions.md; keep this list in step with CI's and with the
+# pip-audit hook in .pre-commit-config.yaml. An id here without an entry there is a
+# silenced finding, not an accepted one. Needs network: pip-audit queries the advisory
+# database, so an offline checkout fails this stage rather than skipping it quietly.
+stage audit       uv run --frozen pip-audit --skip-editable \
+  --ignore-vuln PYSEC-2026-3740 || exit 1
 
 if [ "$MODE" = "--full" ]; then
   # Needs the stack: `alembic check` is the only thing that catches a model whose
   # column type has drifted from its shipped migration, and CI runs it too.
   stage migrations  bash -c 'uv run --frozen alembic upgrade head && uv run --frozen alembic check' || exit 1
   stage integration uv run --frozen pytest -m integration -q -p no:cacheprovider || exit 1
-  # Ignores are justified one by one, with their reachability argument, in
-  # docs/security/audit-exceptions.md. Keep this list and CI's in step; an id
-  # here without an entry there is a silenced finding, not an accepted one.
-  stage audit       uv run --frozen pip-audit --skip-editable \
-    --ignore-vuln PYSEC-2026-3740 || exit 1
 fi
 
 echo

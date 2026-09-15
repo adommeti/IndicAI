@@ -299,7 +299,7 @@ What exists, where it goes, and how long it lives:
 |---|---|---|
 | Employee microphone audio (PCM16, 16 kHz mono) | over the LiveKit WebRTC session to the agent process, then streamed to **Sarvam** (Saaras) over TLS | in memory for the turn by design: no LiveKit egress or recording service exists in `docker-compose.yml` and the helpdesk app uses no MinIO bucket. Confirm against `voice_pipeline.py` before assuming a deployment keeps no audio; if one does, PRD C8's 30-day rule applies and the notice has to say so |
 | Partial and final transcript text | published into the LiveKit room as data messages (every participant in the room sees them); the final transcript goes to `graph.decide` | in the room only for the session |
-| Final transcript, stored as `turns.utterance` | platform Postgres, with `decision_json`, `retrieval_json`, `latency_ms`, model and prompt versions | **indefinite** — see retention below |
+| Final transcript, stored as `turns.utterance` | platform Postgres, with `decision_json`, `retrieval_json`, `latency_ms`, model and prompt versions | **90 days**, by `uc1.retention_sweep` — but nothing has ever run that job on a schedule; see retention below |
 | Transcript text sent to Claude | **Anthropic** (`claude-sonnet-5`), redacted first by `platform/adapters/claude.py` | per Anthropic's API terms |
 | Reply text sent to Bulbul | **Sarvam**, redacted first by `platform/adapters/sarvam_tts.py` | per Sarvam's terms |
 | Synthesized reply audio | LiveKit room → the employee's browser | not persisted here |
@@ -322,8 +322,34 @@ PRD B4/§227 Sarvam states India-hosted processing with no training on customer 
 Claude leg is the cross-border one and carries redacted text only. No redaction override is
 enabled for this app.
 
-**Retention is specified but not implemented.** PRD C8 requires audio deleted after 30 days
-and transcripts after 90, by a scheduled job with logged deletions. That job is uc1/P7 and is
-still pending, so today nothing deletes a `turns` row: transcripts persist until someone
-removes them. Do not point this at real employees before that job exists — a surveillance-
-adjacent path with a consent notice and no deletion is precisely threat T5 (over-retention).
+### Retention (PRD C8, threat T5)
+
+`apps/helpdesk_agent/retention.py` is the sweep: a Celery beat job on the app's existing
+Celery app (`uc1.retention_sweep`, 03:30 UTC) that deletes `turns` rows older than 90 days
+and audio objects older than 30, and writes one `retention_deletions` row per policy per
+pass recording the rule in force, the cutoff it produced, the window covered, the counts and
+whether it was a dry run. It deletes by policy, never `TRUNCATE`, in keyset-paged batches of
+one transaction each, and it is scoped to sessions belonging to *this* app — `turns` is a
+shared platform table and uc1's rule has no authority over uc2's rows.
+
+Two things to know before reading a "0" in that log as success:
+
+- **The audio policy matches nothing today, by construction.** uc1 keeps no audio at rest, so
+  the sink it resolves is `NoAudioSink` and its log row says so in `detail`
+  (`"no recording sink is configured; uc1 stores no audio at rest"`). The 30-day rule is
+  implemented against an `AudioSink` interface and tested against a fake one; the day a
+  recording store is installed, `set_audio_sink(...)` at worker start-up is the whole change.
+  It has never deleted an object, because there has never been one.
+- **Nothing has run this in a deployment.** There is no Celery worker entrypoint in this
+  repo — no Makefile target, no compose service — for uc1 or uc3. The job is tested against a
+  real PostgreSQL; it has never been on a schedule anywhere. Deploy it with
+  `UC1_RETENTION_DRY_RUN=true` first and read the log rows before letting it delete.
+
+**Known gap: `ticket_filings.payload` is not swept.** It holds the ticket body an employee's
+description became — transcript-derived text that outlives the 90-day transcript rule. It is
+deliberately out of scope rather than quietly included: a ticket is an operational record in
+Zammad's own lifecycle, and deleting half of it under a transcript rule is a policy decision
+PRD C8 has not made. Recorded in `docs/build/BLOCKERS.md` and in
+`docs/security/uc1-review.md` under T5. `sessions` (metadata, and the FK parent of
+`ticket_filings`) and `adapter_calls` (cost and latency metadata, no transcript text) are out
+of scope for the same reason and carry no free text.
