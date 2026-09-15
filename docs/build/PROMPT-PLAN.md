@@ -15,7 +15,7 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc1 | P1 | done | program/P0 | Golden set (150 items) + eval runner | S,L | 0bf1475 |
 | uc1 | P2 | done | uc1/P1 | KB ingestion + cross-lingual hybrid retrieval | S,K,L | 0bf1475 |
 | program | P1-golden-audio | partial | uc1/P2 | Golden WAVs committed and hash-verified; regeneration tool still to build | S,K,L | pending PR |
-| uc1 | P3-eval | pending | uc1/P3 | Measure the UC1 P3 B6 gates (action accuracy, hit@3, adversarial, language match) | K,L | |
+| uc1 | P3-eval | blocked | uc1/P3 | Measure the UC1 P3 B6 gates (action accuracy, hit@3, adversarial, language match) | K,L | see docs/build/BLOCKERS.md |
 | uc1 | P3 | done | uc1/P2 | LangGraph agent (chat-only) with deterministic guard | S,C,K,L | pending PR |
 | uc1 | P4 | pending | uc1/P3 | Zammad ticketing, idempotent, Celery fallback | S,C,K | |
 | uc1 | P5 | pending | uc1/P4 | Voice pipeline: LiveKit + Pipecat + Saaras + Bulbul | S,K,L | |
