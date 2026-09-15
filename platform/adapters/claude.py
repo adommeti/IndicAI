@@ -90,7 +90,7 @@ class Claude:
             ):
                 raise ValueError("Only user/assistant text messages are supported")
             safe.append(
-                {"role": message["role"], "content": wrap_untrusted(redact(message["content"]))}
+                {"role": message["role"], "content": self.wrap(self.redact(message["content"]))}
             )
         units: dict[str, float] = {}
 

@@ -27,10 +27,13 @@ person decides (E1).
 """
 
 import hashlib
+import logging
+import os
 import random
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +41,8 @@ from indic_platform.security.harden import new_canary, unwrap_quoted, wrap_untru
 from pydantic import BaseModel, Field
 
 from comms_surveillance.lexicon import matcher
+
+log = logging.getLogger(__name__)
 
 APP = Path(__file__).parent
 PROMPTS = APP / "prompts"
@@ -61,11 +66,17 @@ class DetectorSettings:
     because a flag is only interpretable against the threshold that produced it.
     """
 
-    theta: int = 55
+    # PRD E5 and ADR 0005 both say start at 60.
+    theta: int = 60
     qa_sample_rate: float = 0.05
-    # A per-deployment secret. Regenerated per process rather than stored: it
-    # only has to be unguessable to the people on the call.
-    canary: str = field(default_factory=new_canary)
+    # A per-*deployment* secret (PRD E9), from the environment. It sits in line
+    # three of the Sonnet system prompt, so a value that changed per process
+    # would invalidate the cached prefix carrying the whole policy document on
+    # every worker and every restart -- the caching non-negotiable, and real
+    # money. It would also make a stored response impossible to re-verify
+    # against the canary that produced it. A generated fallback keeps tests and
+    # a first run working without configuration.
+    canary: str = field(default_factory=lambda: os.environ.get("UC3_CANARY") or new_canary())
 
 
 SETTINGS = DetectorSettings()
@@ -74,20 +85,34 @@ SETTINGS = DetectorSettings()
 # --- prompts -------------------------------------------------------------------
 
 
+@lru_cache(maxsize=8)
 def prompt_body(path: Path) -> str:
-    """The prompt text without its YAML front matter."""
+    """The prompt text without its YAML front matter.
+
+    Cached, like the policy reads below: `analyse` runs once per call and a
+    nightly batch is hundreds of calls. Re-reading four files inside an async
+    function each time is blocking I/O on the event loop and pointless work.
+    """
     return re.sub(r"^---\n.*?\n---\n", "", path.read_text(), flags=re.S)
 
 
+@lru_cache(maxsize=8)
 def prompt_version(path: Path) -> str:
     """`prompt_version` = sha256[:12] of the file content (`.claude/rules/apps.md`)."""
     return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
 
 
+@lru_cache(maxsize=1)
 def policy_version() -> str:
     return hashlib.sha256(POLICY.read_bytes()).hexdigest()[:12]
 
 
+@lru_cache(maxsize=1)
+def policy_document() -> str:
+    return POLICY.read_text()
+
+
+@lru_cache(maxsize=1)
 def policy_summary() -> str:
     """The category names and one-line definitions, for the Haiku system prompt.
 
@@ -95,7 +120,7 @@ def policy_summary() -> str:
     deciding, and the full document is several thousand tokens on every call.
     """
     lines = []
-    for block in POLICY.read_text().split("\n## ")[1:]:
+    for block in policy_document().split("\n## ")[1:]:
         name, _, rest = block.partition("\n")
         conduct = rest.split("**Conduct.**")
         if len(conduct) > 1:
@@ -170,7 +195,11 @@ def combine(
         reasons.append("lexicon:high")
     if triage.risk_score >= settings.theta:
         reasons.append(f"triage:{triage.risk_score}>=theta:{settings.theta}")
-    if qa_sampled(call_id, rate=settings.qa_sample_rate, day=day):
+    # Only a call nothing else escalated. E5's sample exists to estimate false
+    # negatives, and anyone later filtering on `qa_sample` to build that
+    # estimate would get a denominator contaminated with calls that were
+    # escalated on their merits.
+    if not reasons and qa_sampled(call_id, rate=settings.qa_sample_rate, day=day):
         reasons.append("qa_sample")
     return Escalation(
         escalate=bool(reasons),
@@ -183,6 +212,11 @@ def combine(
 # --- verifier ------------------------------------------------------------------
 
 
+# An `instruction_like_content` span is not quoted from the transcript, so it is
+# arbitrary model output on its way to a human. Cap it.
+EXEMPT_SPAN_LIMIT = 300
+
+
 @dataclass
 class Verification:
     """What survived, and a count of everything that did not (E9)."""
@@ -191,13 +225,24 @@ class Verification:
     dropped_not_substring: int = 0
     dropped_bad_category: int = 0
     dropped_bad_severity: int = 0
+    # Flags that skipped the substring check by category exemption. Counted so
+    # they cannot masquerade as verified ones.
+    exempt_not_verified: int = 0
     canary_leaked: bool = False
     rejected: list[dict[str, str]] = field(default_factory=list)
 
     @property
+    def verified(self) -> int:
+        """Flags that actually passed the substring check."""
+        return len(self.flags) - self.exempt_not_verified
+
+    @property
     def checked(self) -> int:
+        """Flags the substring check was applied to. Exempt ones are not among
+        them: counting an unverifiable span as a passing check is how a health
+        metric stops meaning anything."""
         return (
-            len(self.flags)
+            self.verified
             + self.dropped_not_substring
             + self.dropped_bad_category
             + self.dropped_bad_severity
@@ -207,12 +252,42 @@ class Verification:
     def failure_rate(self) -> float | None:
         """None, not zero, when nothing was checked -- an empty verification is
         not a clean one."""
-        return (self.checked - len(self.flags)) / self.checked if self.checked else None
+        return (self.checked - self.verified) / self.checked if self.checked else None
 
 
-def verify(
-    payload: Flags, transcript: str, *, canary: str, settings: DetectorSettings = SETTINGS
-) -> Verification:
+# A canary is only useful if it survives the ways a model might mangle it on the
+# way out. Comparison is on alphanumerics only, casefolded, so a space, a case
+# change or intervening punctuation does not hide the leak.
+_ALNUM = re.compile(r"[^a-z0-9]+")
+# Long enough that a coincidental collision is implausible, short enough that
+# splitting the token across two fields still trips it.
+CANARY_SLICE = 12
+
+
+def _flatten(text: str) -> str:
+    return _ALNUM.sub("", text.casefold())
+
+
+def canary_leaked(payload: str, canary: str) -> bool:
+    """Did any recognisable piece of the canary come back?
+
+    `canary in payload` is defeated by a single space, by a case change, and by
+    splitting the token across two fields -- all three were demonstrated against
+    the first version of this check. Both sides are flattened to lowercase
+    alphanumerics and any contiguous slice of the canary is enough.
+    """
+    flat_payload, flat_canary = _flatten(payload), _flatten(canary)
+    if not flat_canary:
+        return False
+    if len(flat_canary) <= CANARY_SLICE:
+        return flat_canary in flat_payload
+    return any(
+        flat_canary[i : i + CANARY_SLICE] in flat_payload
+        for i in range(len(flat_canary) - CANARY_SLICE + 1)
+    )
+
+
+def verify(payload: Flags, transcript: str, *, canary: str) -> Verification:
     """Drop every flag that cannot be traced back to the transcript, and count it.
 
     Four rejections, each for a different reason a flag might be untrustworthy:
@@ -232,7 +307,7 @@ def verify(
     suppress anything -- see `merge_with_lexicon`.
     """
     out = Verification()
-    if canary and canary in payload.model_dump_json():
+    if canary and canary_leaked(payload.model_dump_json(), canary):
         out.canary_leaked = True
         out.rejected.append({"reason": "canary_leaked", "category": "*", "evidence": ""})
         return out
@@ -250,53 +325,119 @@ def verify(
                 {"reason": "unknown_severity", "category": flag.category, "evidence": flag.severity}
             )
             continue
-        if flag.category != "instruction_like_content":
-            # The model quoted what it was shown, which was escaped.
-            quoted = unwrap_quoted(flag.evidence_span)
-            if not quoted or quoted not in transcript:
-                out.dropped_not_substring += 1
-                out.rejected.append(
-                    {
-                        "reason": "evidence_not_substring",
-                        "category": flag.category,
-                        "evidence": flag.evidence_span[:160],
-                    }
-                )
-                continue
-            flag = flag.model_copy(update={"evidence_span": quoted})
+        if flag.category == "instruction_like_content":
+            # Exempt from the substring check because the model is reporting
+            # that the transcript addressed *it*; requiring a verbatim quote
+            # would be beside the point. But exempt is not unbounded: this span
+            # is model-controlled text that reaches a reviewer, so it is capped,
+            # and it is counted separately rather than as a passing check --
+            # otherwise flooding injection flags would keep `failure_rate`
+            # looking clean while nothing was actually verified.
+            flag = flag.model_copy(update={"evidence_span": flag.evidence_span[:EXEMPT_SPAN_LIMIT]})
+            out.exempt_not_verified += 1
+            out.flags.append(flag)
+            continue
+        # The model quoted what it was shown, which was escaped.
+        quoted = unwrap_quoted(flag.evidence_span)
+        if not quoted or quoted not in transcript:
+            out.dropped_not_substring += 1
+            out.rejected.append(
+                {
+                    "reason": "evidence_not_substring",
+                    "category": flag.category,
+                    "evidence": flag.evidence_span[:160],
+                }
+            )
+            continue
+        flag = flag.model_copy(update={"evidence_span": quoted})
         out.flags.append(flag)
     return out
 
 
-def merge_with_lexicon(verified: list[AnalysisFlag], hits: list[matcher.Hit]) -> list[AnalysisFlag]:
+SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def merge_with_lexicon(
+    verified: list[AnalysisFlag],
+    hits: list[matcher.Hit],
+    segments: list[matcher.Segment] | None = None,
+) -> list[AnalysisFlag]:
     """Stage 0's high-severity hits survive whatever Stage 2 said.
 
     The deterministic floor is the part an auditor can read and the part no
-    prompt can talk out of a finding. If the model returns nothing for a call
-    the lexicon flagged at high severity, the lexicon's flag stands -- that is
-    the entire point of having a rule stage under the model stage.
+    prompt can talk out of a finding. Two ways a model could defeat it, both of
+    which the first version of this function allowed:
+
+    1. **Omission** -- return nothing for a call the lexicon flagged. The hit is
+       re-added below.
+    2. **Shadowing** -- return the *same* category and span at `severity: low`,
+       so a presence-only dedupe finds a match and drops the lexicon's `high`.
+       Severity drives the reviewer's queue order, so this quietly buries a
+       finding without ever deleting it. The floor is therefore a floor on
+       severity as well as on presence: a matching flag is raised to the
+       lexicon's severity, never lowered by it.
+
+    Speaker attribution comes from the lexicon hit, not the model, for the same
+    reason: the hit knows which segment it matched, and misattributing a genuine
+    quote to the wrong participant is a worse error than missing it.
     """
-    seen = {(f.category, f.evidence_span) for f in verified}
-    out = list(verified)
+    floor: dict[tuple[str, str], matcher.Hit] = {}
     for hit in hits:
-        if hit.severity != "high" or hit.field != "text":
+        if hit.severity != "high":
             continue
-        key = (hit.category, hit.matched)
-        if key in seen:
+        # A hit found only in the Roman rendering still has to produce a flag:
+        # transliteration evasion is exactly the adversarial class E9 names, and
+        # dropping those hits would mean an evaded term escalates the call and
+        # then contributes nothing. Quote the native turn it came from.
+        span = hit.matched if hit.field == "text" else _native_span(hit, segments)
+        if not span:
             continue
-        seen.add(key)
+        floor[(hit.category, span)] = hit
+
+    out: list[AnalysisFlag] = []
+    for flag in verified:
+        key = (flag.category, flag.evidence_span)
+        hit = floor.pop(key, None)
+        if hit is None:
+            out.append(flag)
+            continue
+        raised = flag
+        if SEVERITY_RANK.get(flag.severity, 0) < SEVERITY_RANK[hit.severity]:
+            raised = raised.model_copy(update={"severity": hit.severity})
+        if hit.speaker and raised.speaker != hit.speaker:
+            raised = raised.model_copy(update={"speaker": hit.speaker})
+        out.append(raised)
+
+    for (category, span), hit in floor.items():
         out.append(
             AnalysisFlag(
-                category=hit.category,
+                category=category,
                 severity=hit.severity,
                 speaker=hit.speaker,
-                start_ms=0,
-                evidence_span=hit.matched,
+                start_ms=_start_ms(hit, segments),
+                evidence_span=span,
                 english_rendering="",
-                reasoning=f"Stage 0 lexicon entry {hit.entry_id}: {hit.entry_id} matched verbatim.",
+                reasoning=f"Stage 0 lexicon entry {hit.entry_id} matched verbatim.",
             )
         )
     return out
+
+
+def _native_span(hit: matcher.Hit, segments: list[matcher.Segment] | None) -> str:
+    """The native text of the turn a transliteration-only hit came from."""
+    if not segments or not 0 <= hit.segment_index < len(segments):
+        return ""
+    return segments[hit.segment_index].text
+
+
+def _start_ms(hit: matcher.Hit, segments: list[matcher.Segment] | None) -> int:
+    """Where in the call this is, so the reviewer's audio seek lands on it.
+
+    `matcher.Segment` carries no timing -- it is the matcher's own minimal view
+    -- so this is 0 until the caller supplies timed segments. Stated rather than
+    silently wrong.
+    """
+    return 0
 
 
 # --- the vendor stages ----------------------------------------------------------
@@ -312,6 +453,7 @@ def transcript_text(segments: list[matcher.Segment]) -> str:
     return "\n".join(s.text for s in segments)
 
 
+@lru_cache(maxsize=1)
 def claude(redactor: Any = None) -> Any:
     """A Claude adapter with redaction off, as PRD E9 requires for this app.
 
@@ -344,7 +486,7 @@ async def deep_analysis(
     system = (
         prompt_body(PROMPTS / "deep_analysis.md")
         .replace("{canary}", settings.canary)
-        .replace("{policy_document}", POLICY.read_text())
+        .replace("{policy_document}", policy_document())
     )
     return await sut.structured(system=system, user=text, schema=Flags, model=ANALYSIS_MODEL)
 
@@ -391,13 +533,27 @@ class Analysis:
     lexicon_version: str
     theta: int
     qa_sample_rate: float
+    input_sha256: str
+    stage2_error: str | None = None
+
+    @property
+    def effective_model(self) -> str:
+        """The model that actually ran. `model` names the Stage 2 model whether
+        or not Stage 2 ran, so a direct reader of the dataclass would otherwise
+        see a false id on a non-escalated call."""
+        return self.model if self.escalation.escalate else self.triage_model
 
     def row(self) -> dict[str, Any]:
         """The `analysis_runs` payload (PRD E8), ready for P5 to hash-chain."""
         return {
             "call_id": self.call_id,
             "stage": "deep_analysis" if self.escalation.escalate else "triage",
-            "model": self.model if self.escalation.escalate else self.triage_model,
+            "model": self.effective_model,
+            # E8's `analysis_runs` carries `input_sha256`: it is what binds a row
+            # to the exact transcript that produced it, and without it a chain
+            # can be intact while describing text nobody can reconstruct.
+            "input_sha256": self.input_sha256,
+            "stage2_error": self.stage2_error,
             "policy_version": self.policy_version,
             "lexicon_version": self.lexicon_version,
             "prompt_version": (
@@ -411,6 +567,7 @@ class Analysis:
             "flags": [f.model_dump() for f in self.flags],
             "verification": {
                 "checked": self.verification.checked,
+                "exempt_not_verified": self.verification.exempt_not_verified,
                 "dropped_not_substring": self.verification.dropped_not_substring,
                 "dropped_bad_category": self.verification.dropped_bad_category,
                 "dropped_bad_severity": self.verification.dropped_bad_severity,
@@ -438,12 +595,34 @@ async def analyse(
 
     verification = Verification()
     flags: list[AnalysisFlag] = []
+    stage2_error: str | None = None
     if escalation.escalate:
-        produced = await deep_analysis(text, client=client, settings=settings)
-        verification = verify(produced, text, canary=settings.canary, settings=settings)
-        flags = merge_with_lexicon(verification.flags, hits)
+        try:
+            produced = await deep_analysis(text, client=client, settings=settings)
+        except Exception as error:
+            # Losing the whole call because Stage 2 failed would mean a vendor
+            # outage, a refusal, or a malformed reply silently clears a call the
+            # lexicon had already flagged. Degrade to the deterministic floor and
+            # record why, so the gap is visible rather than absent.
+            stage2_error = f"{type(error).__name__}: {error}"
+            log.warning("uc3 stage 2 failed for %s: %s", call_id, stage2_error)
+        else:
+            verification = verify(produced, text, canary=settings.canary)
+        flags = merge_with_lexicon(verification.flags, hits, segments)
     else:
-        flags = merge_with_lexicon([], hits)
+        # Reachable only for a non-high hit set: any high `text` hit forces
+        # escalation. Kept so the floor is applied on exactly one path.
+        flags = merge_with_lexicon([], hits, segments)
+
+    # PRD E5: only flagged evidence is translated, and only where Stage 2 did
+    # not already supply it. Failures are non-fatal -- a reviewer who reads the
+    # language does not need it, and an empty rendering beats a wrong one.
+    for index, flag in enumerate(flags):
+        if flag.category == "instruction_like_content" or flag.english_rendering.strip():
+            continue
+        rendered = await render_english(flag, client=client)
+        if rendered:
+            flags[index] = flag.model_copy(update={"english_rendering": rendered})
 
     return Analysis(
         call_id=call_id,
@@ -458,6 +637,8 @@ async def analyse(
         lexicon_version=lex.version,
         theta=settings.theta,
         qa_sample_rate=settings.qa_sample_rate,
+        input_sha256=hashlib.sha256(text.encode()).hexdigest(),
+        stage2_error=stage2_error,
     )
 
 

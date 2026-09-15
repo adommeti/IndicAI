@@ -50,7 +50,7 @@ verdict — Stage 2 produces candidate findings and a person decides.
 |---|---|
 | transcript as untrusted data | `wrap_untrusted(text, "transcript")`, escaped |
 | no exfiltration channel | neither stage is passed tools; JSON output only |
-| evidence verified | `detector.verify` drops any span that is not an exact substring, and counts it |
+| evidence verified | `detector.verify` drops any span that is not an exact substring, and counts it. One carve-out: an `instruction_like_content` span is not quoted from the transcript, so it is length-capped and counted as `exempt_not_verified` rather than as a passing check (ADR 0009) |
 | canary | per-process secret in the system prompt; any output containing it discards the **whole** response |
 | manipulation as signal | `instruction_like_content` is a flag category, and is additive — it never suppresses another finding |
 | deterministic floor | a high-severity lexicon hit survives whatever Stage 2 returns |
