@@ -15,7 +15,7 @@ if ! git rev-parse --verify --quiet "${RANGE%%..*}" >/dev/null 2>&1; then
   git rev-parse --verify --quiet HEAD~1 >/dev/null 2>&1 || RANGE="HEAD"
 fi
 
-ALLOWED_EMAILS="${INDICAI_ALLOWED_EMAILS:-$GIT_EMAIL}"
+ALLOWED_EMAILS="${INDICAI_ALLOWED_EMAILS:-$ALLOWED_AUTHOR_EMAILS_DEFAULT}"
 # The AUTHOR is the attribution that GitHub shows and counts, so it is checked strictly.
 # The COMMITTER is mechanical — it becomes whoever ran `git am`, `git rebase` or the squash
 # merge — so any human identity is accepted there, but tool identities never are.
@@ -32,7 +32,10 @@ for sha in $COMMITS; do
   ok=1
   case ",$ALLOWED_EMAILS," in
     *",$ae,"*) ;;
-    *) echo "FAIL $short: author '$an <$ae>' is not an allowed identity (set INDICAI_ALLOWED_EMAILS or fix the commit)"; ok=0 ;;
+    *) echo "FAIL $short: author '$an <$ae>' is not an allowed identity"
+       echo "      allowed: $ALLOWED_EMAILS"
+       echo "      a squash merge is authored by the merging GitHub account, so that"
+       echo "      account's email must be in the ALLOWED_AUTHOR_EMAILS repo variable"; ok=0 ;;
   esac
   if printf '%s <%s>' "$cn" "$ce" | grep -Eiq "$TOOL_IDENTITY_RE"; then
     echo "FAIL $short: committer '$cn <$ce>' is a tool identity"

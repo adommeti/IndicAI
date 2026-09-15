@@ -13,9 +13,19 @@ mkdir -p "$STATE_DIR" 2>/dev/null || true
 GIT_NAME="${INDICAI_GIT_NAME:-Anantha Dommeti}"
 GIT_EMAIL="${INDICAI_GIT_EMAIL:-anantha.dommeti@users.noreply.github.com}"
 
-# Lines that must never appear in a commit message or PR body.
-# Kept as an ERE so commit-msg, pre-push, CI and the Bash guard agree.
-FORBIDDEN_TRAILER_RE='^(Co-Authored-By|Co-authored-by|Claude-Session|Generated-With|Generated-with):|Generated with \[?Claude|🤖|Claude-Session|noreply@anthropic\.com|Co-Authored-By: *Claude'
+# Every identity that may AUTHOR a commit here. GitHub writes the squash-merge
+# commit under the merging account's own identity, not under the branch commit's
+# author, so the account address belongs in this list alongside the noreply one.
+# Override with the ALLOWED_AUTHOR_EMAILS repository variable / INDICAI_ALLOWED_EMAILS.
+ALLOWED_AUTHOR_EMAILS_DEFAULT="${INDICAI_ALLOWED_EMAILS:-anantha.dommeti@users.noreply.github.com,asdommeti@gmail.com}"
+
+# Tool attribution that must never appear in a commit message or PR body.
+# A bare "Co-authored-by:" is deliberately NOT forbidden: GitHub adds one naming
+# the branch author on every squash merge, and crediting a human co-author is
+# legitimate. Only co-authors that are tools are rejected.
+# Kept as an ERE (used with grep -Ei and with Python re.IGNORECASE) so the
+# commit-msg hook, pre-push, ship.sh, CI and the Bash guard all agree.
+FORBIDDEN_TRAILER_RE='^(Claude-Session|Generated-With|Generated-with):|^co-authored-by:.*(claude|anthropic|copilot|\[bot\])|Generated with \[?Claude|🤖|noreply@anthropic\.com|claude\.ai/(code|share)'
 
 # Read the hook's JSON payload from stdin into HOOK_INPUT (may be empty).
 read_hook_input() {

@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -40,7 +40,7 @@ class Turn(Base):
     __tablename__ = "turns"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id"), index=True)
-    utterance: Mapped[str]
+    utterance: Mapped[str] = mapped_column(Text)
     language: Mapped[str] = mapped_column(String(16))
     decision_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
     retrieval_json: Mapped[dict[str, Any]] = mapped_column(JSONB)

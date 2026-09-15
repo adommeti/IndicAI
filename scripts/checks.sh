@@ -30,6 +30,9 @@ stage attribution bash scripts/attribution-check.sh || exit 1
 stage secrets     bash -c 'uv run --frozen detect-secrets-hook --baseline .secrets.baseline $(git ls-files)' || exit 1
 
 if [ "$MODE" = "--full" ]; then
+  # Needs the stack: `alembic check` is the only thing that catches a model whose
+  # column type has drifted from its shipped migration, and CI runs it too.
+  stage migrations  bash -c 'uv run --frozen alembic upgrade head && uv run --frozen alembic check' || exit 1
   stage integration uv run --frozen pytest -m integration -q -p no:cacheprovider || exit 1
   stage audit       uv run --frozen pip-audit --skip-editable || exit 1
 fi
