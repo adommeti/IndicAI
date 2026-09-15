@@ -22,6 +22,14 @@ as TTS frames: that is the only frame pair the transport turns into a playback-c
 signal -- see ``pipecat.transports.base_output``). Nothing downstream, VAD included,
 ever sees the dropped audio.
 
+Playback is triggered by a participant *joining*, not by the pipeline starting: the
+agent is dispatched into the room rather than summoned into it, so a notice played on
+``StartFrame`` can play to an empty room, be acknowledged by the transport anyway, and
+leave the gate open before the employee ever arrives. Every join re-plays it and
+re-closes the gate, so a late joiner is notified too. If the transport never confirms
+playback, the gate stays SHUT and says so (``notice: unconfirmed``); it does not open
+on a timeout.
+
 A *missing* notice is therefore a refusal, not a degradation. ``run_session`` calls
 :func:`load_greeting` before it mints a token or joins a room, and
 :class:`GreetingUnavailable` names the path it wanted. ``greeting_path=None`` refuses
@@ -90,7 +98,6 @@ from pipecat.frames.frames import (
     InputAudioRawFrame,
     InterimTranscriptionFrame,
     OutputTransportMessageFrame,
-    StartFrame,
     TextFrame,
     TranscriptionFrame,
     TTSAudioRawFrame,
@@ -132,10 +139,11 @@ DATA_MESSAGE_VERSION = 1
 # the first syllable is cut off and the transcript quietly loses the imperative verb.
 PREROLL_MS = 400
 
-# How long the gate waits for the transport to confirm the notice finished playing
-# before it opens anyway. A transport that never reports playback (a bare pipeline, a
-# client that never subscribes) must not deadlock the session forever; the fallback is
-# recorded on the gate as `opened_on_timeout` so it is visible rather than invisible.
+# How long the gate waits for the transport to confirm the notice finished playing before
+# it says so. This is a REPORTING deadline, not a way in: on expiry the gate publishes
+# `notice: unconfirmed` and stays shut, because "we waited 30 seconds" is not evidence
+# that anyone was told the call is recorded. A control that opens on the absence of a
+# signal is not a control, and the cost of failing closed is one lost session.
 GREETING_ACK_TIMEOUT_S = 30.0
 
 _SENTENCE_END = re.compile("(?<=[\u0964\u0965.!?\u2047\u2048\u2049])[\\s\u200b]+")
@@ -377,6 +385,16 @@ class GreetingGate(FrameProcessor):
     ``BotStoppedSpeakingFrame`` once the audio has been written out; a plain
     ``OutputAudioRawFrame`` is played but never acknowledged, leaving the gate with
     nothing to open on.
+
+    **The notice is not played on ``StartFrame``.** A pipeline starts when the agent is
+    dispatched, which can be before anyone is in the room; the output transport writes the
+    audio out and acknowledges it whether or not a single participant is subscribed, so
+    starting on ``StartFrame`` would let the gate open on a notice that played to an empty
+    room -- and the first thing the employee said on joining would go to Saaras with no
+    notice ever delivered. Playback is therefore driven by the caller, from the transport's
+    participant-joined event: see :meth:`announce` and ``run_session``. Offline tests call
+    :meth:`announce` at the same point in the sequence, so the tested path and the
+    production path are the same path.
     """
 
     def __init__(
@@ -397,7 +415,8 @@ class GreetingGate(FrameProcessor):
         self._ack_timeout_s = ack_timeout_s
         self._played_at: float | None = None
         self.opened = False
-        self.opened_on_timeout = False
+        self.announcements = 0
+        self.notice_unconfirmed = False
         self.blocked = 0
         self.forwarded = 0
 
@@ -406,8 +425,7 @@ class GreetingGate(FrameProcessor):
 
         if isinstance(frame, InputAudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
             if not self.opened:
-                self._maybe_open_on_timeout()
-            if not self.opened:
+                await self._check_ack_deadline()
                 self.blocked += 1
                 return
             self.forwarded += 1
@@ -416,21 +434,58 @@ class GreetingGate(FrameProcessor):
 
         await self.push_frame(frame, direction)
 
-        if isinstance(frame, StartFrame):
-            await self._play_greeting()
-        elif isinstance(frame, BotStoppedSpeakingFrame) and not self.opened:
+        if isinstance(frame, BotStoppedSpeakingFrame) and not self.opened:
             # The notice finished playing out of the transport. Only now does this
             # session start consuming the employee's audio.
             self._open("playback_complete")
         elif isinstance(frame, EndFrame | CancelFrame):
-            self.opened = False
+            self._reset()
 
-    def _maybe_open_on_timeout(self) -> None:
-        if self._played_at is None:
+    async def announce(self) -> None:
+        """Play the consent notice, closing the gate until it is acknowledged.
+
+        Called when a participant joins -- including one who joins after an earlier notice
+        finished. A late joiner has heard nothing, so the notice is played again and the
+        gate closes for the replay: the alternative is a room that keeps capturing while
+        somebody who was never notified is in it.
+        """
+        self.opened = False
+        self.notice_unconfirmed = False
+        self._played_at = None
+        self.announcements += 1
+        await self._play_greeting()
+
+    def _reset(self) -> None:
+        """Forget the notice entirely when the pipeline ends.
+
+        ``_played_at`` has to go with ``opened``. Leaving a stale timestamp behind means a
+        later audio frame finds a deadline that expired long ago and opens the gate on a
+        notice belonging to a finished session.
+        """
+        self.opened = False
+        self.notice_unconfirmed = False
+        self._played_at = None
+
+    async def _check_ack_deadline(self) -> None:
+        """Report a notice that was never acknowledged. Never open on one.
+
+        The deadline exists because a client that does not subscribe would otherwise leave
+        the gate waiting forever with nothing said about it. It is a diagnostic, NOT a way
+        in: the gate stays shut, because "we waited 30 seconds" is not evidence that anyone
+        was told the call is recorded, and a consent control that opens on the absence of a
+        signal is not a control. Failing closed costs a session; failing open records
+        someone who was never notified.
+        """
+        if self._played_at is None or self.notice_unconfirmed:
             return
-        if time.monotonic() - self._played_at >= self._ack_timeout_s:
-            self.opened_on_timeout = True
-            self._open("ack_timeout")
+        if time.monotonic() - self._played_at < self._ack_timeout_s:
+            return
+        self.notice_unconfirmed = True
+        logger.warning(
+            f"{self}: consent notice was never acknowledged after {self._ack_timeout_s:.0f}s; "
+            "input stays closed and this session will capture nothing"
+        )
+        await self.push_frame(_message({"type": "notice", "state": "unconfirmed"}))
 
     def _open(self, reason: str) -> None:
         self.opened = True
@@ -489,6 +544,11 @@ class SarvamSTTProcessor(FrameProcessor):
         self._feed: _AudioFeed | None = None
         self._task: asyncio.Task[None] | None = None
         self._segments: list[str] = []
+        # What Saaras actually identified, as opposed to what it was asked for. With
+        # `language="auto"` -- the configured default -- `self._language` is the literal
+        # string "auto", which is not a language tag and is useless to a client trying to
+        # pick a font or a direction for the caption it is about to render.
+        self._detected: str | None = None
         self.listening = True
         self.audio_frames_consumed = 0
         self.streams_opened = 0
@@ -533,6 +593,9 @@ class SarvamSTTProcessor(FrameProcessor):
         self.streams_opened = index + 1
         self.turn = _Turn(index=index)
         self._segments = []
+        # Per utterance: an employee who switches language mid-call must not have this
+        # turn labelled with the previous turn's identification.
+        self._detected = None
         feed = _AudioFeed()
         if self._preroll:
             feed.push(bytes(self._preroll))
@@ -581,7 +644,10 @@ class SarvamSTTProcessor(FrameProcessor):
                     "type": "transcript",
                     "final": True,
                     "text": clean,
-                    "language": self._language,
+                    # The language Saaras identified across this utterance's segments, not
+                    # the one it was asked for -- which is "auto" in every configuration
+                    # this pipeline ships with, and not a language tag a client can use.
+                    "language": self._detected or self._language,
                     "turn": turn.index,
                 }
             )
@@ -601,6 +667,8 @@ class SarvamSTTProcessor(FrameProcessor):
         text = segment.text.strip()
         if not text:
             return
+        if segment.language:
+            self._detected = segment.language
         clean = redact(text)
         await self.push_frame(
             _message(
@@ -853,6 +921,7 @@ def build_pipeline(
     vad: VADAnalyzer | None = None,
     on_turn: TurnCallback | None = None,
     decoder: Decoder = decode_mp3_stream,
+    ack_timeout_s: float = GREETING_ACK_TIMEOUT_S,
 ) -> Pipeline:
     """Construct the voice pipeline without running it.
 
@@ -884,7 +953,11 @@ def build_pipeline(
     stt_processor.on_final = adopt
 
     processors: list[FrameProcessor] = [
-        GreetingGate(greeting_audio=greeting_audio, sample_rate=OUTPUT_SAMPLE_RATE),
+        GreetingGate(
+            greeting_audio=greeting_audio,
+            sample_rate=OUTPUT_SAMPLE_RATE,
+            ack_timeout_s=ack_timeout_s,
+        ),
         VADProcessor(vad_analyzer=vad or SileroVADAnalyzer(sample_rate=INPUT_SAMPLE_RATE)),
         stt_processor,
         decide_processor,
@@ -967,6 +1040,7 @@ async def run_session(
         tail=transport.output(),
         on_turn=on_turn,
     )
+    gate = next(p for p in pipeline.processors if isinstance(p, GreetingGate))
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(
@@ -975,6 +1049,16 @@ async def run_session(
             enable_metrics=True,
         ),
     )
+
+    @transport.event_handler("on_participant_connected")
+    async def _on_participant_connected(_transport: BaseTransport, participant_id: str) -> None:
+        # Every join, not just the first. The pipeline may have started well before anyone
+        # was in the room -- the agent is dispatched, not summoned -- so playing the notice
+        # on pipeline start would play it to nobody. And a participant who joins later has
+        # heard nothing either: they get the notice too, and the gate closes again while it
+        # plays, because a room that keeps capturing around somebody who was never told is
+        # the exact situation the notice exists to prevent.
+        await gate.announce()
 
     @transport.event_handler("on_participant_disconnected")
     async def _on_participant_disconnected(_transport: BaseTransport, participant_id: str) -> None:

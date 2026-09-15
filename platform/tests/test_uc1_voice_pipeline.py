@@ -31,9 +31,9 @@ of a mystery assertion three lines later.
 import asyncio
 import contextlib
 import time
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from helpdesk_agent.voice_pipeline import (
@@ -197,7 +197,10 @@ async def decide_ok(utterance: str, language: str, history: list[dict[str, Any]]
 # Harness: a script of frames and conditions, never of sleeps.
 # --------------------------------------------------------------------------------------
 
-Step = Frame | Callable[[], bool]
+# A frame to queue, a condition to wait for, or an action to perform. The third kind is
+# how a test stands in for the transport: `GreetingGate.announce` is driven by the
+# participant-joined event in production, so a script says when a participant joined.
+Step = Frame | Callable[[], bool] | Callable[[], Awaitable[None]]
 
 
 def until(predicate: Callable[[], bool], label: str) -> Callable[[], bool]:
@@ -239,16 +242,39 @@ async def drive(pipeline: Pipeline, script: Sequence[Step]) -> None:
 
     async def play() -> None:
         await asyncio.wait_for(started.wait(), timeout=10.0)
-        for step in script:
-            if callable(step):
-                await _wait(step)
-            else:
-                await worker.queue_frame(step)
-        await worker.queue_frame(EndFrame())
+        try:
+            for step in script:
+                if asyncio.iscoroutinefunction(step):
+                    # An action: something the transport would do, such as a participant
+                    # joining. `iscoroutinefunction` is a runtime check mypy cannot narrow
+                    # a Callable union with, hence the cast.
+                    await cast(Callable[[], Awaitable[None]], step)()
+                elif callable(step):
+                    await _wait(cast(Callable[[], bool], step))
+                else:
+                    await worker.queue_frame(step)
+        finally:
+            # `finally`, so a script that fails a condition still ends the pipeline.
+            await worker.queue_frame(EndFrame())
 
     runner = WorkerRunner()
     await runner.add_workers(worker)
-    await asyncio.gather(runner.run(), play())
+    # A FAILING TEST MUST FAIL, NOT HANG. `asyncio.gather(runner.run(), play())` does not
+    # do that: when `play()` raises, gather propagates immediately but leaves `runner.run()`
+    # pending, and the suite stops dead with nothing reported. That matters here more than
+    # in most test files -- these are the consent-gate assertions, so the first person to
+    # break the gate is the person who would have seen a silent hang instead of the name of
+    # the property they broke. (Found by sabotaging the gate: the run never came back.)
+    # So the runner is a task this function owns, and it is cancelled on the way out.
+    run_task = asyncio.create_task(runner.run())
+    try:
+        await play()
+        await asyncio.wait_for(run_task, timeout=10.0)
+    finally:
+        if not run_task.done():
+            run_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, TimeoutError, Exception):
+            await run_task
 
 
 def make_pipeline(
@@ -257,6 +283,7 @@ def make_pipeline(
     tts: Any = None,
     decide: Any = decide_ok,
     on_turn: Any = None,
+    ack_timeout_s: float = 30.0,
 ) -> tuple[Pipeline, dict[str, Any]]:
     """Build the real pipeline with fakes, and hand back its processors for assertions."""
     head, tail = Passthrough(name="head"), Passthrough(name="tail")
@@ -271,6 +298,7 @@ def make_pipeline(
         vad=SilentVAD(sample_rate=INPUT_SAMPLE_RATE),
         on_turn=on_turn,
         decoder=fake_decoder,
+        ack_timeout_s=ack_timeout_s,
     )
     parts: dict[str, Any] = {"head": head, "tail": tail}
     for processor in pipeline.processors:
@@ -300,8 +328,15 @@ def messages(frames: Sequence[Frame], kind: str | None = None) -> list[dict[str,
 
 
 def consented(gate: GreetingGate) -> list[Step]:
-    """Get past the consent notice: acknowledge playback, wait for the gate to open."""
+    """A participant joins, the notice plays, the transport confirms it, the gate opens.
+
+    `gate.announce` is what `run_session`'s `on_participant_connected` handler calls, so
+    this is the production sequence and not a test-only shortcut. Nothing plays the notice
+    before this step: a pipeline that has started but has nobody in the room is exactly the
+    case the gate must not open in.
+    """
     return [
+        gate.announce,
         BotStoppedSpeakingFrame(),
         until(lambda: gate.opened, "the consent notice to be acknowledged"),
     ]
@@ -360,7 +395,7 @@ async def test_no_user_audio_is_consumed_before_the_notice_has_played() -> None:
     assert gate.forwarded == 2, "audio after the notice completed must pass"
     assert stt_processor.audio_frames_consumed == 2
     assert stt.chunks_pulled == 0, "audio alone opens no STT stream; VAD delimits utterances"
-    assert gate.opened_on_timeout is False
+    assert gate.notice_unconfirmed is False
 
 
 async def test_the_notice_is_emitted_before_the_first_forwarded_audio_frame() -> None:
@@ -395,6 +430,136 @@ async def test_the_notice_is_emitted_before_the_first_forwarded_audio_frame() ->
     notices = messages(tail.seen, "notice")
     assert notices and notices[0]["state"] == "playing"
     assert notices[0]["v"] == DATA_MESSAGE_VERSION
+
+
+async def test_a_started_pipeline_with_nobody_in_the_room_plays_no_notice() -> None:
+    """The agent is dispatched into a room, not summoned into one.
+
+    A notice played on pipeline start plays to whoever is there, which may be nobody --
+    and `BaseOutputTransport` acknowledges it regardless of whether a single participant
+    is subscribed, so the gate would open on a notice delivered to an empty room. The
+    employee's first words would then reach Saaras having been told nothing. Playback is
+    therefore driven by the participant-joined event, and this test pins the fact that
+    nothing at all happens before it.
+    """
+    stt = FakeSTT()
+    pipeline, parts = make_pipeline(stt=stt)
+    gate: GreetingGate = parts["GreetingGate"]
+    tail: Passthrough = parts["tail"]
+
+    await drive(
+        pipeline,
+        [
+            # No `gate.announce` anywhere: nobody has joined.
+            *audio(5),
+            until(lambda: gate.blocked == 5, "the audio to be blocked with no notice played"),
+        ],
+    )
+
+    assert gate.announcements == 0, "no participant joined, so no notice should have played"
+    assert not messages(tail.seen, "notice"), "a notice was announced to an empty room"
+    assert not [f for f in tail.seen if isinstance(f, TTSAudioRawFrame)], "notice audio played"
+    assert gate.opened is False, "the gate opened without a notice reaching a participant"
+    assert gate.forwarded == 0
+    assert stt.calls == 0
+
+
+async def test_an_unacknowledged_notice_says_so_and_keeps_the_gate_shut() -> None:
+    """The ack deadline is a report, not a way in.
+
+    A client that never subscribes never produces `BotStoppedSpeakingFrame`. The old
+    behaviour opened the gate after 30s on the theory that a session should not deadlock;
+    that trades a lost session for a recorded one nobody consented to, which is the wrong
+    way round. Now the deadline only publishes `notice: unconfirmed` -- the gate stays shut
+    for the life of the session and captures nothing.
+    """
+    stt = FakeSTT()
+    # A deadline short enough to reach without sleeping through a real one.
+    pipeline, parts = make_pipeline(stt=stt, ack_timeout_s=0.0)
+    gate: GreetingGate = parts["GreetingGate"]
+    tail: Passthrough = parts["tail"]
+
+    await drive(
+        pipeline,
+        [
+            gate.announce,
+            # Deliberately NO BotStoppedSpeakingFrame: the transport never confirms.
+            *audio(4),
+            until(lambda: gate.notice_unconfirmed, "the gate to report an unconfirmed notice"),
+            *audio(4),
+            until(lambda: gate.blocked >= 8, "every frame to stay blocked"),
+        ],
+    )
+
+    assert gate.opened is False, "the gate opened on a notice nobody confirmed hearing"
+    assert gate.forwarded == 0, "audio passed a gate that was never consented through"
+    assert stt.calls == 0 and stt.chunks_pulled == 0, "a vendor saw audio with no notice given"
+
+    unconfirmed = [m for m in messages(tail.seen, "notice") if m["state"] == "unconfirmed"]
+    assert len(unconfirmed) == 1, "the unconfirmed notice must be reported exactly once"
+
+
+async def test_a_participant_joining_later_gets_the_notice_and_recloses_the_gate() -> None:
+    """Somebody who joins after the notice finished has heard nothing.
+
+    A supervisor joining a call in progress is not covered by a notice played before they
+    arrived. The gate re-plays and re-closes, so the room stops capturing until the new
+    arrival has been told too.
+    """
+    stt = FakeSTT()
+    pipeline, parts = make_pipeline(stt=stt)
+    gate: GreetingGate = parts["GreetingGate"]
+    tail: Passthrough = parts["tail"]
+
+    await drive(
+        pipeline,
+        [
+            *consented(gate),
+            *audio(2),
+            until(lambda: gate.forwarded == 2, "the first participant's audio to pass"),
+            # A second participant joins.
+            gate.announce,
+            until(lambda: not gate.opened, "the gate to close again for the new arrival"),
+            *audio(3),
+            until(lambda: gate.blocked >= 3, "audio to be blocked during the replayed notice"),
+            BotStoppedSpeakingFrame(),
+            until(lambda: gate.opened, "the replayed notice to be acknowledged"),
+            *audio(2),
+            until(lambda: gate.forwarded == 4, "audio to pass once everyone has been told"),
+        ],
+    )
+
+    assert gate.announcements == 2, "the late joiner must get the notice too"
+    played = [m for m in messages(tail.seen, "notice") if m["state"] == "playing"]
+    assert len(played) == 2
+    notice_bytes = sum(len(f.audio) for f in tail.seen if isinstance(f, TTSAudioRawFrame))
+    assert notice_bytes == 2 * len(GREETING), "the replay is the whole notice, not a prefix"
+
+
+async def test_a_stale_ack_deadline_cannot_open_the_gate_after_the_session_ended() -> None:
+    """`EndFrame` forgets the notice, deadline included.
+
+    Leaving `_played_at` behind meant a frame arriving in a later session found a deadline
+    that had expired long ago and opened the gate on a notice belonging to a finished call.
+    The deadline is zero here, so if the timestamp survived the reset the very next frame
+    would open the gate -- which is exactly the assertion.
+    """
+    pipeline, parts = make_pipeline(ack_timeout_s=0.0)
+    gate: GreetingGate = parts["GreetingGate"]
+
+    await drive(
+        pipeline,
+        [
+            *consented(gate),
+            *audio(1),
+            until(lambda: gate.forwarded == 1, "the consented audio to pass"),
+        ],
+    )
+
+    # `drive` queues EndFrame when the script finishes; the gate must be fully reset.
+    assert gate.opened is False
+    assert gate.notice_unconfirmed is False
+    assert gate._played_at is None, "a finished session left its notice deadline behind"
 
 
 async def test_a_missing_notice_refuses_to_start_and_opens_no_stream(tmp_path: Path) -> None:
