@@ -123,7 +123,7 @@ jobs:
       - name: integration tests
         run: |
           set +e
-          uv run pytest -m integration -q -p no:cacheprovider
+          uv run pytest -m integration -q -p no:cacheprovider --capture=tee-sys
           rc=$?
           # 5 = no tests collected (allowed until the first integration test exists)
           [ "$rc" = "0" ] || [ "$rc" = "5" ] || exit "$rc"
