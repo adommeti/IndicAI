@@ -635,3 +635,130 @@ async def approve_quiz_item(
         raise LookupError(f"Unknown quiz item {item_id}")
     item.approved = approved
     return {"item_id": item_id, "language": language, "approved": approved}
+
+
+# --- production (uc2/P4) ------------------------------------------------------
+#
+# These run after the human gate and read only `approved` rows, which is what
+# makes a reviewer edit cost production rather than translation (PRD D5).
+
+
+async def _fetch_bytes(url: str) -> bytes:
+    import httpx
+
+    async with httpx.AsyncClient(timeout=300) as http:
+        response = await http.get(url)
+        response.raise_for_status()
+        return response.content
+
+
+@celery_app.task(name="uc2.captions", bind=True, **STAGE_TASK)
+def captions_task(self: Any, module_id: str, language: str) -> dict[str, Any]:
+    return run(_captions(uuid.UUID(module_id), language))
+
+
+async def _captions(module_id: uuid.UUID, language: str) -> dict[str, Any]:
+    from training_localizer.production import captions_task as build
+    from training_localizer.storage import MinioStorage
+
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db, db.begin():
+            return await build(db, module_id=module_id, language=language, storage=MinioStorage())
+    finally:
+        await eng.dispose()
+
+
+@celery_app.task(name="uc2.dub", bind=True, **STAGE_TASK)
+def dub_task(self: Any, module_id: str, language: str, video_uri: str) -> dict[str, Any]:
+    return run(_dub(uuid.UUID(module_id), language, video_uri))
+
+
+async def _dub(module_id: uuid.UUID, language: str, video_uri: str) -> dict[str, Any]:
+    from indic_platform.adapters.sarvam_dub import SarvamDubbing
+
+    from training_localizer.production import dub_task as produce
+    from training_localizer.storage import MinioStorage
+
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db, db.begin():
+            return await produce(
+                db,
+                module_id=module_id,
+                language=language,
+                video_uri=video_uri,
+                dubber=SarvamDubbing(),
+                storage=MinioStorage(),
+                fetch_bytes=_fetch_bytes,
+            )
+    finally:
+        await eng.dispose()
+
+
+@celery_app.task(name="uc2.tts_summary", bind=True, **STAGE_TASK)
+def tts_summary_task(self: Any, module_id: str, language: str) -> dict[str, Any]:
+    return run(_tts_summary(uuid.UUID(module_id), language))
+
+
+async def _tts_summary(module_id: uuid.UUID, language: str) -> dict[str, Any]:
+    from indic_platform.adapters.sarvam_tts import SarvamTTS
+
+    from training_localizer.production import tts_summary_task as produce
+    from training_localizer.storage import MinioStorage
+
+    eng = engine()
+    claude = Claude()
+    bulbul = SarvamTTS()
+    try:
+        async with AsyncSession(eng) as db, db.begin():
+            return await produce(
+                db,
+                module_id=module_id,
+                language=language,
+                structured=claude.structured,
+                speak=bulbul.speak,
+                storage=MinioStorage(),
+            )
+    finally:
+        await claude.client.close()
+        await eng.dispose()
+
+
+@celery_app.task(name="uc2.package", bind=True, **STAGE_TASK)
+def package_task(self: Any, module_id: str, language: str) -> dict[str, Any]:
+    return run(_package(uuid.UUID(module_id), language))
+
+
+async def _package(module_id: uuid.UUID, language: str) -> dict[str, Any]:
+    from training_localizer.production import package_task as produce
+    from training_localizer.storage import MinioStorage
+
+    eng = engine()
+    try:
+        async with AsyncSession(eng) as db, db.begin():
+            return await produce(db, module_id=module_id, language=language, storage=MinioStorage())
+    finally:
+        await eng.dispose()
+
+
+@celery_app.task(name="uc2.produce")
+def produce(module_id: str, video_uri: str, languages: list[str] | None = None) -> dict[str, Any]:
+    """Queue production for each language, in PRD D4 step 8-9 order.
+
+    captions first: it emits the SRT the dubbing job takes as input (ADR 0003
+    path a), so dubbing without it would dub something no reviewer approved.
+    """
+    queued: dict[str, str] = {}
+    for language in list(languages or LANGUAGES):
+        queued[language] = (
+            chain(
+                captions_task.si(module_id, language),
+                dub_task.si(module_id, language, video_uri),
+                tts_summary_task.si(module_id, language),
+                package_task.si(module_id, language),
+            )
+            .apply_async()
+            .id
+        )
+    return {"module_id": module_id, "queued": queued}

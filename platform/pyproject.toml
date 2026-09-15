@@ -7,7 +7,8 @@ dependencies = [
   "fastapi", "uvicorn", "langgraph", "langchain-anthropic", "langchain-community",
   "celery[redis]", "qdrant-client>=1.15,<1.16", "minio", "httpx", "jiwer", "langfuse>=3,<4",
   "prometheus-client", "indic-transliteration", "sarvamai", "anthropic", "python-dotenv",
-  "PyYAML", "websockets", "langid", "tokenizers>=0.21,<1", "beautifulsoup4>=4.13,<5"
+  "PyYAML", "websockets", "langid", "tokenizers>=0.21,<1", "beautifulsoup4>=4.13,<5",
+  "webvtt-py>=0.5,<1"
 ]
 [build-system]
 requires = ["setuptools>=75"]
