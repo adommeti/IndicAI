@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { ApiError } from "../lib/api";
+import { unauthenticatedHint } from "../lib/auth";
 import { ROLE_LABELS } from "../lib/roles";
 import type { Role } from "../lib/types";
 
@@ -83,7 +84,7 @@ export function ErrorPanel({ error, onRetry }: { error: unknown; onRetry?: () =>
       <p className="font-semibold text-danger">{heading}</p>
       <p className="mt-1 break-words font-mono text-xs text-muted">{detail}</p>
       {api?.unauthenticated ? (
-        <p className="mt-2 text-sm">Reload the page to sign in again.</p>
+        <p className="mt-2 max-w-prose text-sm">{unauthenticatedHint()}</p>
       ) : null}
       {onRetry ? (
         <button
