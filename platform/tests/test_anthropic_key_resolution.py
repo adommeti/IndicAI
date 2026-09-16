@@ -97,10 +97,11 @@ def test_the_adapter_uses_the_resolver_rather_than_the_sdk_default(
     """
     from indic_platform.adapters.claude import Claude
 
-    monkeypatch.setenv(
-        "INDICAI_ANTHROPIC_API_KEY", "scoped-for-the-client"
-    )  # pragma: allowlist secret
-    assert Claude().client.api_key == "scoped-for-the-client"
+    # Bound to a name on its own line so the formatter cannot split the call and
+    # carry the pragma onto the closing paren, away from the literal it marks.
+    key = "scoped-for-the-client"  # pragma: allowlist secret
+    monkeypatch.setenv("INDICAI_ANTHROPIC_API_KEY", key)
+    assert Claude().client.api_key == key
 
 
 def test_an_injected_client_is_left_alone(monkeypatch: pytest.MonkeyPatch) -> None:
