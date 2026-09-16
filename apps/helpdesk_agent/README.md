@@ -240,6 +240,24 @@ those values are not expected to reach Zammad. That is a detector, not a proof �
 treat the Zammad instance as holding employee personal data and scope its access
 and retention accordingly.
 
+## Web widget (P6)
+
+`apps/helpdesk_agent/ui/` is a React + Vite + Tailwind widget: chat panel, mic button over
+LiveKit, live partial transcripts, and a Devanagari/Latn script toggle for Hindi that changes
+the language tag the turn is sent with (so it changes what the agent *replies* in, not just
+how the page looks). `npm run build` produces `dist/` for FastAPI to serve. Roles come from
+`GET /me`; the replay view is drawn only for a caller holding `governance`, but that is
+presentation — the gate is `GET /sessions/{id}/replay`, tested server-side.
+
+The widget treats the pipeline's room messages as states rather than decoration: while the
+consent notice is playing the mic is disabled and says the room is not capturing yet, and
+`notice: unconfirmed` and `mode: chat` are terminal — a mic that looked live while the
+pipeline was refusing to listen is the worst possible UI for a consent control. A payload
+carrying an unknown schema version is refused rather than best-effort rendered.
+
+Chrome end-to-end is **UNMEASURED**: no browser in the build environment. The Playwright
+smoke (`E2E=1 npm run e2e`) has never run.
+
 ## Voice channel (P5)
 
 The voice path is `apps/helpdesk_agent/voice_pipeline.py`: LiveKit audio in → Silero VAD →

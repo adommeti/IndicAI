@@ -199,9 +199,29 @@ from a browser microphone-permission failure.
 
 ## 4. Join from a browser
 
-There is no browser client in this repository — `apps/helpdesk_agent/ui/` contains only a
-`.gitkeep`. Use an external LiveKit client. Two options; neither was exercised during the
-build, so treat the specifics as "expected" and the LiveKit documentation as authoritative.
+**This repository now ships its own client** (uc1/P6): `apps/helpdesk_agent/ui/` is a React +
+Vite widget with the mic button, live partial transcripts and the script toggle. Use it first —
+it is the only client that renders this pipeline's data-channel payloads, which is most of what
+step 5 asks you to look at.
+
+```bash
+cd apps/helpdesk_agent/ui
+npm ci
+VITE_AUTH_DEV_BYPASS=true npm run dev     # http://localhost:5175
+# and on the API side, so /me answers instead of 401:
+ENV=dev AUTH__DEV_BYPASS=true uv run uvicorn helpdesk_agent.api:app --reload
+```
+
+One thing it cannot do for you yet: **there is no LiveKit join-token endpoint**, because
+minting one needs the API secret and no route owns that (`docs/build/BLOCKERS.md`). In a
+local dev-bypass build the widget accepts the token from step 2 pasted by hand; a deployed
+build with no `VITE_LIVEKIT_TOKEN_PATH` says "voice unavailable, chat is unaffected" rather
+than showing a mic that cannot connect. Neither the widget nor anything below was exercised
+in a browser during the build, so treat the specifics as "expected" and the LiveKit
+documentation as authoritative.
+
+The two external clients below remain useful as a cross-check — if the widget shows nothing
+and Meet also shows nothing, the problem is the room, not the UI.
 
 **Option A — LiveKit's Meet sample.** Clone `livekit-examples/meet`, configure it per its own
 README with `ws://localhost:7880` and the token from step 2, and run it on `http://localhost`.
