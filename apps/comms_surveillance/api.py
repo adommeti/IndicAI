@@ -415,7 +415,12 @@ async def create_disposition(
     if await session.get(Flag, flag_id) is None:
         raise HTTPException(404, "Unknown flag")
 
-    key = idempotency_key.strip() if idempotency_key else None
+    # `or None` matters: a whitespace-only header must reach the column as NULL, not
+    # as "". PostgreSQL treats NULLs as distinct in a unique index and empty strings as
+    # equal, so a stored "" would make the FIRST disposition on a flag collide with the
+    # reviewer's next one -- and the handler, seeing a falsy key, would re-raise it as a
+    # 500 on a table this service cannot UPDATE or DELETE. A blank key is an absent key.
+    key = (idempotency_key.strip() or None) if idempotency_key else None
     if key:
         existing = (
             await session.scalars(

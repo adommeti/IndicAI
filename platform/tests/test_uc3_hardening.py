@@ -25,7 +25,7 @@ from comms_surveillance import audit, storage
 from comms_surveillance.auth import NON_PROD_ENVS
 
 ACCESS_KEY = "minio-test"
-SECRET_KEY = "minio-test-secret"
+SECRET_KEY = "minio-test-secret"  # pragma: allowlist secret
 
 # Values a deployment could plausibly carry that are NOT a known non-prod
 # environment. `""` stands for a variable nobody set; `"dv"` and `"devv"` are
