@@ -22,6 +22,12 @@ export default {
         medium: "var(--sev-medium)",
         low: "var(--sev-low)",
         evidence: "var(--evidence)",
+        "danger-wash": "var(--danger-wash)",
+        "danger-edge": "var(--danger-edge)",
+        "warn-wash": "var(--warn-wash)",
+        "warn-edge": "var(--warn-edge)",
+        "ok-wash": "var(--ok-wash)",
+        "ok-edge": "var(--ok-edge)",
       },
       fontFamily: {
         sans: ["var(--font-sans)"],

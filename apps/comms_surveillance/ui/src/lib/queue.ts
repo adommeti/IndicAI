@@ -148,3 +148,16 @@ export function noteAdvice(note: string): string | null {
     ? "No note. This row is permanent and append-only — a later reader will have only the disposition."
     : null;
 }
+
+/** A key identifying one disposition INTENT, for the server's `Idempotency-Key`.
+ *
+ *  `crypto.randomUUID` is available in every browser this app targets and in jsdom;
+ *  the fallback keeps the form working in a non-secure context, where `randomUUID` is
+ *  undefined. Collision resistance is what matters, not RFC-4122 conformance: the key
+ *  only has to be unique per reviewer per flag.
+ */
+export function newIdempotencyKey(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return uuid;
+  return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}

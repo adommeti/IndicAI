@@ -14,6 +14,33 @@ call has been or may be processed (E10). Retention is whatever Compliance
 specifies in answer to Gate 0 question 3; until then the pilot runs on the
 synthetic golden set and nothing is retained beyond it.
 
+### The retention job, and the two things it will not do
+
+`retention.py` runs nightly (`uc3-retention-sweep`, 04:00 UTC) and writes one
+`retention_deletions` row per policy per pass, whatever it did or did not delete.
+
+**It deletes nothing by default.** Two gates must both be open:
+`UC3_CALL_RETENTION_DAYS` (unset means no window, which means keep everything) and
+`UC3_RETENTION_ENABLED` (default `false`). ADR 0004 is deliberately unwritten, and a
+window picked by an engineer is a guess at a lawful basis. The sweep still runs with
+both unset — a dry-run row every night proves the schedule is actually deployed and
+shows what the first real pass would remove, where a job that does not run until the
+policy lands is one nobody discovers is misconfigured until the night it matters.
+
+**It cannot reach quoted evidence, ever.** `flags.evidence_span`,
+`flags.english_rendering`, `flags.reasoning` and `analysis_runs.output` hold verbatim
+call content inside the hash chain, and the app's database role holds INSERT/SELECT
+there and nothing else. Once a call is analysed its `calls` row is pinned too, by a
+foreign key from `analysis_runs`/`flags` that this application cannot clear. So:
+
+> Transcripts and recordings are deleted on the configured schedule. Quoted evidence in
+> the audit trail is retained for the life of the trail.
+
+Anything shorter than that — "uc3 has an N-day retention policy" — is false for flagged
+calls. An erasure request that reaches quoted evidence needs a privileged operator
+outside this application and a chain re-anchor afterwards. **ADR 0016** records the
+proof, the alternatives rejected, and why this belongs in the ADR 0004 conversation.
+
 ## Redaction — this app has a documented override
 
 **Redaction is deliberately OFF for transcript text sent to Claude**, as PRD E9
@@ -148,6 +175,10 @@ verdict — Stage 2 produces candidate findings and a person decides.
 | `DATABASE_URL` | — | Postgres for `calls` / `transcript_segments` |
 | `CELERY_BROKER_URL` | `redis://localhost:6379/0` | beat and worker broker |
 | `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | — | signing the reviewer's audio URLs; absent, `/flags/{id}/audio` is 503 |
+| `MINIO_SECURE` | `true` | TLS to object storage. `false` is **refused** unless `ENV` is dev/local/test/ci: the 180s presigned audio URL is a bearer token for a recording |
+| `UC3_CALL_RETENTION_DAYS` | unset | the retention window. Unset means keep everything (ADR 0004 unwritten) |
+| `UC3_RETENTION_ENABLED` | `false` | the second gate. Deletion needs this **and** a window; otherwise the sweep rehearses |
+| `UC3_RETENTION_BATCH_SIZE` | `500` | rows per keyset page in one retention pass |
 | `AUTH__DEV_BYPASS` | unset | `true` mints a fixed test identity instead of reading the SSO claim. Refused when `ENV=prod` |
 | `AUTH__DEV_BYPASS_ROLES` | `compliance_reviewer,compliance_lead` | which roles that fixed identity carries |
 | `ENV` | unset | `prod` refuses the dev bypass at startup |

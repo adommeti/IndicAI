@@ -30,6 +30,7 @@ from typing import Any
 
 from celery import Celery
 from celery.schedules import crontab
+from indic_platform.adapters import budget
 from indic_platform.adapters.base import TranscriptSegment as AdapterSegment
 from indic_platform.db.models import Call, TranscriptSegment
 from sqlalchemy import delete, select
@@ -48,6 +49,12 @@ celery_app = Celery(
     "comms_surveillance",
     broker=os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"),
     backend=os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
+    # `retention` registers `uc3.retention_sweep` and adds its 04:00 beat entry at
+    # import time, and a worker started on this module would otherwise import neither:
+    # the schedule would be missing from beat and the task unknown to the worker, while
+    # every test that imports the module directly still passed. Named here rather than
+    # imported at the top of this file because retention imports `celery_app` from it.
+    include=["comms_surveillance.retention"],
 )
 celery_app.conf.update(
     task_acks_late=True,
@@ -238,10 +245,18 @@ def stt_with_sink() -> tuple[Any, Any]:
     """
     from indic_platform.adapters.runtime import AdapterRuntime
     from indic_platform.adapters.sarvam_stt import SarvamSTT
-    from indic_platform.obs.langfuse import MemorySink
+    from indic_platform.obs.langfuse import MemorySink, TeeSink, default_sink
 
+    # Tee, not replace. Passing a bare MemorySink here substituted for the default
+    # one, so every Saaras call uc3 ever made emitted no Langfuse span -- against
+    # CLAUDE.md's "every adapter call emits a Langfuse span (metadata only)", and it
+    # meant uc3's STT spend was the one vendor leg invisible to observability while
+    # still being billed. The memory sink stays because per-call cost attribution
+    # needs a slice nobody else writes to; the default sink is added back beside it.
     sink = MemorySink()
-    return SarvamSTT(runtime=AdapterRuntime("sarvam", "stt", sink=sink)), sink
+    return SarvamSTT(
+        runtime=AdapterRuntime("sarvam", "stt", sink=TeeSink(sink, default_sink()))
+    ), sink
 
 
 async def transcribe_call(
@@ -276,8 +291,14 @@ async def transcribe_call(
     # Only this call's spend: a sweep reuses one sink across recordings, so
     # start counting from where it already was.
     before = sink_size(sink)
-    segments = await stt.batch(audio, language=language, diarize=True)
-    romans = await romanise(segments, translit_client)
+    # One recording is uc3's unit of work, so it is the honest boundary for the
+    # per-session cap. Without a scope every vendor call in a nightly batch charges
+    # "no session at all" and the only thing between one pathological recording --
+    # a ten-hour file, a retry storm -- and the whole day's budget is the day cap
+    # itself. The scope is task-local, so concurrent calls never charge each other.
+    with budget.session_scope(str(call_id)):
+        segments = await stt.batch(audio, language=language, diarize=True)
+        romans = await romanise(segments, translit_client)
     await store(
         session,
         call_id,

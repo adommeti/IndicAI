@@ -70,6 +70,41 @@ jobs:
       # rather than scored against a stand-in. See docs/build/BLOCKERS.md.
       - name: eval-uc1-regression
         run: make eval-uc1-regression
+      # uc3/P7 acceptance: "CI runs eval-uc3 on every change to prompts/, lexicon/,
+      # or policy.md and blocks on regression". Unconditional rather than path-
+      # filtered: the gate costs ~7s, and a filter is a list of paths that a moved
+      # or renamed file silently falls off. Running it always is the superset --
+      # every change to those paths is covered, and so is every change that reaches
+      # Stage 0 by another route (the matcher, the golden set, the runner itself).
+      - name: eval-uc3-regression
+        run: make eval-uc3-regression
+      # The path filter that IS load-bearing: it does not decide whether to run the
+      # gate, it says what the gate could not test. apps/comms_surveillance/prompts/
+      # drives Claude, and there is no key here, so a change to triage.md or
+      # deep_analysis.md passes the Stage 0 gate without that gate having exercised
+      # one line of it. policy.md's own text promises "CI runs the UC3 eval on every
+      # change to this file and blocks on regression" -- true for the lexicon half,
+      # and this step is where the other half stops being invisible.
+      - name: uc3 policy surface
+        if: github.event_name == 'pull_request'
+        run: |
+          BASE='${{ github.event.pull_request.base.sha }}'
+          git fetch --depth=1 origin "$BASE" 2>/dev/null || git fetch --unshallow origin 2>/dev/null || true
+          # `|| true` on the diff itself would make "the base sha is missing" and
+          # "nothing changed" the same outcome, and the second is the common one.
+          # Distinguish them: only a FAILED diff skips the check.
+          if ! CHANGED="$(git diff --name-only "$BASE"...HEAD 2>/dev/null)"; then
+            echo "could not compute the diff against $BASE; skipping"; exit 0
+          fi
+          SURFACE="$(printf '%s\n' "$CHANGED" | grep -E '^apps/comms_surveillance/(prompts/|lexicon/|policy\.md)' || true)"
+          [ -n "$SURFACE" ] && echo "uc3 policy surface changed:" && printf '  %s\n' $SURFACE
+          MODELLED="$(printf '%s\n' "$CHANGED" | grep -E '^apps/comms_surveillance/prompts/' || true)"
+          if [ -n "$MODELLED" ]; then
+            for f in $MODELLED; do
+              echo "::warning file=$f::This prompt drives Claude (Stage 1/2). The offline gate covers Stage 0 only, so this change is UNMEASURED until someone runs 'LIVE_API_TESTS=1 make eval-uc3-full' with an Anthropic key and attaches the numbers."
+            done
+          fi
+          echo "uc3 policy surface check complete"
       - name: ui packages (when present)
         run: |
           for pkg in apps/*/ui; do

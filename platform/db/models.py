@@ -306,6 +306,13 @@ class Disposition(Base):
     disposition: Mapped[str] = mapped_column(String(32))
     note: Mapped[str] = mapped_column(Text, default="")
     reviewer_id: Mapped[str] = mapped_column(String(128))
+    # A caller-supplied de-duplication token (0013_uc3_disposition_idempotency).
+    # Nullable because it is optional and because the column was added to a table
+    # that already had rows; PostgreSQL treats NULLs as distinct, so unkeyed writes
+    # stay unconstrained while two writes sharing a key for one flag collide at the
+    # database. Deliberately absent from `audit.HASHED_COLUMNS`: the chain covers the
+    # decision, and this is a fact about the delivery of the request, not about it.
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), unique=True)
     prev_hash: Mapped[str] = mapped_column(String(64), default="")
@@ -315,6 +322,12 @@ class Disposition(Base):
         CheckConstraint(
             "disposition in ('confirmed','false_positive','needs_more_context','escalated')",
             name="ck_dispositions_disposition",
+        ),
+        UniqueConstraint(
+            "flag_id",
+            "reviewer_id",
+            "idempotency_key",
+            name="uq_dispositions_flag_idempotency_key",
         ),
     )
 

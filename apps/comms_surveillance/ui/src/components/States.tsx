@@ -79,7 +79,7 @@ export function ErrorPanel({ error, onRetry }: { error: unknown; onRetry?: () =>
   return (
     <section
       role="alert"
-      className="rounded border border-danger/50 bg-danger/10 p-4 text-sm"
+      className="rounded border border-danger-edge bg-danger-wash p-4 text-sm"
     >
       <p className="font-semibold text-danger">{heading}</p>
       <p className="mt-1 break-words font-mono text-xs text-muted">{detail}</p>

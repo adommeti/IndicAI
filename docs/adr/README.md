@@ -28,6 +28,8 @@ or verify the decision. Anything not yet built is written as "not implemented â€
 | [0013](0013-governance-role-is-subtractive.md) | The `governance` role subtracts transcript and audio access rather than granting a subset | Accepted | `uc3/P6` |
 | [0014](0014-uc1-cross-border-claude-leg.md) | UC1 accepts the cross-border Claude leg for redacted text only; audio never leaves India, and real data waits on a DPA | Accepted | `uc1/P7` |
 | [0015](0015-governance-is-app-scoped-not-a-shared-claim.md) | `governance` denies content in uc3 and grants it in uc1; the role is app-scoped and the two must be different Entra groups | Accepted | `uc1/P6` |
+| [0016](0016-retention-cannot-reach-chained-evidence.md) | Retention deletes transcripts and recordings; quoted evidence inside the hash chain is outside any window uc3 can enforce | Accepted | `uc3/P7` |
+| [0017](0017-uc3-cross-border-unredacted-transcripts.md) | uc3 sends UNREDACTED employee call transcripts to a US-hosted model (the E9 override); accepted for synthetic data only, lapsing at ADR 0004 / DPA | Accepted | `uc3/P7` |
 
 ## Reserved number
 
@@ -37,6 +39,12 @@ or verify the decision. Anything not yet built is written as "not implemented â€
   Gate 0 questions in `docs/prd-v2.md` E2. Nothing in UC3 touches real data until it exists;
   `uc3/P1` proceeds synthetic-only and says so, and `uc3/P7` leaves the retention deletion job
   disabled until this ADR sets the rule.
+
+  `uc3/P7` also found that the conversation has one more question in it than E2 lists. The
+  audit chain pins quoted call content permanently, so retention and erasure cannot reach a
+  flagged call's evidence at all â€” whatever window Compliance sets. **ADR 0016** states the
+  constraint and proves it; bring it to the Gate 0 conversation rather than discovering it
+  during the first erasure request.
 
 Do not write it from inference. An ADR that guesses at a lawful basis is worse than an absent one,
 because the prompts downstream treat it as settled.

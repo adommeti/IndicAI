@@ -81,7 +81,7 @@ export function Shell({
 
         {me?.dev_bypass ? (
           <p
-            className="border-t border-warn/40 bg-warn/15 px-4 py-1 text-center text-xs font-semibold text-warn"
+            className="border-t border-warn-edge bg-warn-wash px-4 py-1 text-center text-xs font-semibold text-warn"
             data-testid="dev-bypass"
           >
             Dev bypass — identity and roles are fixed test values supplied by the API, not a signed-in

@@ -611,6 +611,10 @@ def test_a_disposition_joins_the_hash_chain_and_carries_the_sso_identity(
         "disposition_id": "33333333-3333-4333-8333-333333333333",
         "seq": 7,
         "row_hash": "a" * 64,
+        # False on a first write. The receipt says whether this POST created the
+        # ruling or replayed one, so a client that retried cannot mistake the
+        # original row's id for a second ruling it just caused.
+        "replayed": False,
     }
     wired.append.assert_awaited_once()
     awaited = wired.append.await_args
