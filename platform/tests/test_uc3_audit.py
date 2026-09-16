@@ -9,11 +9,18 @@ of a real Postgres, not of Python.
 import json
 import os
 import uuid as uuidlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from comms_surveillance import audit
+
+#: Every `calls` row this file seeds carries this prefix on its `source_key`, which is
+#: what makes "the rows this file created" a query rather than a guess. Same pattern as
+#: `test_uc3_retention.py`; the two prefixes differ, so neither file's teardown can reach
+#: the other's rows.
+FIXTURE = "uc3-audit-test"
 
 
 def _skip_without_db() -> None:
@@ -183,7 +190,7 @@ async def _seed_call(factory: Any) -> uuidlib.UUID:
             Call(
                 id=call_id,
                 source_uri=f"s3://t/{call_id}.wav",
-                source_key=f"audit/{call_id}.wav",
+                source_key=f"{FIXTURE}/{call_id}.wav",
                 status="transcribed",
             )
         )
@@ -206,7 +213,136 @@ def _run(call_id: uuidlib.UUID, stage: str = "deep_analysis") -> Any:
     )
 
 
+# --- leaving the chain as it was found -------------------------------------------
+#
+# These tests run against a database that survives them -- a developer's
+# `make stack-core` Postgres, not CI's per-run service container -- and they
+# append to tables designed only to grow. Two of them delete rows off the end
+# of a chain on purpose. Without a teardown the second run in the same database
+# reads the first run's leftovers as an attack: the anchor still names a head
+# that was deleted, and `verify_chain` reports "the tail was rewritten, not
+# extended" in seven tests that are not about the tail at all. That is this
+# control crying wolf, which is the one failure mode the module's docstring
+# says it must never have, so restoring the database is part of what these
+# tests assert rather than housekeeping (docs/build/BLOCKERS.md, uc1/P7).
+#
+# Two things have to go back, and only one of them is rows.
+#
+# *Rows* are scoped by the `FIXTURE` prefix on the seeded `calls` row's
+# `source_key` -- the pattern `test_uc3_retention.py` uses -- and removed
+# child-first. Nothing without that prefix is ever in scope, so the teardown
+# cannot reach another suite's data in a shared database.
+#
+# *The anchor* is one row per chain, and a chain that grew during a test is a
+# chain whose anchor may have moved. Putting the rows back without putting the
+# anchor back leaves it counting rows that no longer exist, which is precisely
+# the false break above. So the anchors are snapshotted at entry and written
+# back verbatim, `recorded_at` included.
+#
+# Both halves run at entry as well as at exit, so a run killed half way through
+# heals the next one instead of poisoning it, and the exit half is a fixture
+# teardown so a failing assertion still cleans up. The deletes need the owning
+# role; `uc3_app` is refused them, which is the subject of
+# `test_the_app_role_cannot_update_or_delete_the_audit_tables` and the reason
+# this lives in a test fixture and nowhere an application could import it.
+
+
+async def _purge(factory: Any) -> None:
+    """Delete this file's rows, child-first, and nothing else's."""
+    from indic_platform.db.models import AnalysisRun, Call, Disposition, Flag
+    from sqlalchemy import delete, select
+
+    async with factory() as db, db.begin():
+        ids = list(
+            (await db.scalars(select(Call.id).where(Call.source_key.like(f"{FIXTURE}/%")))).all()
+        )
+        if not ids:
+            return
+        flag_ids = select(Flag.id).where(Flag.call_id.in_(ids))
+        await db.execute(delete(Disposition).where(Disposition.flag_id.in_(flag_ids)))
+        await db.execute(delete(Flag).where(Flag.call_id.in_(ids)))
+        await db.execute(delete(AnalysisRun).where(AnalysisRun.call_id.in_(ids)))
+        await db.execute(delete(Call).where(Call.id.in_(ids)))
+
+
+async def _snapshot_anchors(factory: Any) -> dict[str, audit.ChainAnchor]:
+    async with factory() as db:
+        found = {table: await audit.read_anchor(db, table) for table in audit.CHAINED}
+    return {table: anchor for table, anchor in found.items() if anchor is not None}
+
+
+async def _restore_anchors(factory: Any, snapshot: dict[str, audit.ChainAnchor]) -> None:
+    """Put the anchors back exactly as they were, absences included.
+
+    An anchor this run created is deleted rather than left behind at zero rows:
+    "no anchor" and "an anchor over an empty chain" are different claims, and
+    the second would make the next run's `unanchored` list say something the
+    database did not say before these tests ran.
+    """
+    from sqlalchemy import delete
+
+    async with factory() as db, db.begin():
+        await db.execute(
+            delete(audit.ANCHORS).where(audit.ANCHORS.c.table_name.in_(list(audit.CHAINED)))
+        )
+        for anchor in snapshot.values():
+            await db.execute(
+                audit.ANCHORS.insert().values(
+                    table_name=anchor.table,
+                    head_hash=anchor.head_hash,
+                    row_count=anchor.rows,
+                    recorded_at=anchor.recorded_at,
+                )
+            )
+
+
+async def _heal_stale_anchors(factory: Any) -> list[str]:
+    """Drop anchors the surviving rows can no longer satisfy, at entry only.
+
+    The self-heal for a run that was killed between appending rows and removing
+    them. `anchor_ok is False` is the module's own verdict, not a second opinion
+    reimplemented here, and it is the only condition that drops an anchor: a
+    chain whose *walk* is broken leaves its anchor alone, so a real break is
+    never quietly re-baselined by a test fixture.
+    """
+    from sqlalchemy import delete
+
+    async with factory() as db:
+        stale = [
+            table
+            for table in audit.CHAINED
+            if (await audit.verify_chain(db, table)).anchor_ok is False
+        ]
+    if stale:
+        async with factory() as db, db.begin():
+            await db.execute(delete(audit.ANCHORS).where(audit.ANCHORS.c.table_name.in_(stale)))
+    return stale
+
+
+@pytest.fixture
+async def restored_chains() -> AsyncIterator[None]:
+    """Hand each test a chain it can append to and leave as it found it."""
+    _skip_without_db()
+    engine, factory = await _engine()
+    # None until the entry half has run: restoring a snapshot that was never
+    # taken would delete an anchor this run did not create.
+    snapshot: dict[str, audit.ChainAnchor] | None = None
+    try:
+        await _purge(factory)
+        await _heal_stale_anchors(factory)
+        snapshot = await _snapshot_anchors(factory)
+        yield
+    finally:
+        try:
+            await _purge(factory)
+            if snapshot is not None:
+                await _restore_anchors(factory, snapshot)
+        finally:
+            await engine.dispose()
+
+
 @pytest.mark.integration
+@pytest.mark.usefixtures("restored_chains")
 async def test_a_superuser_edit_is_detected_by_chain_verify() -> None:
     """The acceptance criterion: the tamper test.
 
@@ -231,7 +367,7 @@ async def test_a_superuser_edit_is_detected_by_chain_verify() -> None:
                 Call(
                     id=call_id,
                     source_uri="s3://t/x.wav",
-                    source_key=f"audit/{call_id}.wav",
+                    source_key=f"{FIXTURE}/{call_id}.wav",
                     status="transcribed",
                 )
             )
@@ -278,6 +414,7 @@ async def test_a_superuser_edit_is_detected_by_chain_verify() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("restored_chains")
 async def test_a_deleted_row_is_detected_as_a_break() -> None:
     """Deletion breaks the link, not the row: the *next* row is where it shows."""
     from indic_platform.db.models import AnalysisRun, Call
@@ -292,7 +429,7 @@ async def test_a_deleted_row_is_detected_as_a_break() -> None:
                 Call(
                     id=call_id,
                     source_uri="s3://t/y.wav",
-                    source_key=f"audit/{call_id}.wav",
+                    source_key=f"{FIXTURE}/{call_id}.wav",
                     status="transcribed",
                 )
             )
@@ -323,6 +460,7 @@ async def test_a_deleted_row_is_detected_as_a_break() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("restored_chains")
 async def test_an_untampered_chain_verifies_across_all_three_tables() -> None:
     """The happy path, and the output the report quotes."""
     from indic_platform.db.models import Disposition, Flag
@@ -365,6 +503,7 @@ async def test_an_untampered_chain_verifies_across_all_three_tables() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("restored_chains")
 async def test_a_changed_mind_is_a_new_row_not_an_edit() -> None:
     """Append-only in practice: two dispositions on one flag, both preserved."""
     from indic_platform.db.models import Disposition, Flag
@@ -412,6 +551,7 @@ async def test_a_changed_mind_is_a_new_row_not_an_edit() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("restored_chains")
 async def test_the_app_role_cannot_update_or_delete_the_audit_tables() -> None:
     """The acceptance criterion: the app role cannot UPDATE.
 
@@ -485,6 +625,7 @@ async def test_the_app_role_cannot_update_or_delete_the_audit_tables() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("restored_chains")
 async def test_ten_thousand_rows_verify_in_under_ten_seconds() -> None:
     """The acceptance criterion, measured rather than asserted from the shape.
 
@@ -578,6 +719,7 @@ async def test_ten_thousand_rows_verify_in_under_ten_seconds() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("restored_chains")
 async def test_concurrent_appends_produce_a_chain_not_a_fork() -> None:
     """Computing `prev_hash` is a read-modify-write.
 
@@ -691,6 +833,7 @@ def test_the_anchor_table_is_declared_where_alembic_can_see_it() -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("restored_chains")
 async def test_a_truncated_tail_is_detected_although_the_chain_still_walks_clean() -> None:
     """The hole the walk cannot see on its own.
 
@@ -750,19 +893,25 @@ async def test_a_truncated_tail_is_detected_although_the_chain_still_walks_clean
             assert anchored.anchor_ok is False
             assert "removed" in anchored.reason or "rewritten" in anchored.reason
 
-        # Leave the chain as this test found it, so the anchor and the rows
-        # agree again for whatever runs next.
+        # The row before the hole is untouched, and the shortened chain now ends
+        # on it: a tail truncation is invisible to the walk precisely because
+        # what survives is a complete, correctly hashed prefix.
         async with factory() as db:
-            await db.execute(text("delete from analysis_runs where id = :id"), {"id": kept_id})
-            await db.execute(
-                text("delete from audit_chain_anchors where table_name = 'analysis_runs'")
+            survivor = await db.execute(
+                text("select row_hash from analysis_runs where id = :id"), {"id": kept_id}
             )
-            await db.commit()
+            assert survivor.scalar_one() == walk_only.head_hash
+
+        # `kept`, and the anchor written above, go back in `restored_chains`'s
+        # teardown. Deleting the anchor here instead -- as this test used to --
+        # left the next run with no baseline at all, which is a weaker state
+        # than the one this test was handed rather than the same one.
     finally:
         await engine.dispose()
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("restored_chains")
 async def test_the_nightly_job_only_moves_the_anchor_forward_on_a_clean_chain() -> None:
     """An anchor updated over a break would launder the break into the baseline."""
     from sqlalchemy import text
@@ -800,10 +949,9 @@ async def test_the_nightly_job_only_moves_the_anchor_forward_on_a_clean_chain() 
         assert anchor_after is not None
         assert anchor_after.head_hash == anchor_before.head_hash
 
-        # Put the row back so later tests in this session see a clean chain.
-        async with factory() as db:
-            await db.execute(text("delete from analysis_runs where id = :id"), {"id": row_id})
-            await db.commit()
+        # The tampered row and the anchor `run_chain_verify` wrote over it both
+        # go back in `restored_chains`'s teardown: this test ends with the
+        # chain deliberately broken, and that break must not outlive it.
     finally:
         await engine.dispose()
 
