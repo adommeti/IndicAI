@@ -496,7 +496,7 @@ def evaluate(
             {
                 "check": "unmeasured",
                 "metric": "fidelity_mean",
-                "reason": "no judge injected; pass --judge (needs ANTHROPIC_API_KEY)",
+                "reason": "no judge injected; pass --judge (needs an Anthropic key)",
             },
         )
 

@@ -113,7 +113,7 @@ against PostgreSQL 16.
 `LIVE_API_TESTS=1 uv run pytest platform/tests/test_uc2_pipeline.py -m slow` runs
 one segment through **translate and post_edit** against the real vendors; it does
 not cover adapt, backtranslate_qa or quiz, and post_edit's model leg only runs
-when `ANTHROPIC_API_KEY` is set.
+when an Anthropic key is set (`INDICAI_ANTHROPIC_API_KEY`, or `ANTHROPIC_API_KEY` outside a Claude Code session).
 
 Three eval targets, because only one of them is free:
 

@@ -3,6 +3,7 @@ import os
 import pytest
 from indic_platform.adapters.claude import Claude
 from indic_platform.adapters.sarvam_translate import SarvamTranslate
+from indic_platform.config.settings import anthropic_api_key
 from indic_platform.obs.langfuse import LangfuseSink, default_sink
 from pydantic import BaseModel
 
@@ -23,7 +24,10 @@ async def test_sarvam_live_smoke() -> None:
 
 @pytest.mark.slow
 async def test_anthropic_live_smoke() -> None:
-    assert os.getenv("ANTHROPIC_API_KEY"), "ANTHROPIC_API_KEY required"
+    assert anthropic_api_key(), (
+        "no Anthropic key: set INDICAI_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY outside a "
+        "Claude Code session, where that name belongs to the agent harness)"
+    )
     answer = await Claude().structured(
         system="Return a JSON answer with answer equal to ok.",
         user="Please acknowledge.",

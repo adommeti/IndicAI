@@ -6,6 +6,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from indic_platform.adapters.base import T
 from indic_platform.adapters.runtime import AdapterRuntime
+from indic_platform.config.settings import anthropic_api_key
 from indic_platform.security.harden import validate_or_reject, wrap_untrusted
 from indic_platform.security.redact import redact
 
@@ -19,7 +20,15 @@ class Claude:
         redactor: Callable[[str], str] = redact,
         wrapper: Callable[[str], str] = wrap_untrusted,
     ) -> None:
-        self.client = client or AsyncAnthropic(max_retries=0)
+        # The key is resolved rather than left to the SDK's implicit `ANTHROPIC_API_KEY`
+        # lookup: inside a Claude Code session that variable belongs to the agent
+        # harness and is stripped, so the SDK would build a client with no credential
+        # and every live eval would fail at the vendor rather than at configuration.
+        # `anthropic_api_key` prefers the project-scoped name and falls back to the
+        # standard one, so CI and local development are unchanged.
+        # None is passed through untouched: the SDK's own "no key" error is clearer
+        # than anything invented here, and a caller supplying `client` bypasses this.
+        self.client = client or AsyncAnthropic(api_key=anthropic_api_key(), max_retries=0)
         self.runtime = runtime or AdapterRuntime("anthropic", "llm", timeout=60)
         # Injectable because PRD E9 requires redaction *off* for UC3
         # transcripts: an off-channel-comms finding can hinge on the phone

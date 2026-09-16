@@ -139,7 +139,7 @@ ingest-kb:
 # The uc1/P5 voice latency gate: joins the LiveKit room the pipeline is serving
 # as a fake participant, plays 30 golden WAVs and measures time-to-first-audio
 # from LiveKit track events. Needs Docker (`make stack-voice`, plus the core
-# stack behind the decision stage), SARVAM_API_KEY and ANTHROPIC_API_KEY -- and
+# stack behind the decision stage), SARVAM_API_KEY and an Anthropic key -- and
 # it COSTS MONEY: 30 live turns of Saaras STT, Bulbul TTS and Claude.
 # VOICE_TEST_GREETING must point at the recorded consent notice: a session
 # refuses to start without one and this repo ships none (docs/build/BLOCKERS.md).

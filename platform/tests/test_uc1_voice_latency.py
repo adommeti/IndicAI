@@ -60,7 +60,7 @@ a skipped run measured nothing: it is UNMEASURED, not a pass. Set
 ``VOICE_TEST_REQUIRE=1`` to turn those skips into failures.
 
 Requires Docker (`make stack-voice`, plus the core stack for the decision
-stage), SARVAM_API_KEY and ANTHROPIC_API_KEY, and it spends real money. It also
+stage), SARVAM_API_KEY and an Anthropic key, and it spends real money. It also
 requires ``VOICE_TEST_GREETING``: ``run_session`` refuses to start without a
 recorded consent notice and this repository ships none (docs/build/BLOCKERS.md),
 so the path has to be supplied rather than invented here.
@@ -85,6 +85,7 @@ from urllib.parse import urlparse
 import numpy as np
 import pytest
 from helpdesk_agent import voice_pipeline
+from indic_platform.config.settings import ANTHROPIC_KEY_NAMES
 from indic_platform.eval.report import Thresholds
 from indic_platform.eval.runners import run_uc1
 from livekit import api, rtc
@@ -249,7 +250,7 @@ async def _blockers(items: list[run_uc1.Item]) -> list[str]:
             "latency-only run, where the only participant is this harness and no employee is "
             "being recorded -- at a labelled stand-in"
         )
-    for key in ("SARVAM_API_KEY", "ANTHROPIC_API_KEY", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"):
+    for key in ("SARVAM_API_KEY", *ANTHROPIC_KEY_NAMES, "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"):
         if not os.getenv(key):
             reasons.append(f"{key} is not set")
     if not await _reachable(LIVEKIT_URL):

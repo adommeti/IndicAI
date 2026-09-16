@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from comms_surveillance import audit, storage
 from comms_surveillance.auth import NON_PROD_ENVS
+from indic_platform.config.settings import ANTHROPIC_KEY_NAMES
 from pydantic import BaseModel
 
 
@@ -357,6 +358,12 @@ def test_the_uc3_adapter_wraps_every_transcript_it_sends(monkeypatch: pytest.Mon
             return self
 
     detector.claude.cache_clear()
+    # Both names cleared first: the resolver prefers the project-scoped one, which is
+    # a real key in a configured environment, and this test must never construct a
+    # client holding it -- the transport is stubbed, but that is not a reason to rely
+    # on the stub for credential hygiene.
+    for name in ANTHROPIC_KEY_NAMES:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "not-a-real-key")  # pragma: allowlist secret
     # The failed call still emits a span, and the default sink is a real Langfuse
     # client: without this the test spends seconds retrying a connection to a host
