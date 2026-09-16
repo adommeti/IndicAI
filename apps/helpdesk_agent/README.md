@@ -60,7 +60,18 @@ The API uses this verified identity for both new and resumed sessions; another
 employee cannot resume a session merely by knowing its UUID. Without this trusted
 middleware, `/chat/turn` returns 401 before model calls or persistence. `/health`
 remains public. No IdP-specific token-validation backend is configured by P3;
-SSO deployment wiring is still required, with no anonymous development bypass.
+SSO deployment wiring is still required.
+
+uc1/P6 added a **local development bypass**, because the browser-side
+`VITE_AUTH_DEV_BYPASS` grants nothing server-side and a local UI would otherwise
+see 401 on every route. `AUTH__DEV_BYPASS=true` mints a fixed, obviously fake
+identity (`dev-bypass@example.test`) carrying `governance`. It is refused unless
+`ENV` names a known non-production environment — and an unset or misspelt `ENV`
+refuses too, so a typo locks the door rather than opening it. The refusal is
+raised at import (a misconfigured deployment does not start) and again on every
+request (setting the variable after boot cannot take effect). See
+`apps/helpdesk_agent/roles.py` and `platform/tests/test_uc1_dev_bypass.py`, which
+spends most of its assertions on the refusals rather than on the grant.
 
 The LangGraph workflow retrieves once, calls the cached C7 prompt with
 `claude-sonnet-5`, and applies deterministic guards. A rejected decision gets one
@@ -229,6 +240,24 @@ those values are not expected to reach Zammad. That is a detector, not a proof �
 treat the Zammad instance as holding employee personal data and scope its access
 and retention accordingly.
 
+## Web widget (P6)
+
+`apps/helpdesk_agent/ui/` is a React + Vite + Tailwind widget: chat panel, mic button over
+LiveKit, live partial transcripts, and a Devanagari/Latn script toggle for Hindi that changes
+the language tag the turn is sent with (so it changes what the agent *replies* in, not just
+how the page looks). `npm run build` produces `dist/` for FastAPI to serve. Roles come from
+`GET /me`; the replay view is drawn only for a caller holding `governance`, but that is
+presentation — the gate is `GET /sessions/{id}/replay`, tested server-side.
+
+The widget treats the pipeline's room messages as states rather than decoration: while the
+consent notice is playing the mic is disabled and says the room is not capturing yet, and
+`notice: unconfirmed` and `mode: chat` are terminal — a mic that looked live while the
+pipeline was refusing to listen is the worst possible UI for a consent control. A payload
+carrying an unknown schema version is refused rather than best-effort rendered.
+
+Chrome end-to-end is **UNMEASURED**: no browser in the build environment. The Playwright
+smoke (`E2E=1 npm run e2e`) has never run.
+
 ## Voice channel (P5)
 
 The voice path is `apps/helpdesk_agent/voice_pipeline.py`: LiveKit audio in → Silero VAD →
@@ -303,8 +332,18 @@ What exists, where it goes, and how long it lives:
 | Transcript text sent to Claude | **Anthropic** (`claude-sonnet-5`), redacted first by `platform/adapters/claude.py` | per Anthropic's API terms |
 | Reply text sent to Bulbul | **Sarvam**, redacted first by `platform/adapters/sarvam_tts.py` | per Sarvam's terms |
 | Synthesized reply audio | LiveKit room → the employee's browser | not persisted here |
-| Latency, units and INR/USD cost | `adapter_calls` rows and Langfuse spans, metadata only — never audio, never transcript text | per the Langfuse retention you configure |
+| Latency, units and INR/USD cost | Langfuse spans, metadata only — never audio, never transcript text. **Not** `adapter_calls`: that table is modelled and migrated but nothing inserts into it, so cost is queryable only in Langfuse today (`docs/build/BLOCKERS.md`) | per the Langfuse retention you configure |
 | LiveKit join tokens | minted locally, signed with `LIVEKIT_API_SECRET` from `.env.stack` | short TTL; a token is a credential to hear the call |
+
+**`GET /sessions/{id}/replay` returns transcripts unredacted, to a browser.** It is the
+one egress path in this app where `redact` is deliberately not applied, and it is
+deliberate rather than an oversight: `redact` is an outbound-to-vendor-and-to-logs hook,
+persisted rows are unredacted by design (`persistence.py` says so at the row write), and a
+replay exists so a reviewer can check what the employee actually said against what the
+agent actually did — a transcript reading `[PHONE]` beside a ticket whose grounding block
+quotes the digits cannot settle that. So the exposure is bounded by **who**, not by
+**what**: the `governance` role gate (uc1-scoped, ADR 0015), `Cache-Control: no-store`, and
+a route that writes no log line at all. See `platform/tests/test_uc1_replay.py`.
 
 **Sarvam receives the audio itself, unredacted.** `indic_platform.security.redact` is a text
 hook — its own docstring says audio is not transcribed by it — so it protects the Claude leg

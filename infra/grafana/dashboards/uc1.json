@@ -1,0 +1,200 @@
+{
+  "uid": "uc1-helpdesk-agent",
+  "title": "UC1 \u2014 helpdesk agent",
+  "tags": [
+    "uc1",
+    "indic-ai"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "postgres",
+        "current": {
+          "text": "platform",
+          "value": "platform"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Latency percentiles per stage (p50 / p95 / p99, ms)",
+      "description": "percentile_cont over turns.latency_ms, the jsonb map persistence.run_turn writes for every helpdesk turn. Keys are the graph's own node timings (retrieve, decide, grounding, guard, act, total) plus the voice legs namespaced voice.* by voice_pipeline.StageLatency; voice.time_to_first_audio_ms is the number the P5 gate measures. Postgres, not the adapter_latency_seconds histogram: nothing in this repo serves a /metrics endpoint, so Prometheus has no sample of it to take a histogram_quantile of. EXCLUDES: a stage that did not run is absent from the row rather than zero, so `turns` differs per stage and is shown so you can see which percentiles rest on too few turns; non-numeric values are skipped; this is per-stage wall time, not per-vendor-call latency, which would need adapter_calls (unwritten, see the spend panel).",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "p(50|95|99)_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "select e.key as stage, count(*) as turns, round(percentile_cont(0.50) within group (order by (e.value #>> '{}')::double precision)::numeric, 1) as p50_ms, round(percentile_cont(0.95) within group (order by (e.value #>> '{}')::double precision)::numeric, 1) as p95_ms, round(percentile_cont(0.99) within group (order by (e.value #>> '{}')::double precision)::numeric, 1) as p99_ms from turns t join sessions s on s.id = t.session_id cross join lateral jsonb_each(t.latency_ms) as e(key, value) where s.app = 'helpdesk_agent' and jsonb_typeof(e.value) = 'number' and $__timeFilter(t.created_at) group by 1 order by p95_ms desc nulls last;"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Action mix (turns per day by decision)",
+      "description": "turns.decision_json ->> 'action', the guarded decision actually committed for each turn: answer, clarify or file_ticket. Postgres is the only source \u2014 the action never reaches a Prometheus counter. This is the decision AFTER the guard and any deterministic fallback, so a turn the model wanted to answer but the guard rejected counts as the clarify or file_ticket that was really served; the degraded panel is what separates those out. EXCLUDES: sessions of other apps, and turns whose ticket later failed to file \u2014 filing outcome is ticket_filings.status, not the action.",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 70
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "select date_trunc('day', t.created_at) as time, t.decision_json ->> 'action' as metric, count(*) as value from turns t join sessions s on s.id = t.session_id where s.app = 'helpdesk_agent' and $__timeFilter(t.created_at) group by 1, 2 order by 1;"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Degraded-mode counts (turns served by a fallback, per day)",
+      "description": "Two degradations that are actually persisted. 'guarded fallback' = the last guard pass still returned errors, so graph.fallback() served a fixed reply instead of the model's decision: decision_json->'_guard_errors' is one array per guard pass, and a non-empty LAST element is exactly that condition. 'ticket queued' = ticket_filings.status='pending', written when the Zammad backend was unavailable and the ticket was queued with no number. Postgres, not the adapter_degraded_total counter: that counter is the better signal (it names the vendor and the circuit mode) but nothing serves /metrics, so Prometheus has never scraped a single sample of it. EXCLUDES: which degradation caused the fallback \u2014 graph.py sets metadata['vendor_unavailable'] but only sends it to the Langfuse span, never to a column, so a vendor outage and a plain guard rejection are indistinguishable here. Also excludes turns written outside persistence.run_turn (eval fixtures), which carry no _guard_errors key and are silently not counted, and budget refusals, which raise before any row is written.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "select date_trunc('day', t.created_at) as time, 'guarded fallback (turn)' as metric, count(*) as value from turns t join sessions s on s.id = t.session_id where s.app = 'helpdesk_agent' and t.decision_json -> '_guard_errors' -> -1 <> '[]'::jsonb and $__timeFilter(t.created_at) group by 1 union all select date_trunc('day', f.created_at) as time, 'ticket queued, backend unavailable' as metric, count(*) as value from ticket_filings f where f.status = 'pending' and $__timeFilter(f.created_at) group by 1 order by 1;"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Daily spend (INR / USD) \u2014 NOT RECORDED: adapter_calls has no writer",
+      "description": "Summed from adapter_calls, the costed table every vendor call is meant to write through platform/adapters/runtime.py using platform/config/pricing.yaml. WARNING, READ BEFORE TRUSTING A ZERO: adapter_calls currently has NO writer. runtime.Runtime.record() computes inr/usd and hands the record to a Sink, and the only Sinks that exist (platform/obs/langfuse.py) are LangfuseSink and MemorySink \u2014 neither inserts a row. The table is created by migration 0001 and deleted from by retention.py, but never populated, so this panel reads empty and an empty panel here means 'not recorded', NOT 'nothing was spent'. Real spend is in Langfuse (cost_details on each generation) until a database sink exists. Kept on adapter_calls rather than the adapter_spend_inr_total counter because that counter is equally unfed \u2014 nothing serves /metrics \u2014 and this is the source uc2's spend panel already uses. EXCLUDES: app scoping \u2014 adapter_calls.session_id is nullable and Celery and eval calls carry none, so this is a platform-wide total, not a uc1-only one.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "INR"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyINR"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "USD"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawSql": "select date_trunc('day', created_at) as time, round(sum(cost_inr), 2) as \"INR\", round(sum(cost_usd), 4) as \"USD\" from adapter_calls where $__timeFilter(created_at) group by 1 order by 1;"
+        }
+      ]
+    }
+  ]
+}
