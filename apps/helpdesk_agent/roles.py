@@ -50,9 +50,11 @@ nobody has written a rule for must not be mistaken for one that has a rule, and
 `GET /me` echoing arbitrary scope strings back to the browser would make the SSO
 claim a reflection surface.
 
-There is no development bypass here. uc1 has never had one (`README.md`, P3:
-"no anonymous development bypass"); `AUTH__DEV_BYPASS` is uc3's and is read only
-by uc3's `auth.py`. `VITE_AUTH_DEV_BYPASS` is the browser half of the UI's own
+uc1 has exactly two identity paths, and this module is where both live. The first
+is the SSO principal `api.authenticated_employee` reads off the ASGI scope. The
+second is the local development bypass at the bottom of this file, added in
+uc1/P6 -- read it before answering any question about how a caller gets in here.
+`VITE_AUTH_DEV_BYPASS` is the browser half of the UI's own
 local convenience and grants nothing on its own; the server-side half is
 `AUTH__DEV_BYPASS` at the bottom of this module, which is refused unless `ENV`
 names a known non-production environment. Without both, a local API needs real

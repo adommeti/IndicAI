@@ -108,9 +108,12 @@ export async function installApi(page: Page, role: FixtureRole): Promise<Fixture
           retrieval_json: { query: "vpn connect home", chunks: [{ article_id: "VPN-001", score: 0.71 }] },
           latency_ms: { retrieve: 11.0, decide: 900.0, "voice.stt_ms": 310.0 },
           model: "claude-sonnet-5",
-          prompt_version: "9f2c4e1b7a02",
+          prompt_version: "9f2c4e1b7a02",  // pragma: allowlist secret
           policy_version: "2026-09-01",
-          trace_id: "0c9f1d2e3a4b5c6d",
+          // A fake Langfuse trace id. Sixteen hex characters read as a high-entropy
+          // token to detect-secrets, so it is marked on this literal rather than in
+          // .secrets.baseline, which would blind the scanner to the whole file.
+          trace_id: "0c9f1d2e3a4b5c6d", // pragma: allowlist secret
           // Always null in this build: LANGFUSE_PROJECT_ID is not configured
           // anywhere in the repo, so a link would 404 and the id is the handle.
           langfuse_url: null,
@@ -137,9 +140,9 @@ export async function installApi(page: Page, role: FixtureRole): Promise<Fixture
           // No voice leg on this turn: `voice.stt_ms` is ABSENT rather than 0.
           latency_ms: { retrieve: 9.0, decide: 1450.0 },
           model: "claude-sonnet-5",
-          prompt_version: "9f2c4e1b7a02",
+          prompt_version: "9f2c4e1b7a02",  // pragma: allowlist secret
           policy_version: "2026-09-01",
-          trace_id: "1d8e2f3a4b5c6d7e",
+          trace_id: "1d8e2f3a4b5c6d7e",  // pragma: allowlist secret
           langfuse_url: null,
           audio_url: null,
           ticket: { status: "filed", ticket_number: "ZM-41822" },

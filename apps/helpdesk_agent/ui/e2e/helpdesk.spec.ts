@@ -118,7 +118,7 @@ test.describe("helpdesk widget", () => {
     await expect(page.getByTestId("no-audio")).toBeVisible();
     await expect(page.getByTestId("trace-link")).toHaveCount(0);
     await expect(page.getByTestId("replay-turn-0").getByTestId("trace-id")).toContainText(
-      "0c9f1d2e3a4b5c6d",
+      "0c9f1d2e3a4b5c6d", // pragma: allowlist secret
     );
     // Turn 2 had no voice leg: `voice.stt_ms` is absent, not zero.
     await expect(page.getByTestId("replay-turn-1").getByTestId("latency")).not.toContainText(

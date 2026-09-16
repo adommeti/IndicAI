@@ -39,6 +39,7 @@ import type { DecisionAction, ParsedMessage, RefusalReason } from "./messages";
 export type CaptureState =
   | "idle"
   | "connecting"
+  | "awaiting-notice"
   | "notice-playing"
   | "listening"
   | "notice-unconfirmed"
@@ -156,10 +157,13 @@ export function reduceSession(state: VoiceSession, event: SessionEvent): VoiceSe
       return { ...INITIAL_SESSION, capture: "connecting" };
 
     case "connected":
-      // Connected is not listening. Until the pipeline says the notice is playing
-      // (or has failed), this client knows nothing about the gate, and the honest
-      // rendering of "I do not know yet" is the waiting state, not a live mic.
-      return state.capture === "connecting" ? { ...state, capture: "notice-playing" } : state;
+      // Connected is not listening, and it is not "the notice is playing" either --
+      // this client has heard NOTHING from the pipeline yet. Claiming the notice was
+      // playing here is what let a room with no notice at all reach `listening`: the
+      // repo ships no consent-notice asset, so `notice: playing` never arrives, and
+      // any remote participant falling quiet was enough to promote. `awaiting-notice`
+      // is the honest name for "I do not know what the gate is doing".
+      return state.capture === "connecting" ? { ...state, capture: "awaiting-notice" } : state;
 
     case "disconnected":
       // A terminal state outlives the connection: the reason the session stopped
@@ -167,8 +171,18 @@ export function reduceSession(state: VoiceSession, event: SessionEvent): VoiceSe
       return isTerminal(state.capture) ? state : { ...state, capture: "idle" };
 
     case "agent-stopped-speaking":
-      // Only ever moves "the notice is playing" to "listening". It cannot lift a
-      // refusal, and it cannot start a session that never connected.
+      // Promotes ONLY out of `notice-playing`, which only a received
+      // `{"type":"notice","state":"playing"}` can put us in. That guard is the whole
+      // point: this event comes from LiveKit's `ActiveSpeakersChanged`, which fires
+      // for ANY remote participant going quiet -- a supervisor, a mid-notice pause in
+      // the TTS audio, or nothing at all. Without it the deterministic sequence
+      // `connecting, connected, <any remote speaker stops>` enabled the microphone and
+      // told the employee "your audio is being transcribed" while `GreetingGate` was
+      // closed and dropping every frame.
+      //
+      // It is still an inference, and it is display-only: the gate is server-side. The
+      // pipeline publishing an explicit `notice: open` when `GreetingGate._open` fires
+      // would remove the inference entirely (docs/build/BLOCKERS.md).
       return state.capture === "notice-playing" ? { ...state, capture: "listening" } : state;
 
     case "data":
@@ -262,9 +276,16 @@ export function captureCopy(state: VoiceSession): CaptureCopy {
       };
     case "connecting":
       return { label: "Connecting", detail: "Joining the room.", halted: false };
+    case "awaiting-notice":
+      return {
+        label: "Waiting for the agent",
+        detail:
+          "Connected. The agent has not started the recorded notice yet, so the room is not capturing and your microphone is not being read.",
+        halted: false,
+      };
     case "notice-playing":
       return {
-        label: "Waiting for the notice",
+        label: "Notice playing",
         detail:
           "The recorded notice telling you this call is recorded and transcribed is playing. The room is not capturing yet — your microphone is not being read.",
         halted: false,

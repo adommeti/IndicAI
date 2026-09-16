@@ -26,8 +26,38 @@ const CHAT_MODE = { v: 1, type: "mode", mode: "chat", reason: "stt_unavailable" 
 describe("joining", () => {
   it("is not listening merely because it connected", () => {
     const state = drive(CONNECT);
-    expect(state.capture).toBe("notice-playing");
+    expect(state.capture).toBe("awaiting-notice");
     expect(micAllowed(state)).toBe(false);
+  });
+
+  it("does not claim the notice is playing before the pipeline has said so", () => {
+    // `awaiting-notice`, not `notice-playing`: this client has heard nothing from the
+    // pipeline yet, and saying otherwise is what made the bug below possible.
+    const state = drive(CONNECT);
+    expect(captureCopy(state).detail).toMatch(/not capturing/i);
+    expect(captureCopy(state).detail).not.toMatch(/notice .*is playing/i);
+  });
+
+  it("never enables the mic on a stray speaker event when no notice was announced", () => {
+    // The regression this test exists for. `agent-stopped-speaking` comes from
+    // LiveKit's ActiveSpeakersChanged, which fires for ANY remote participant going
+    // quiet. Before the fix, `connecting, connected, <any remote speaker stops>`
+    // reached `listening` with micAllowed true and copy reading "your audio is being
+    // transcribed" -- while GreetingGate was closed and dropping every frame. It is
+    // not a hypothetical: the repo ships no consent-notice asset, so `notice: playing`
+    // never arrives and this was the ordinary path.
+    const stray = drive([...CONNECT, { kind: "agent-stopped-speaking" }]);
+    expect(stray.capture).toBe("awaiting-notice");
+    expect(micAllowed(stray)).toBe(false);
+
+    // Repeating it does not wear the guard down.
+    const persistent = drive([
+      ...CONNECT,
+      { kind: "agent-stopped-speaking" },
+      { kind: "agent-stopped-speaking" },
+      { kind: "agent-stopped-speaking" },
+    ]);
+    expect(micAllowed(persistent)).toBe(false);
   });
 
   it("starts listening only after the notice has played out", () => {

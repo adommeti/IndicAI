@@ -14,11 +14,12 @@
  *     hostname falls back to real MSAL sign-in, and says loudly that it did. So the
  *     failure mode of the accident is "nobody can sign in", not "everybody is signed
  *     in as a test identity".
- *  3. **It grants nothing.** It only skips the browser's token acquisition. The API
- *     still authenticates every request through its own middleware and uc1 has no
- *     server-side bypass at all (`helpdesk_agent/roles.py`: "There is no development
- *     bypass here"), so against a real API a bypass build simply gets 401s. Roles
- *     always come from `GET /me`.
+ *  3. **It grants nothing.** It only skips the browser's token acquisition; the API
+ *     authenticates every request itself. Against an API without its own bypass a
+ *     bypass build simply gets 401s. uc1 does have a server-side half --
+ *     `AUTH__DEV_BYPASS` in `helpdesk_agent/roles.py`, refused outside
+ *     dev/local/test/ci -- but it is a separate switch that this flag cannot set and
+ *     cannot reach. Roles always come from `GET /me`, never from here.
  *
  *  What it cannot do, stated plainly: it cannot create a session, choose an identity,
  *  grant a role, or make the replay endpoint answer. Only the server does those.

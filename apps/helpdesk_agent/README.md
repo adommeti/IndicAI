@@ -335,6 +335,16 @@ What exists, where it goes, and how long it lives:
 | Latency, units and INR/USD cost | Langfuse spans, metadata only — never audio, never transcript text. **Not** `adapter_calls`: that table is modelled and migrated but nothing inserts into it, so cost is queryable only in Langfuse today (`docs/build/BLOCKERS.md`) | per the Langfuse retention you configure |
 | LiveKit join tokens | minted locally, signed with `LIVEKIT_API_SECRET` from `.env.stack` | short TTL; a token is a credential to hear the call |
 
+**`GET /sessions/{id}/replay` returns transcripts unredacted, to a browser.** It is the
+one egress path in this app where `redact` is deliberately not applied, and it is
+deliberate rather than an oversight: `redact` is an outbound-to-vendor-and-to-logs hook,
+persisted rows are unredacted by design (`persistence.py` says so at the row write), and a
+replay exists so a reviewer can check what the employee actually said against what the
+agent actually did — a transcript reading `[PHONE]` beside a ticket whose grounding block
+quotes the digits cannot settle that. So the exposure is bounded by **who**, not by
+**what**: the `governance` role gate (uc1-scoped, ADR 0015), `Cache-Control: no-store`, and
+a route that writes no log line at all. See `platform/tests/test_uc1_replay.py`.
+
 **Sarvam receives the audio itself, unredacted.** `indic_platform.security.redact` is a text
 hook — its own docstring says audio is not transcribed by it — so it protects the Claude leg
 and the TTS leg but can do nothing about what the microphone captured. Anything an employee
