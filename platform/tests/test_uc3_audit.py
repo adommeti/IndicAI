@@ -329,7 +329,12 @@ async def restored_chains() -> AsyncIterator[None]:
     snapshot: dict[str, audit.ChainAnchor] | None = None
     try:
         await _purge(factory)
-        await _heal_stale_anchors(factory)
+        healed = await _heal_stale_anchors(factory)
+        if healed:
+            # Said out loud rather than done quietly: a fixture that drops an
+            # anchor has changed the baseline a later verification compares
+            # against, and that belongs in the run's output.
+            print(f"\nrestored_chains: dropped stale anchors for {', '.join(healed)}")
         snapshot = await _snapshot_anchors(factory)
         yield
     finally:
