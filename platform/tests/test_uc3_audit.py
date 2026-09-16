@@ -86,8 +86,16 @@ def test_the_same_row_at_a_different_chain_position_hashes_differently() -> None
 
 def test_the_hashes_and_seq_are_not_part_of_what_is_hashed() -> None:
     """A row cannot contain its own hash, and `seq` is assigned by the database
-    after the application has hashed the row."""
-    assert audit.NOT_HASHED == {"prev_hash", "row_hash", "seq"}
+    after the application has hashed the row.
+
+    `idempotency_key` is the third exclusion and the only one that is a judgement
+    rather than a mechanical necessity (0013_uc3_disposition_idempotency): it records
+    how a request was delivered, not what the reviewer decided, and the chain exists to
+    pin the decision. The set is asserted exactly, so adding a column to a chained
+    table without deciding whether it is evidence fails here rather than silently
+    changing what the chain attests to.
+    """
+    assert audit.NOT_HASHED == {"prev_hash", "row_hash", "seq", "idempotency_key"}
 
 
 def test_summarise_reports_a_break_count_a_monitor_can_alert_on() -> None:

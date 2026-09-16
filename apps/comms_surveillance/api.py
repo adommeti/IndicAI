@@ -38,10 +38,11 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from indic_platform.db.models import AnalysisRun, Call, Disposition, Flag, TranscriptSegment
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from starlette.concurrency import run_in_threadpool
 
@@ -365,33 +366,100 @@ class DispositionIn(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
+def _receipt(row: Disposition, *, replayed: bool = False) -> dict[str, Any]:
+    return {
+        "disposition_id": str(row.id),
+        "seq": row.seq,
+        "row_hash": row.row_hash,
+        "replayed": replayed,
+    }
+
+
 @app.post("/flags/{flag_id}/dispositions", status_code=201)
 async def create_disposition(
     flag_id: uuid.UUID,
     body: DispositionIn,
     session: Session,
+    response: Response,
     caller: Annotated[Principal, CaseReader],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=128)] = None,
 ) -> dict[str, Any]:
     """Record a decision. Append-only: a changed mind is a new row.
 
-    Written through `audit.append` and never with a plain `session.add`, so the
-    row takes its place in the hash chain under the table's advisory lock. A
-    disposition inserted around the side is a disposition that breaks the chain
-    for every row after it.
+    Written through `audit.append` and never with a plain `session.add`, so the row
+    takes its place in the hash chain under the table's advisory lock. A disposition
+    inserted around the side is a disposition that breaks the chain for every row
+    after it.
+
+    ## `Idempotency-Key`, and why this endpoint needs one more than most
+
+    A duplicate POST here is not a row somebody tidies up later. `dispositions` is
+    append-only and hash-chained, and the application's database role holds INSERT and
+    SELECT on it and nothing else, so a second ruling on the same flag by the same
+    reviewer is permanent and cannot be withdrawn by this service at all. A page
+    refresh, a proxy retry or a dropped connection was enough to cause one: the only
+    guard was the UI disabling its own button while the request was in flight.
+
+    Send the same key to retry safely. A replay returns the ORIGINAL receipt with 200
+    and `replayed: true`, so a client that never saw the first response gets the first
+    row's id rather than a new one. Without a key the old behaviour stands -- every
+    POST appends -- because a key derived from the request body would be worse than
+    none: it would silently collapse a genuine change of mind, which this table is
+    explicitly designed to record as a new row, into a replay of the old one.
+
+    The uniqueness is enforced by the database (`uq_dispositions_flag_idempotency_key`),
+    not by the check below. The check is the fast path that returns the original
+    receipt; the constraint is what holds when two retries race, and the
+    `IntegrityError` arm is how that race resolves into the same answer.
     """
     if await session.get(Flag, flag_id) is None:
         raise HTTPException(404, "Unknown flag")
-    row = await audit.append(
-        session,
-        Disposition(
-            flag_id=flag_id,
-            disposition=body.disposition,
-            note=body.note,
-            reviewer_id=caller.identity,
-        ),
-    )
-    await session.commit()
-    return {"disposition_id": str(row.id), "seq": row.seq, "row_hash": row.row_hash}
+
+    key = idempotency_key.strip() if idempotency_key else None
+    if key:
+        existing = (
+            await session.scalars(
+                select(Disposition).where(
+                    Disposition.flag_id == flag_id, Disposition.idempotency_key == key
+                )
+            )
+        ).first()
+        if existing is not None:
+            response.status_code = 200
+            return _receipt(existing, replayed=True)
+
+    try:
+        row = await audit.append(
+            session,
+            Disposition(
+                flag_id=flag_id,
+                disposition=body.disposition,
+                note=body.note,
+                reviewer_id=caller.identity,
+                idempotency_key=key,
+            ),
+        )
+        await session.commit()
+    except IntegrityError:
+        # Two retries raced past the check above and the constraint caught the second.
+        # The rollback is required before the session can be used again, and the answer
+        # is the row the winner wrote: both callers asked for one ruling and there is
+        # one ruling.
+        await session.rollback()
+        if not key:
+            raise
+        winner = (
+            await session.scalars(
+                select(Disposition).where(
+                    Disposition.flag_id == flag_id, Disposition.idempotency_key == key
+                )
+            )
+        ).first()
+        if winner is None:
+            raise
+        response.status_code = 200
+        return _receipt(winner, replayed=True)
+    return _receipt(row)
 
 
 @app.get("/qa-sample")

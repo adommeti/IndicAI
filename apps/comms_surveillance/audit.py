@@ -91,9 +91,14 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# The columns that are not part of what is hashed: the hashes themselves, and
-# `seq`, which the database assigns after the application has hashed the row.
-NOT_HASHED = frozenset({"prev_hash", "row_hash", "seq"})
+# The columns that are not part of what is hashed: the hashes themselves, `seq`,
+# which the database assigns after the application has hashed the row, and
+# `idempotency_key`, which describes the delivery of a request rather than the
+# decision it carried (0013_uc3_disposition_idempotency). The chain covers the flag,
+# the verdict, the note and the identity that signed it; a retry token is not part of
+# a reviewer's ruling, and hashing it would have meant bumping HASH_SCHEMA_VERSION and
+# invalidating every stored hash to add a de-duplication field.
+NOT_HASHED = frozenset({"prev_hash", "row_hash", "seq", "idempotency_key"})
 
 CHAINED = {"analysis_runs": AnalysisRun, "flags": Flag, "dispositions": Disposition}
 
