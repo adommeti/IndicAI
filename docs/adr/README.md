@@ -29,6 +29,7 @@ or verify the decision. Anything not yet built is written as "not implemented â€
 | [0014](0014-uc1-cross-border-claude-leg.md) | UC1 accepts the cross-border Claude leg for redacted text only; audio never leaves India, and real data waits on a DPA | Accepted | `uc1/P7` |
 | [0015](0015-governance-is-app-scoped-not-a-shared-claim.md) | `governance` denies content in uc3 and grants it in uc1; the role is app-scoped and the two must be different Entra groups | Accepted | `uc1/P6` |
 | [0016](0016-retention-cannot-reach-chained-evidence.md) | Retention deletes transcripts and recordings; quoted evidence inside the hash chain is outside any window uc3 can enforce | Accepted | `uc3/P7` |
+| [0017](0017-uc3-cross-border-unredacted-transcripts.md) | uc3 sends UNREDACTED employee call transcripts to a US-hosted model (the E9 override); accepted for synthetic data only, lapsing at ADR 0004 / DPA | Accepted | `uc3/P7` |
 
 ## Reserved number
 
