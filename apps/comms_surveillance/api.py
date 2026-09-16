@@ -366,6 +366,26 @@ class DispositionIn(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
+async def _keyed_disposition(
+    session: AsyncSession, flag_id: uuid.UUID, reviewer_id: str, key: str
+) -> Disposition | None:
+    """The row this reviewer already wrote for this flag under this key, if any.
+
+    Scoped by `reviewer_id` as well as the flag, matching
+    `uq_dispositions_flag_idempotency_key`. Without the reviewer in the lookup, two
+    people sharing a key on one flag would each be handed the other's receipt.
+    """
+    return (
+        await session.scalars(
+            select(Disposition).where(
+                Disposition.flag_id == flag_id,
+                Disposition.reviewer_id == reviewer_id,
+                Disposition.idempotency_key == key,
+            )
+        )
+    ).first()
+
+
 def _receipt(row: Disposition, *, replayed: bool = False) -> dict[str, Any]:
     return {
         "disposition_id": str(row.id),
@@ -422,14 +442,17 @@ async def create_disposition(
     # 500 on a table this service cannot UPDATE or DELETE. A blank key is an absent key.
     key = (idempotency_key.strip() or None) if idempotency_key else None
     if key:
-        existing = (
-            await session.scalars(
-                select(Disposition).where(
-                    Disposition.flag_id == flag_id, Disposition.idempotency_key == key
-                )
-            )
-        ).first()
+        existing = await _keyed_disposition(session, flag_id, caller.identity, key)
         if existing is not None:
+            # Same key, same reviewer, same decision: a retry. Same key, DIFFERENT
+            # decision: two intents wearing one key, and replaying the first would
+            # discard the second silently on a table nobody can correct. Refuse instead.
+            if (existing.disposition, existing.note) != (body.disposition, body.note):
+                raise HTTPException(
+                    409,
+                    "This Idempotency-Key was already used for a different decision on "
+                    "this flag. Send a new key to record a different ruling.",
+                )
             response.status_code = 200
             return _receipt(existing, replayed=True)
 
@@ -453,15 +476,15 @@ async def create_disposition(
         await session.rollback()
         if not key:
             raise
-        winner = (
-            await session.scalars(
-                select(Disposition).where(
-                    Disposition.flag_id == flag_id, Disposition.idempotency_key == key
-                )
-            )
-        ).first()
+        winner = await _keyed_disposition(session, flag_id, caller.identity, key)
         if winner is None:
             raise
+        if (winner.disposition, winner.note) != (body.disposition, body.note):
+            raise HTTPException(
+                409,
+                "This Idempotency-Key was already used for a different decision on "
+                "this flag. Send a new key to record a different ruling.",
+            ) from None
         response.status_code = 200
         return _receipt(winner, replayed=True)
     return _receipt(row)

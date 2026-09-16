@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../src/lib/api";
+import { newIdempotencyKey } from "../src/lib/queue";
 
 type Call = { url: string; init?: RequestInit };
 
@@ -56,15 +57,29 @@ describe("paths match the pinned contract", () => {
     expect(calls.map((call) => call.url)).toEqual(["/flags/a%2Fb", "/flags/a%2Fb/audio"]);
   });
 
-  it("posts a disposition as the contract body", async () => {
+  it("posts a disposition as the contract body, under an idempotency key", async () => {
     const calls = stubFetch(() => json({ disposition_id: "d", seq: 7, row_hash: "abc" }, 201));
-    const receipt = await api.disposition("f1", { disposition: "confirmed", note: "checked" });
+    const receipt = await api.disposition(
+      "f1",
+      { disposition: "confirmed", note: "checked" },
+      "intent-1",
+    );
     expect(calls[0]?.init?.method).toBe("POST");
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
       disposition: "confirmed",
       note: "checked",
     });
+    // Without the header the server-side idempotency is unreachable and a refresh
+    // appends a second permanent ruling, so the header is part of the contract.
+    expect(new Headers(calls[0]?.init?.headers).get("Idempotency-Key")).toBe("intent-1");
     expect(receipt.seq).toBe(7);
+  });
+
+  it("mints a distinct idempotency key per intent", () => {
+    // Same key twice would make two genuine rulings look like one retry.
+    const keys = new Set(Array.from({ length: 50 }, () => newIdempotencyKey()));
+    expect(keys.size).toBe(50);
+    expect([...keys].every((key) => key.length >= 8)).toBe(true);
   });
 
   it("unwraps the envelopes the contract wraps lists in", async () => {

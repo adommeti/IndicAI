@@ -49,6 +49,12 @@ celery_app = Celery(
     "comms_surveillance",
     broker=os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"),
     backend=os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
+    # `retention` registers `uc3.retention_sweep` and adds its 04:00 beat entry at
+    # import time, and a worker started on this module would otherwise import neither:
+    # the schedule would be missing from beat and the task unknown to the worker, while
+    # every test that imports the module directly still passed. Named here rather than
+    # imported at the top of this file because retention imports `celery_app` from it.
+    include=["comms_surveillance.retention"],
 )
 celery_app.conf.update(
     task_acks_late=True,

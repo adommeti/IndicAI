@@ -83,8 +83,15 @@ class TeeSink:
         for sink in self.sinks:
             try:
                 sink.emit(record)
-            except Exception:
-                log.exception("sink %s failed to emit; continuing", type(sink).__name__)
+            except Exception as exc:
+                # The type, not the traceback: a sink that failed with the record in
+                # its message would otherwise write that record to the log, which is
+                # the one export `redact` exists to cover. Matches retention.py's shape.
+                log.warning(
+                    "sink %s failed to emit (%s); continuing",
+                    type(sink).__name__,
+                    type(exc).__name__,
+                )
 
 
 @lru_cache

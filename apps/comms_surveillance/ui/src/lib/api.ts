@@ -86,10 +86,23 @@ export const api = {
   audio: (flagId: string) =>
     request<AudioGrant>(`/flags/${encodeURIComponent(flagId)}/audio`),
 
-  disposition: (flagId: string, body: { disposition: Disposition; note: string }) =>
+  /** Record a ruling. `idempotencyKey` identifies the INTENT, not the request.
+   *
+   *  The server keys on `(flag_id, reviewer_id, Idempotency-Key)` and a disposition
+   *  cannot be edited or withdrawn once written, so a retry that reuses the key is
+   *  answered with the original receipt instead of appending a second permanent
+   *  ruling. Send the SAME key for every retry of one decision and a NEW key for a
+   *  changed mind -- reusing a key with a different decision is refused with 409,
+   *  because silently replaying the first would lose the second. */
+  disposition: (
+    flagId: string,
+    body: { disposition: Disposition; note: string },
+    idempotencyKey: string,
+  ) =>
     request<DispositionReceipt>(`/flags/${encodeURIComponent(flagId)}/dispositions`, {
       method: "POST",
       body: JSON.stringify(body),
+      headers: { "Idempotency-Key": idempotencyKey },
     }),
 
   qaSample: () => request<{ items: QaFlag[] }>("/qa-sample").then((body) => body.items),

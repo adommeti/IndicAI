@@ -151,8 +151,16 @@ def batch_size() -> int:
 def dry_run_default() -> bool:
     """A pass is a rehearsal unless BOTH gates are open.
 
-    Expressed as one function so the invariant lives in one place: there is no code
-    path that deletes with the window unset, and none that deletes with the catch off.
+    Expressed as one function so the decision lives in one place, and `sweep` folds an
+    explicit `dry_run` argument into it with `or` rather than replacing it -- so no
+    scheduled or task-invoked pass can delete with either gate closed, whatever it was
+    passed.
+
+    The narrower functions (`purge_transcripts`, `purge_recordings`) still honour their
+    own `dry_run` and `days` arguments, because a test and an operator rehearsing one
+    policy by hand need that. They default to `dry_run=True`, so the careless call is
+    the safe one; `sweep` is the entry point every scheduled pass goes through, and it
+    is where the gates are enforced rather than merely consulted.
     """
     return not (deletion_enabled() and retention_days() is not None)
 
@@ -458,6 +466,12 @@ async def purge_recordings(
         found = list(store.list_before(cutoff, limit=size))
         outcome.batches = 1 if found else 0
         outcome.rows_matched = len(found)
+        if len(found) >= size:
+            # One batch, no paging: an object store's listing API is the store's to
+            # page, not this function's, and a silent cap would make `rows_matched`
+            # read as "this is all there was". Say it in the audit row instead, so the
+            # next pass picking up the remainder is expected rather than surprising.
+            outcome.detail["truncated"] = True
         outcome.saw([item.last_modified for item in found])
         if found and not outcome.dry_run:
             outcome.rows_deleted = store.remove([item.key for item in found])
@@ -513,7 +527,13 @@ async def sweep(
     transcript rule ran, the recording rule broke" is precisely the state a reviewer has
     to be able to see.
     """
-    rehearse = dry_run_default() if dry_run is None else dry_run
+    # A closed gate wins over an explicit argument. `sweep(dry_run=False)` -- and the
+    # Celery task, which takes the same keyword -- must NOT be able to delete while
+    # `UC3_RETENTION_ENABLED` is unset or no window is configured: an operator passing
+    # a flag is not the person who read ADR 0004, and the two gates exist precisely so
+    # that turning deletion on is a deliberate act rather than a call argument. So the
+    # argument can only ever make a pass MORE cautious, never less.
+    rehearse = dry_run_default() or (False if dry_run is None else dry_run)
     own_engine = None
     if factory is None:
         own_engine = create_async_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)

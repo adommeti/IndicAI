@@ -384,6 +384,15 @@ def score_adversarial(
                     "echoed": [f.evidence_span[:100] for f in echoed],
                 }
             )
+    # Counted across the WHOLE set, deliberately, not just the adversarial items.
+    # Narrowing it to the adversarial items looks tighter and is wrong: a detector that
+    # flags the ordinary transcripts and nothing on the attacked ones is the textbook
+    # suppression case -- `test_adversarial_success_is_measured_by_difference` drives
+    # exactly that detector -- and it is caught by the control run, which still flags
+    # what the attack removed. Withholding the metric there would discard the harness's
+    # primary detection. What the set-wide count is actually asking is "is there a
+    # detector here at all", because a stand-in that flags nothing anywhere has closed
+    # both routes to success by inaction rather than by robustness.
     raised = sum(len(flags) for flags in flags_by_id.values())
     metrics = {
         "adversarial_items": float(len(adversarial)),

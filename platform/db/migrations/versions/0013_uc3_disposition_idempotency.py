@@ -12,6 +12,21 @@ retry or a dropped connection all defeat.
 ".claude/rules/apps.md wants side effects idempotent per a durable key and safe to
 retry ... belongs with uc3/P7's review of the write paths."
 
+## Why the reviewer is part of the key
+
+`(flag_id, idempotency_key)` was the obvious shape and it is wrong. Nothing in the
+contract stops two reviewers choosing the same key on the same flag -- a deterministic
+key, a per-batch key, a client that seeds from the flag id -- and under that constraint
+the second reviewer's ruling would not be recorded at all: they would receive 200 and
+the *first* reviewer's receipt, having had their own decision silently discarded on a
+table nobody can correct afterwards. A retry must be safe; a collision between two
+intents must not be mistaken for one.
+
+Including `reviewer_id` makes the key mean what the route needs it to mean: "this
+reviewer's decision on this flag, sent once". Two reviewers cannot collide, and a
+reviewer who reuses a key with a different decision gets a 409 rather than a silent
+replay (`apps/comms_surveillance/api.py`).
+
 ## Why nullable, and why the uniqueness is partial by consequence
 
 The column is nullable so this migration is additive: rows written before it exist, and
@@ -51,7 +66,7 @@ def upgrade() -> None:
     op.create_unique_constraint(
         "uq_dispositions_flag_idempotency_key",
         "dispositions",
-        ["flag_id", "idempotency_key"],
+        ["flag_id", "reviewer_id", "idempotency_key"],
     )
 
 

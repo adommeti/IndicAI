@@ -45,7 +45,7 @@ environment. `platform/tests/conftest.py` imports `indic_platform.config.setting
 
 | Command | Result |
 |---|---|
-| `pytest platform/tests/test_uc3_hardening.py -q` | **28 passed** |
+| `pytest platform/tests/test_uc3_hardening.py -q` | **30 passed** (two T1 tests added later in the prompt) |
 | `pytest platform/tests/test_uc3_detector.py -q` | **35 passed** |
 | `pytest platform/tests/test_uc3_retention.py -q` | **60 passed** (54 pure + 6 `integration` against real PostgreSQL 16) |
 | `pytest platform/tests/test_uc3_lexicon.py -q` | **36 passed** |
@@ -82,16 +82,15 @@ Threat text is quoted verbatim from `docs/prd-v2.md` B4.
 
 ### T1 — the three limits
 
-1. **The `<transcript>` delimiter is asserted nowhere.** `detector.claude()` passes
-   `wrapper=lambda text: wrap_untrusted(text, "transcript")` and both system prompts tell the model
-   the transcript is "between `<transcript>` tags". Delete that `wrapper=` argument and the adapter
-   falls back to `<untrusted_data>` — the content stays wrapped and labeled, but the prompt then
-   names a tag the model never sees, which is exactly the defect uc1's review found and recorded as
-   its T1 limit 1. `grep -rn wrapper platform/tests/` returns nothing: no test in the repository
-   pins the wrapper argument of any adapter. The detector tests drive a `FakeClaude` and so never
-   exercise the adapter's wrapping at all.
-   *Smallest fix:* one test that builds `detector.claude()` with a fake transport and asserts the
-   user content on the wire opens with `<transcript>`.
+1. **The `<transcript>` delimiter was asserted nowhere — closed in this prompt.** `detector.claude()`
+   passes `wrapper=lambda text: wrap_untrusted(text, "transcript")` and both system prompts tell the
+   model the transcript is "between `<transcript>` tags". Deleting that argument leaves the content
+   wrapped but names a tag the model never sees — uc1's exact T1 defect — and until this prompt no
+   test pinned it: the detector tests all drive a `FakeClaude` and never exercised the adapter.
+   `test_the_uc3_adapter_wraps_every_transcript_it_sends` now captures the request at
+   `client.messages.parse`, which is what `Claude.structured` actually calls, and asserts the
+   content the vendor would receive. Sabotage-verified in both directions: removing `wrapper=` from
+   the factory fails it, and making `structured` stop applying the wrapper fails it too.
 2. **The stages injection can act on have never been run adversarially.** The 0/20 in the result
    line below is Stage 0, the deterministic lexicon — a matcher with no instructions to subvert.
    Stage 1 (Haiku) and Stage 2 (Sonnet) are the components T1 describes, and they have only ever
@@ -174,13 +173,15 @@ Threat text is quoted verbatim from `docs/prd-v2.md` B4.
    `audit_chain_anchors` row written at 2026-09-15T23:35 for an 18-row chain whose head has since
    been deleted by a tamper test that failed before its own happy-path cleanup ran
    (`test_a_truncated_tail_is_detected...:754-761`). This is `docs/build/BLOCKERS.md` row 38,
-   raised in uc1/P7 and assigned to **uc3/P7 — this prompt — which has not fixed it.** CI is
-   unaffected (fresh `pgvector/pgvector:pg16` service container per run), so the control is very
-   likely green there; but "green in a disposable container, red on every second local run"
-   is not a proof a reviewer can re-execute, and the failure text names the audit chain, which
-   makes leftover state look exactly like tamper detection.
-   *Smallest fix:* restore the anchor in a `finally:` in each tampering test, or give that file its
-   own schema.
+   raised in uc1/P7 and assigned to uc3/P7 — **and fixed in it, after this section was drafted.**
+   `test_uc3_audit.py` now scopes its rows behind a `uc3-audit-test/` prefix, snapshots and
+   restores the chain anchors in a `finally:`, and heals an anchor already unsatisfiable by the
+   surviving rows. Verified by three consecutive runs in one database, 9/9 integration each time,
+   with the anchor rows byte-identical, and by a run in a database holding another suite's rows
+   that touched none of them. No tampering assertion was weakened. Row 38 is closed.
+   The reason it mattered is worth keeping: "green in a disposable container, red on every second
+   local run" is not a proof a reviewer can re-execute, and the failure text named the audit chain,
+   so leftover state looked exactly like tamper detection.
 2. **Tamper-evident, not non-repudiable** (ADR 0011, `docs/build/BLOCKERS.md` uc3/P5). The chain is
    an unkeyed sha256 with an anchor stored in the same database under the same privilege: an actor
    with `UPDATE` can rewrite the tail, re-chain it and re-anchor. Closing it needs a trust root
@@ -304,9 +305,11 @@ exposes `structured` and `stream_text` only, both text-only, with no audio param
 **Residency decision: RECORDED in ADR 0017** (written in this prompt, after this section was first drafted; the paragraphs below state the exposure it records). PRD B5 offers uc3 option (b) — "minimize what reaches Claude
 — for UC3, Claude sees text transcripts (never audio) with configurable redaction". uc3 implements
 the first half and, under PRD E9's own instruction, switches off the second. That combination —
-unredacted Confidential/regulated employee call content leaving India — is a decision, and no ADR
-records it. uc1's equivalent decision is ADR 0014. This is the single largest documentation gap in
-this review and it is inside this repository's power to close.
+unredacted Confidential/regulated employee call content leaving India — is a decision, and
+**ADR 0017** now records it: the per-leg exposure, the E9 override that causes it, and the
+conditions under which the acceptance lapses (synthetic data only; ADR 0004 and a DPA before any
+real recording). uc1's equivalent decision is ADR 0014, and the two deliberately differ — uc1
+crosses the border redacted, uc3 does not.
 
 **DPA / vendor risk review: NOT PASSED.** PRD B4 makes it "a gate before real data" and B5 repeats
 it. No DPA has been executed with either vendor in this repository's scope and no vendor risk
@@ -335,14 +338,14 @@ the rest could be, and were not.
 | 8 | **T1/E9 adversarial gate against the analysis harness** | Needs `ANTHROPIC_API_KEY`; `LIVE_API_TESTS=1 make eval-uc3-full` fails before a request is sent without it. `docs/build/BLOCKERS.md`, uc3/P4. |
 | 9 | **E10 diarization attribution accuracy** | Saaras batch STT uploads to `*.blob.core.windows.net`, which is not on this environment's network allowlist. `docs/build/BLOCKERS.md`, uc3/P1 and uc3/P2. Reported as `unmeasured`, never as a passing zero. |
 | 10 | **T4 residency ADR** | ~~Debt~~ — **closed by ADR 0017** in this prompt. What remains open is not the record but the gate it is conditional on: the DPA with Anthropic covering employee communications content, and the vendor risk review. Neither can be produced from this repository. |
-| 11 | **T7 re-runnable audit integration tests** | `docs/build/BLOCKERS.md` row 38 assigns this file to uc3/P7 and this prompt did not fix it. A `finally:` in two tampering tests. |
+| 11 | ~~**T7 re-runnable audit integration tests**~~ | **Closed in this prompt.** `test_uc3_audit.py` restores the chain anchors in a `finally:` and scopes its own rows; three consecutive runs in one database, 9/9 each, anchors unchanged. Row 38 deleted. |
 
 ---
 
 ## Open gaps, with owners
 
 Owners are roles, because no individual is named anywhere in this repository. Rows marked
-*(blocker)* already exist in `docs/build/BLOCKERS.md` (38 rows) and are referenced, not restated.
+*(blocker)* already exist in `docs/build/BLOCKERS.md` (36 rows) and are referenced, not restated.
 
 | # | Gap | Threat / F4 | Smallest change that closes it | Owner |
 |---|---|---|---|---|
@@ -350,10 +353,10 @@ Owners are roles, because no individual is named anywhere in this repository. Ro
 | 2 | No ADR records uc3's cross-border position, and the Claude leg is unredacted Confidential data | T4 / line 4 | Write the uc3 sibling of ADR 0014: audio stays in India, text crosses unredacted by E9's own instruction, synthetic-only until Gate 0 and a DPA. Then execute the DPAs and record the vendor risk review | uc3 owner, then Legal / Procurement |
 | 3 | Gate 0 unanswered and ADR 0004 unwritten, so the retention window, the lawful basis, the access matrix and the QA-sample question are all open *(blocker)* | T5, T2 | Compliance/Legal/HR answer PRD E2's five questions in writing; bring ADR 0016's constraint to that conversation so erasure is discussed before the first request, not after | Compliance / Legal / HR |
 | 4 | Retention sweep has never run on a schedule anywhere *(blocker)* | T5 / line 5 | A worker/beat compose service plus a make target; first passes stay dry-run by default and the `retention_deletions` rows get read by a human before either gate is opened | Platform / `program/P10-azure-deploy` |
-| 5 | 7 of 24 audit tests fail on a persistent database because two tampering tests clean up only on the happy path *(blocker, row 38, assigned to this prompt)* | T7 / line 7 | Restore the anchor and the rows in a `finally:`, or give `test_uc3_audit.py` its own schema. Until then the T7 proof is re-runnable only in a disposable container | uc3 owner |
+| 5 | ~~7 of 24 audit tests fail on a persistent database because two tampering tests clean up only on the happy path~~ **CLOSED in this prompt** | T7 / line 7 | Fixed: the file scopes its rows and restores the anchors in a `finally:`. Three consecutive runs in one database, 9/9 each, anchors byte-identical; another suite's rows untouched. Row 38 deleted from BLOCKERS | uc3 owner |
 | 6 | ~~A whitespace-only `Idempotency-Key` persists `""`, so a second disposition on that flag 500s and is lost~~ **CLOSED during this review** | T7 | Fixed at `api.py:423`; `test_a_whitespace_only_key_is_treated_as_absent` now passes. Left in the table so the finding is not silently absorbed | uc3 owner |
 | 7 | No role-scoped access to Langfuse traces; one project and one key pair for all three apps | T2 | Per-app Langfuse projects and keys in `docker-compose.yml`, an `app` field on the span payload, and Langfuse RBAC per project | Platform |
-| 8 | The `<transcript>` delimiter both prompts name is asserted by no test | T1 / line 1 | One wire-level test that `detector.claude()` sends `<transcript>` | uc3 owner |
+| 8 | ~~The `<transcript>` delimiter both prompts name is asserted by no test~~ **CLOSED in this prompt** | T1 / line 1 | `test_the_uc3_adapter_wraps_every_transcript_it_sends` captures the request at `client.messages.parse` and asserts the wrapped content; sabotage-verified against both the factory and `structured` | uc3 owner |
 | 9 | Stages 1 and 2 have never faced an adversarial transcript *(blocker)* | T1 / line 11 | `ANTHROPIC_API_KEY`, then `LIVE_API_TESTS=1 make eval-uc3-full`; attach the numbers to the prompt report | Eval / uc3 owner |
 | 10 | `render_english` uses an unversioned inline system prompt and swallows every exception | T2, T6 / line 6 | Move it to `prompts/render_english.md`, give it a `prompt_version`, and log the failure it currently discards | uc3 owner |
 | 11 | A Stage 2 vendor error string is logged and persisted unredacted | T2 | Pass it through `redact` before logging; the E9 override is for the vendor leg, not the log | uc3 owner |
@@ -383,9 +386,10 @@ Owners are roles, because no individual is named anywhere in this repository. Ro
   deliberate, documented and tested — and it means the unredacted verbatim transcript of a
   recorded employee call crosses a border. The green tick on F4 line 2 records that the override is
   *governed*, not that it is safe.
-- **Not** that "green in CI" means the T7 controls were exercised here. Seven of the audit
-  integration tests failed in this session on leftover state, and the fix was assigned to this
-  prompt.
+- **Not** that the T7 controls are proven against production data. They are exercised against
+  fabricated rows: seven of these tests failed mid-review on leftover state (fixed in this prompt,
+  and the file is now re-runnable), but the deeper point stands — the chain has never protected a
+  row that a real analysis wrote, because nothing writes one.
 
 ### Before uc3 processes real employee data, all of these must be true
 

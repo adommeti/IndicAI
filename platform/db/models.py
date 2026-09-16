@@ -323,7 +323,12 @@ class Disposition(Base):
             "disposition in ('confirmed','false_positive','needs_more_context','escalated')",
             name="ck_dispositions_disposition",
         ),
-        UniqueConstraint("flag_id", "idempotency_key", name="uq_dispositions_flag_idempotency_key"),
+        UniqueConstraint(
+            "flag_id",
+            "reviewer_id",
+            "idempotency_key",
+            name="uq_dispositions_flag_idempotency_key",
+        ),
     )
 
 

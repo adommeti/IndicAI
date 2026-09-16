@@ -27,6 +27,7 @@ import asyncio
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock
@@ -42,6 +43,7 @@ from indic_platform.adapters.base import TranscriptSegment as AdapterSegment
 from indic_platform.db.models import Call, Disposition, Flag
 from indic_platform.obs import langfuse
 from indic_platform.obs.langfuse import MemorySink, TeeSink
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from starlette.authentication import AuthCredentials, AuthenticationBackend, SimpleUser
 from starlette.middleware.authentication import AuthenticationMiddleware
@@ -222,14 +224,17 @@ def test_a_replayed_key_returns_the_original_receipt_and_appends_nothing(
 ) -> None:
     """Prevents the permanent duplicate ruling a page refresh used to cause.
 
-    The second POST carries a *different* body, so a handler that appended and
-    then returned the new row's receipt fails on the receipt fields, and one
-    that appended before returning the original receipt fails on the append
-    count. Only "did not write" passes both.
+    A retry is the same decision sent twice, so the second POST carries the same
+    body. A handler that appended and then returned the new row's receipt fails on
+    the append count; one that appended before returning the original receipt fails
+    on it too. Only "did not write" passes.
+
+    The *different* body case is not a retry and is covered separately below: it is
+    two intents wearing one key, and it is refused rather than replayed.
     """
     session = reviewer()
     first = session.post(url(FLAG_ID), json=BODY, headers={"Idempotency-Key": "retry-2"})
-    second = session.post(url(FLAG_ID), json=CHANGED_MIND, headers={"Idempotency-Key": "retry-2"})
+    second = session.post(url(FLAG_ID), json=BODY, headers={"Idempotency-Key": "retry-2"})
 
     assert first.status_code == 201
     assert second.status_code == 200
@@ -241,6 +246,28 @@ def test_a_replayed_key_returns_the_original_receipt_and_appends_nothing(
     assert len(wired.session.rows) == 1
     assert wired.session.rows[0].disposition == "confirmed", "the original ruling stands"
     assert wired.session.commits == 1, "there is nothing to commit on a replay"
+
+
+def test_a_reused_key_with_a_different_decision_is_refused_not_replayed(
+    wired: Wiring,
+) -> None:
+    """Prevents a reviewer's second, different ruling being silently discarded.
+
+    Replaying the first receipt here would tell the reviewer their new decision was
+    recorded when it was not, on the one table this service can neither UPDATE nor
+    DELETE. A 409 is the only answer that does not lose a ruling: it says the key is
+    spent, and a new key records the new decision.
+    """
+    session = reviewer()
+    first = session.post(url(FLAG_ID), json=BODY, headers={"Idempotency-Key": "spent"})
+    second = session.post(url(FLAG_ID), json=CHANGED_MIND, headers={"Idempotency-Key": "spent"})
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+    assert "different decision" in second.json()["detail"]
+    assert wired.append.await_count == 1, "the refused request must not reach the chain"
+    assert len(wired.session.rows) == 1
+    assert wired.session.rows[0].disposition == "confirmed"
 
 
 def test_an_idempotency_key_is_scoped_to_its_flag(wired: Wiring) -> None:
@@ -288,11 +315,14 @@ def test_a_racing_duplicate_resolves_to_the_winners_receipt(wired: Wiring) -> No
     one ruling -- rather than returning an error for a decision that *was*
     recorded.
     """
+    # The winner carries the SAME decision as the request: a race is one intent sent
+    # twice, not two intents. (A stored row that differed would be the conflict case,
+    # and is answered with 409 -- see the reused-key test above.)
     winner = Disposition(
         id=uuid.UUID("33333333-3333-4333-8333-333333333333"),
         flag_id=uuid.UUID(FLAG_ID),
-        disposition="confirmed",
-        note="first one home",
+        disposition=BODY["disposition"],
+        note=BODY["note"],
         reviewer_id="asha@example.test",
         idempotency_key="race-1",
         seq=41,
@@ -636,3 +666,122 @@ def test_uc3_stt_tees_its_records_into_the_default_sink(
     tee.emit(RECORD)
     assert accounting.records == [RECORD]
     assert observability.records == [RECORD]
+
+
+# --- the constraint itself, against a real database ---------------------------
+
+
+@pytest.mark.integration
+async def test_the_idempotency_constraint_exists_and_bites() -> None:
+    """Prevents the whole replay path resting on a constraint nobody created.
+
+    Every other test in this file drives a fake session and a hand-built
+    `IntegrityError`, so a migration that never ran, a misspelt constraint name or a
+    uniqueness scoped to the wrong columns would all pass them and then surface in
+    production as a 500 on a table this service can neither UPDATE nor DELETE.
+
+    Also pins the SCOPE, which is the part that changed late: two reviewers using the
+    same key on one flag must both be recorded, because their rulings are two intents
+    rather than one retry.
+    """
+    import os
+    import uuid as uuidlib
+
+    from sqlalchemy.exc import IntegrityError as SAIntegrityError
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        pytest.skip("DATABASE_URL is not set; run `make stack-core` and `make migrate`")
+
+    from indic_platform.db.models import AnalysisRun, Call, Disposition, Flag
+
+    engine = create_async_engine(url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    marker = f"uc3-idem-test/{uuidlib.uuid4()}"
+    call_id, run_id, flag_id = uuidlib.uuid4(), uuidlib.uuid4(), uuidlib.uuid4()
+    now = datetime.now(UTC)
+
+    def row(reviewer: str, key: str) -> Disposition:
+        return Disposition(
+            id=uuidlib.uuid4(),
+            flag_id=flag_id,
+            disposition="confirmed",
+            note="",
+            reviewer_id=reviewer,
+            idempotency_key=key,
+            created_at=now,
+            prev_hash="",
+            row_hash=uuidlib.uuid4().hex,
+        )
+
+    try:
+        async with factory() as db, db.begin():
+            db.add(
+                Call(
+                    id=call_id,
+                    source_uri=f"s3://b/{marker}",
+                    source_key=marker,
+                    duration_s=1,
+                    participants=[],
+                    languages=[],
+                    status="transcribed",
+                    stt_model="m",
+                )
+            )
+            await db.flush()
+            db.add(
+                AnalysisRun(
+                    id=run_id,
+                    call_id=call_id,
+                    stage="stage2",
+                    model="m",
+                    prompt_version="p",
+                    policy_version="pv",
+                    lexicon_version="lv",
+                    input_sha256="sha",
+                    output={},
+                    created_at=now,
+                    prev_hash="",
+                    row_hash=uuidlib.uuid4().hex,
+                )
+            )
+            await db.flush()
+            db.add(
+                Flag(
+                    id=flag_id,
+                    call_id=call_id,
+                    run_id=run_id,
+                    category="conduct",
+                    severity="low",
+                    evidence_span="x",
+                    created_at=now,
+                    prev_hash="",
+                    row_hash=uuidlib.uuid4().hex,
+                )
+            )
+
+        async with factory() as db, db.begin():
+            db.add(row("asha@example.test", "key-1"))
+
+        # Same reviewer, same key: the constraint refuses the duplicate.
+        with pytest.raises(SAIntegrityError):
+            async with factory() as db, db.begin():
+                db.add(row("asha@example.test", "key-1"))
+
+        # A DIFFERENT reviewer with the same key is a different intent and is recorded.
+        async with factory() as db, db.begin():
+            db.add(row("ravi@example.test", "key-1"))
+
+        async with factory() as db:
+            stored = (
+                await db.scalars(select(Disposition).where(Disposition.flag_id == flag_id))
+            ).all()
+        assert {d.reviewer_id for d in stored} == {"asha@example.test", "ravi@example.test"}
+    finally:
+        async with factory() as db, db.begin():
+            await db.execute(delete(Disposition).where(Disposition.flag_id == flag_id))
+            await db.execute(delete(Flag).where(Flag.call_id == call_id))
+            await db.execute(delete(AnalysisRun).where(AnalysisRun.call_id == call_id))
+            await db.execute(delete(Call).where(Call.id == call_id))
+        await engine.dispose()

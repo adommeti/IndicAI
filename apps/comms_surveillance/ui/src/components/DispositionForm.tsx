@@ -1,6 +1,12 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../lib/api";
-import { DISPOSITION_OPTIONS, MAX_NOTE, noteAdvice, noteProblem } from "../lib/queue";
+import {
+  DISPOSITION_OPTIONS,
+  MAX_NOTE,
+  newIdempotencyKey,
+  noteAdvice,
+  noteProblem,
+} from "../lib/queue";
 import type { Disposition, DispositionReceipt, DispositionRow } from "../lib/types";
 import { FailureState } from "./States";
 
@@ -22,6 +28,7 @@ export function DispositionForm({
   const [disposition, setDisposition] = useState<Disposition>(current ?? "confirmed");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const intentKey = useRef<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [receipt, setReceipt] = useState<DispositionReceipt | null>(null);
 
@@ -35,7 +42,15 @@ export function DispositionForm({
     setBusy(true);
     setError(null);
     try {
-      const next = await api.disposition(flagId, { disposition, note });
+      // Minted per INTENT, not per request: the key is kept in a ref so a retry after
+      // a dropped connection sends the same one and is answered with the original
+      // receipt, instead of appending a second permanent ruling to a table nobody can
+      // correct. Cleared only after a ruling is recorded, so the next decision on this
+      // flag gets a new key. Disabling the button while in flight -- the only guard
+      // before this -- does nothing about a refresh or a proxy retry.
+      if (!intentKey.current) intentKey.current = newIdempotencyKey();
+      const next = await api.disposition(flagId, { disposition, note }, intentKey.current);
+      intentKey.current = null;
       setReceipt(next);
       setNote("");
       onRecorded(
