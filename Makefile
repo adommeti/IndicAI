@@ -9,6 +9,12 @@ UC1_REGRESSION_ARGS ?= --thresholds platform/eval/thresholds.yaml --strict
 # runs are opt-in targets below.
 UC2_EVAL_ARGS ?= --baseline
 UC3_EVAL_ARGS ?= --baseline
+# The uc3 policy gate. Stage 0 only, and deliberately: the lexicon matcher is
+# deterministic, offline and free, so it is the one part of the detector CI can
+# hold to a number on every PR. `uc3_stage0` is its own gate set in
+# thresholds.yaml (recall, adversarial, evidence -- not precision, which Stages 1
+# and 2 owe). See eval-uc3-regression below for what this does NOT cover.
+UC3_REGRESSION_ARGS ?= --thresholds platform/eval/thresholds.yaml --gates uc3_stage0 --strict
 # The uc2/P2 pipeline under the B6 gates. Both extra flags are load-bearing:
 # `--fidelity-source sut` points the judge at this pipeline rather than at
 # uc2/P1's draft references, and `--pre-edit` scores the translate stage before
@@ -25,7 +31,7 @@ COMPOSE = docker compose --env-file .env.stack
 # a --profile flag would also start every unprofiled service.
 ZAMMAD = zammad-postgresql zammad-redis zammad-memcached zammad-init \
 	zammad-railsserver zammad-nginx zammad-scheduler zammad-websocket
-.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc1-regression eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
+.PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc1-regression eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-regression eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
         check check-quick check-full test-ticketing stack-core stack-obs stack-voice stack-sparse stack-ticketing stack-status stack-logs ship plan
 bootstrap:
 	python3 infra/bootstrap.py
@@ -100,6 +106,22 @@ eval-uc2-sarvam:
 eval-uc3:
 	$(UV) run python -m indic_platform.eval.runners.run_uc3 $(UC3_EVAL_ARGS)
 # Stage 0 only: the lexicon's own recall floor, free and offline.
+# The uc3/P7 acceptance: "CI runs eval-uc3 on every change to prompts/, lexicon/,
+# or policy.md and blocks on regression". This is the blocking half, and it runs
+# on every PR rather than only on those paths -- a gate that a path filter can
+# skip is a gate that a moved file switches off, and this one costs ~7s.
+#
+# What it covers: the lexicon (`lexicon/*.yaml`, `lexicon/matcher.py`) and
+# anything that changes Stage 0's output. Recall is gated at B6's 0.85 because
+# Stages 1 and 2 only ever remove flags, so recall lost here is lost for good.
+# Adversarial success and evidence traceability are blocking at zero.
+#
+# What it does NOT cover, and no offline job can: `prompts/triage.md` and
+# `prompts/deep_analysis.md` drive Claude, so a change to either is unmeasured
+# until someone runs `make eval-uc3-full` with a key. CI says so out loud on any
+# PR that touches them rather than passing a gate that never tested the change.
+eval-uc3-regression:
+	$(UV) run python -m indic_platform.eval.runners.run_uc3 --detect comms_surveillance.stage0:detect $(UC3_REGRESSION_ARGS)
 eval-uc3-lexicon:
 	$(UV) run python -m indic_platform.eval.runners.run_uc3 --detect comms_surveillance.stage0:detect --baseline
 # The full three-stage detector against live Claude. Prints the estimate and

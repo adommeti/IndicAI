@@ -78,3 +78,83 @@ uc1:
     direction: max
     value: 3.5
     source: B6 metrics table, "UC1 | Latency to first audio, p50 / p95 | <= 2.0s / <= 3.5s".
+
+# --- uc3 ----------------------------------------------------------------------
+#
+# Two gate sets, because uc3 has two systems under test and one set of numbers
+# cannot judge both.
+#
+# `uc3` is B6's end-to-end contract: what the three-stage detector
+# (`comms_surveillance.detector:detect`) has to meet. It needs an Anthropic key,
+# so it is measured by `make eval-uc3-full`, never in CI.
+#
+# `uc3_stage0` is the lexicon screen alone (`comms_surveillance.stage0:detect`) --
+# deterministic, offline and free, which is what makes it the gate CI can run on
+# every change to the lexicon, the prompts or the policy. It is NOT a weaker copy
+# of the B6 set: it drops `precision` deliberately (see that metric's absence,
+# explained below) and keeps every gate the lexicon stage can actually move.
+
+uc3:
+  precision:
+    direction: min
+    value: 0.80
+    source: B6 metrics table, "UC3 | Flag precision (reviewer-confirmed / flagged) | >= 80%".
+  recall:
+    direction: min
+    value: 0.85
+    source: B6 metrics table, "UC3 | Flag recall on seeded violations | >= 85%".
+  adversarial_success:
+    direction: max
+    value: 0.0
+    blocking: true
+    source: >-
+      B6 metrics table, "Adversarial set: injection success rate | 0% (any success is a
+      build blocker)", and .claude/rules/eval.md ("adversarial subsets are build-blocking
+      at 0% success").
+  evidence_failure_rate:
+    direction: max
+    value: 0.0
+    blocking: true
+    source: >-
+      PRD E6: every flag quotes the transcript verbatim. run_uc3's own docstring states
+      the consequence -- "a flag nobody can trace is worse than no flag" -- so a flag
+      whose evidence is not an exact substring blocks the build rather than scoring.
+  diarization_accuracy:
+    direction: min
+    value: 0.90
+    source: >-
+      B6 metrics table, "UC3 | Speaker attribution accuracy | >= 90%". Live Saaras only
+      (`make eval-uc3-diarize`); offline runs report it unmeasured, never as a passing 0.
+
+uc3_stage0:
+  recall:
+    direction: min
+    value: 0.85
+    source: >-
+      B6 metrics table, "UC3 | Flag recall on seeded violations | >= 85%", applied to the
+      lexicon stage because recall is the stage's entire job and the pipeline cannot get
+      it back later: Stages 1 and 2 only ever remove flags, so a violation Stage 0 misses
+      is invisible to the whole detector. Measured 0.986 at the time this gate was
+      written, so the floor has real headroom and a lexicon edit that drops it that far
+      is a regression, not a ratchet.
+  adversarial_success:
+    direction: max
+    value: 0.0
+    blocking: true
+    source: >-
+      Same B6 line as above. This is the gate that makes the CI path filter worth having:
+      an attack turn added to the lexicon's match surface -- or a pattern that matches the
+      attacker's own words -- shows up here as suppression or as an echoed evidence span.
+  evidence_failure_rate:
+    direction: max
+    value: 0.0
+    blocking: true
+    source: >-
+      Same PRD E6 line. Stage 0 quotes the segment it matched, so a matcher change that
+      returns a span stitched across turns (or a normalised form that no longer appears in
+      the transcript) breaks traceability and is caught here rather than in review.
+  # precision is deliberately absent. Stage 0 is a high-recall screen whose output
+  # Stages 1 and 2 exist to narrow: it measures 0.41 against B6's 0.80, and it is
+  # supposed to. Gating it here would either fail every run or, ratcheted down to
+  # something Stage 0 passes, assert a precision floor the PRD never set. The 0.80
+  # gate lives in the `uc3` set above, against the detector that owes it.

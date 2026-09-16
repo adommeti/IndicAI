@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from indic_platform.eval.report import Report
+from indic_platform.eval.report import THRESHOLDS, Report, Thresholds
 from pydantic import BaseModel, Field
 
 GOLDEN = Path(__file__).parents[1] / "golden" / "uc3_surveillance"
@@ -384,13 +384,41 @@ def score_adversarial(
                     "echoed": [f.evidence_span[:100] for f in echoed],
                 }
             )
+    raised = sum(len(flags) for flags in flags_by_id.values())
     metrics = {
         "adversarial_items": float(len(adversarial)),
         "adversarial_comparable": float(comparable),
     }
     unmeasured: list[str] = []
-    if comparable:
+    if comparable and raised:
         metrics["adversarial_success"] = successes / comparable
+    elif comparable:
+        # A detector that flags nothing cannot be manipulated into flagging less,
+        # and cannot echo an attacker's words it never quoted. Both routes to
+        # "success" are closed by the detector doing nothing at all, so the 0.0
+        # this arm would otherwise publish is a property of the stand-in rather
+        # than a measurement of a control -- and B6 makes adversarial success the
+        # one gate where any non-zero blocks the build. Handing that gate a pass
+        # for work never done is the exact failure `evidence_failure_rate` guards
+        # against below, and the same one uc1/P7 found in its own adversarial gate.
+        #
+        # The number is still published, under a name that cannot be mistaken for
+        # the metric: it is the floor a real detector has to match, and a baseline
+        # scoring above zero here means the harness is broken (this module's
+        # docstring: "If a baseline that flags nothing ever scores above zero on
+        # anything, the check is broken").
+        metrics["adversarial_success_baseline"] = successes / comparable
+        unmeasured.append("adversarial_success")
+        details.append(
+            {
+                "check": "unmeasured",
+                "metric": "adversarial_success",
+                "reason": (
+                    "the detector under test raised 0 flags on the whole set, so neither "
+                    "suppression nor instruction-following could be observed"
+                ),
+            }
+        )
     else:
         unmeasured.append("adversarial_success")
         details.append(
@@ -647,7 +675,18 @@ def evaluate(
     transcribe: Callable[[str, str], list[dict[str, Any]]] | None = None,
     sink: Any = None,
     sut: str = "baseline (flags nothing)",
+    thresholds: Thresholds | None = None,
 ) -> Report:
+    """Score the golden set.
+
+    `thresholds`, when given, REPLACES the hardcoded `B6_GATES` as the gate source
+    rather than adding to it. That is what lets one runner judge two systems under
+    test: the three-stage detector owes B6's end-to-end numbers, while the Stage 0
+    lexicon screen owes recall, adversarial and evidence but not precision, because
+    narrowing Stage 0's output is exactly what Stages 1 and 2 are for. The two sets
+    live in `platform/eval/thresholds.yaml` as `uc3` and `uc3_stage0`, so which
+    numbers a gate run used is a reviewable diff rather than a flag in the Makefile.
+    """
     transcripts = load_transcripts()
     flags_by_id = {t.id: detect(t) for t in transcripts}
 
@@ -690,22 +729,38 @@ def evaluate(
         )
 
     quality_gates: dict[str, bool] = {}
-    for name, threshold in B6_GATES.items():
-        if name not in metrics:
-            continue
-        # Adversarial success and evidence failure are "must be zero" gates;
-        # the rest are floors.
-        quality_gates[name] = (
-            metrics[name] <= threshold
-            if name in ("adversarial_success", "evidence_failure_rate")
-            else metrics[name] >= threshold
-        )
+    described: dict[str, str] = {}
+    if thresholds is not None:
+        quality_gates = thresholds.results(metrics)
+        described = {
+            name: t.describe(metrics[name])
+            for name, t in thresholds.metrics.items()
+            if name in metrics
+        }
+    else:
+        for name, threshold in B6_GATES.items():
+            if name not in metrics:
+                continue
+            # Adversarial success and evidence failure are "must be zero" gates;
+            # the rest are floors.
+            quality_gates[name] = (
+                metrics[name] <= threshold
+                if name in ("adversarial_success", "evidence_failure_rate")
+                else metrics[name] >= threshold
+            )
 
     gates = {
         "transcripts_loaded": len(transcripts) == 200,
         "labels_present": metrics["labels"] > 0,
         "adversarial_present": metrics["adversarial_items"] == 20,
     }
+    if thresholds is not None:
+        # A blocking threshold fails the harness in every mode, `--baseline`
+        # included: B6 calls adversarial success a build blocker, and a gate that
+        # only bites under a flag CI might not pass is not a blocker. Everything
+        # else stays a quality gate, enforced by `--strict`.
+        for name in thresholds.blocking_failures(metrics):
+            gates[f"blocking:{name}"] = False
     provisional = ["synthetic transcripts (no ADR 0004; nothing here is a real call)"]
     if not load_audio_manifest().get("items"):
         provisional.append("no audio subset")
@@ -719,15 +774,28 @@ def evaluate(
         unmeasured=unmeasured,
         quality_gates=quality_gates,
         details=details,
+        thresholds=described,
     )
     if strict:
         # A B6 metric that was never taken cannot be allowed to pass by being
         # absent. Strict mode is what uc3/P4 will run, and a green run with two
         # of six gates never measured is a false green, not a pass.
+        #
+        # An explicit gate set narrows *which* metrics are owed, and only that.
+        # `uc3_stage0` does not ask the lexicon screen for diarization accuracy or
+        # a cost per call: those come from live Saaras and an adapter sink, neither
+        # of which a deterministic offline stage has or should have. Holding it to
+        # them would leave the CI gate permanently red, and a permanently red gate
+        # gets switched off — which costs the adversarial blocker that is the whole
+        # point of running it. Metrics absent from the set are still reported in
+        # `unmeasured`; they are simply not this system under test's debt.
+        owed = (
+            unmeasured if thresholds is None else [n for n in unmeasured if n in thresholds.metrics]
+        )
         report.gates = {
             **gates,
             **{f"b6:{k}": v for k, v in quality_gates.items()},
-            **{f"b6:{name}:measured": False for name in unmeasured},
+            **{f"b6:{name}:measured": False for name in owed},
         }
     return report
 
@@ -767,6 +835,20 @@ def main() -> None:
         help="Measure speaker attribution against live Saaras (costs money)",
     )
     parser.add_argument("--output", type=Path, default=Path("docs/eval"))
+    parser.add_argument(
+        "--thresholds",
+        type=Path,
+        default=None,
+        help=f"B6 gates with explicit direction (e.g. {THRESHOLDS}); replaces the built-in set",
+    )
+    parser.add_argument(
+        "--gates",
+        default="uc3",
+        help=(
+            "which key in the thresholds file to gate against: 'uc3' for the three-stage "
+            "detector's end-to-end B6 numbers, 'uc3_stage0' for the lexicon screen alone"
+        ),
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--strict", action="store_true", help="Enforce the B6 gates (default)")
     mode.add_argument(
@@ -798,11 +880,13 @@ def main() -> None:
         print(estimate_diarization_cost(load_audio_manifest()))
         transcribe = saaras_diarizer()
 
+    gate = Thresholds.load(args.thresholds, app=args.gates) if args.thresholds else None
     report = evaluate(
         detect=detect,
         strict=not args.baseline,
         transcribe=transcribe,
         sut=args.detect or "baseline (flags nothing)",
+        thresholds=gate,
     )
     report.write(args.output)
     print(
@@ -813,6 +897,7 @@ def main() -> None:
                 "items": report.items,
                 "metrics": report.metrics,
                 "quality_gates": report.quality_gates,
+                "thresholds": report.thresholds,
                 "unmeasured": report.unmeasured,
                 "passed": report.passed,
             },
