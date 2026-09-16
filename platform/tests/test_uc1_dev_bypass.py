@@ -12,6 +12,7 @@ guards is how one of them ends up wrong.
 import importlib
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -31,6 +32,38 @@ def client() -> Any:
     from helpdesk_agent.api import app
 
     return TestClient(app)
+
+
+@contextmanager
+def empty_database() -> Iterator[None]:
+    """Answer the replay route's session dependency with a database holding nothing.
+
+    Every test in this file is about the *role*: whether the bypass gets a caller
+    past `enforce_replay`. What the database holds is not the question, and the
+    refusal tests never reach one at all -- the dependency raises before
+    `db_session` is entered, which is the property `test_uc1_replay.py` pins.
+
+    The one admitting test does reach it, and without this override it would open
+    a real engine from `DATABASE_URL`. That variable is set by `.env.stack` on a
+    developer's machine and by nothing in CI's unit job, so the test passed here
+    and failed there on a `KeyError` -- a unit test quietly requiring PostgreSQL.
+    An empty database gives the same answer a real empty one would (404, because
+    the session does not exist) without needing one to be running.
+    """
+    from helpdesk_agent.api import app, db_session
+
+    class EmptyDatabase:
+        async def get(self, *_: Any, **__: Any) -> None:
+            return None
+
+    async def override() -> Any:
+        yield EmptyDatabase()
+
+    app.dependency_overrides[db_session] = override
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(db_session, None)
 
 
 # --- refusing ------------------------------------------------------------------
@@ -133,7 +166,9 @@ def test_the_bypass_grants_replay_so_the_local_ui_can_render_it(
     monkeypatch.setenv("ENV", "dev")
     monkeypatch.setenv("AUTH__DEV_BYPASS", "true")
     # 404, not 403: the role was granted and the session genuinely does not exist.
-    assert client().get("/sessions/11111111-1111-4111-8111-111111111111/replay").status_code == 404
+    with empty_database():
+        response = client().get("/sessions/11111111-1111-4111-8111-111111111111/replay")
+    assert response.status_code == 404
 
 
 def test_narrowing_the_bypass_roles_narrows_what_it_can_do(
