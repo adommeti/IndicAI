@@ -544,6 +544,36 @@ async def counts(session: AsyncSession) -> dict[str, int]:
     return out
 
 
+def break_detail(summary: dict[str, Any]) -> str:
+    """Which chains broke, how big they are and why -- and nothing else.
+
+    The alert has to stay loud: "a person needs to look tonight" is the whole
+    reason the line exists, so the table names, the row counts and the reason
+    stay in it.
+
+    What comes out is `head_hash` and `first_break_id`. Those are precisely the
+    two fields `GET /audit/chain_status` refuses to project, and for reasons
+    that do not stop at the HTTP boundary: a head hash is the value the anchor
+    is compared against, so publishing it hands a would-be tamperer the target
+    to re-chain to, and `first_break_id` names a row in the evidence store.
+    Application logs are read by more people than that endpoint is, and they are
+    shipped off-box; withholding a field from the API and then writing it to the
+    log is the same exposure through a wider channel.
+
+    Dropping them is not the same as losing them. The reason string says which
+    of the three failures it was, and anyone with database access re-runs
+    `verify_chain` to get the seq and the id -- which is the access they need to
+    act on the break anyway.
+    """
+    broken = [table for table in summary["tables"] if not table["ok"]]
+    if not broken:  # `summarise` disagreeing with itself; say so rather than "".
+        return "no table reported a break"
+    return "; ".join(
+        f"{table['table']} ({table['rows']} rows: {table['reason'] or 'no reason recorded'})"
+        for table in broken
+    )
+
+
 def summarise(results: Sequence[ChainResult]) -> dict[str, Any]:
     """The shape the beat job logs and the metric is derived from."""
     broken = [r for r in results if not r.ok]
@@ -593,10 +623,20 @@ async def run_chain_verify(session_factory: Any, *, update_anchors: bool = True)
     if not summary["ok"]:
         # Loud, because a break means either a bug in the append path or
         # somebody with more privilege than the app editing the audit trail,
-        # and both need a person tonight.
-        log.error("uc3 audit chain broken: %s", summary)
+        # and both need a person tonight. Loud, but not a disclosure: see
+        # `break_detail`.
+        log.error(
+            "uc3 audit chain broken: %s of %s chains failed verification, %s rows checked: %s. "
+            "Row identifiers are withheld here -- run "
+            "`comms_surveillance.audit.verify_chain(session, <table>)` against the database "
+            "for the breaking seq and row id.",
+            summary["breaks"],
+            len(summary["tables"]),
+            summary["rows"],
+            break_detail(summary),
+        )
     else:
-        log.info("uc3 audit chain verified: %(rows)s rows, no breaks", summary)
+        log.info("uc3 audit chain verified: %s rows, no breaks", summary["rows"])
 
     summary["metric_emitted"] = emit_chain_metric(summary)
 

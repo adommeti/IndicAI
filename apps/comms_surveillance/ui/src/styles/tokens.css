@@ -58,6 +58,20 @@
   --sev-low: #37506b;
   --evidence: #8a5f00;
   --evidence-wash: #ffe9a8;
+
+  /* Panel tints, written out rather than produced with an opacity modifier:
+   * Tailwind cannot apply one to a bare `var()` colour -- `bg-danger/10` compiles
+   * to nothing at all and the panel silently loses its background and its edge,
+   * which reads as a deliberate flat design rather than as a bug. Same naming as
+   * uc1 (`apps/helpdesk_agent/ui/src/styles/tokens.css`) so the two packages stay
+   * legible side by side. Each wash is chosen so the matching ink on top of it
+   * still clears WCAG AA. */
+  --danger-wash: #fbe9e9;
+  --danger-edge: #d99b9b;
+  --warn-wash: #fbf0dc;
+  --warn-edge: #d8b877;
+  --ok-wash: #e6f4ec;
+  --ok-edge: #8ec4a8;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -80,6 +94,13 @@
     --sev-low: #9ec2e8;
     --evidence: #f0c765;
     --evidence-wash: #4a3a0e;
+
+    --danger-wash: #2f1a1a;
+    --danger-edge: #6d3a3a;
+    --warn-wash: #2c2413;
+    --warn-edge: #6a5626;
+    --ok-wash: #16281f;
+    --ok-edge: #2f5a44;
   }
 }
 

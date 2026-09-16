@@ -37,6 +37,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from indic_platform.adapters import budget
 from indic_platform.security.harden import new_canary, unwrap_quoted, wrap_untrusted
 from pydantic import BaseModel, Field
 
@@ -586,6 +587,27 @@ async def analyse(
     day: str | None = None,
 ) -> Analysis:
     """Stage 0 -> Stage 1 -> combine -> Stage 2 -> verify, for one call."""
+    # A call is uc3's unit of work, so it owns the spend scope: triage, deep analysis
+    # and the English rendering of every flag all charge to this call id and are
+    # refused together once they cross the per-session cap. Without it these calls
+    # charge "no session at all" (`AdapterRuntime.session()` returns None), and a
+    # single pathological transcript -- a very long call, or one escalating every
+    # segment -- is bounded only by the whole day's budget.
+    with budget.session_scope(call_id):
+        return await _analyse(
+            call_id, segments, lexicon=lexicon, client=client, settings=settings, day=day
+        )
+
+
+async def _analyse(
+    call_id: str,
+    segments: list[matcher.Segment],
+    *,
+    lexicon: matcher.Lexicon | None = None,
+    client: Any = None,
+    settings: DetectorSettings = SETTINGS,
+    day: str | None = None,
+) -> Analysis:
     lex = lexicon if lexicon is not None else matcher.load()
     text = transcript_text(segments)
     hits = lex.scan(segments)

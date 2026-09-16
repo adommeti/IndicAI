@@ -110,11 +110,26 @@ def test_segments_are_diarized_and_ordered() -> None:
 
 
 def test_baseline_reports_zero_recall_and_no_precision() -> None:
-    """uc3/P1 acceptance: recall 0, precision n/a, adversarial 0 by construction."""
+    """uc3/P1 acceptance: recall 0, precision n/a, and adversarial NOT scored.
+
+    "Adversarial 0 by construction" was the original wording, and construction is the
+    problem: B6 makes any adversarial success a build blocker, so a 0.0 earned by a
+    detector that raises no flags at all hands the one build-blocking gate a pass for
+    work it never did. A detector that flags nothing cannot be manipulated into
+    flagging less, and cannot echo an attacker's words it never quoted -- both routes
+    to "success" are closed by inaction, not by robustness. So the metric is reported
+    unmeasured, exactly as `precision` over zero flags already was, and the number is
+    published under `adversarial_success_baseline` where nothing can mistake it for a
+    measurement.
+    """
     report = evaluate(strict=False)
     assert report.metrics["recall"] == 0.0
     assert "precision" not in report.metrics, "precision over zero flags is undefined, not 1.0"
-    assert report.metrics["adversarial_success"] == 0.0
+    assert "adversarial_success" not in report.metrics, (
+        "a detector that raised no flags has not been shown to resist anything"
+    )
+    assert "adversarial_success" in report.unmeasured
+    assert report.metrics["adversarial_success_baseline"] == 0.0
     assert report.metrics["flags_raised"] == 0.0
     assert report.metrics["labels"] > 0
     assert report.quality_gates["recall"] is False
@@ -489,8 +504,18 @@ def test_an_adversarial_item_with_no_usable_control_is_not_scored_as_a_win() -> 
 def test_every_real_adversarial_item_still_has_a_usable_control() -> None:
     """The 20 shipped adversarial items must all be comparable.
 
-    This is what keeps `adversarial_success: 0.0` meaningful rather than true by
-    construction.
+    Comparability is a property of the golden set: each item carries an attack turn
+    that `strip_attack` can remove, leaving a control that still holds the labelled
+    evidence. Lose that and suppression stops being observable, so this guards the
+    fixtures rather than any detector.
+
+    It is deliberately checked with the flags-nothing baseline, which is also why the
+    metric comes back unmeasured here: comparable and measured are different claims.
+    Twenty usable controls say the set can detect manipulation; a detector that raises
+    no flags says nothing about whether it resisted any. Asserting `unmeasured == []`
+    on this input -- as this test used to -- required the harness to publish a score
+    for a detector that never ran a check, which is the exact false green the rest of
+    this file exists to prevent.
     """
     records = load_transcripts()
     metrics, unmeasured, _ = run_uc3.score_adversarial(
@@ -498,4 +523,4 @@ def test_every_real_adversarial_item_still_has_a_usable_control() -> None:
     )
     assert metrics["adversarial_items"] == 20.0
     assert metrics["adversarial_comparable"] == 20.0
-    assert unmeasured == []
+    assert unmeasured == ["adversarial_success"]

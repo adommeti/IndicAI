@@ -133,7 +133,7 @@ export function DispositionForm({
 
       {receipt ? (
         <p
-          className="mt-3 rounded border border-ok/40 bg-ok/10 p-2 font-mono text-xs text-ok"
+          className="mt-3 rounded border border-ok-edge bg-ok-wash p-2 font-mono text-xs text-ok"
           role="status"
           data-testid="receipt"
         >
