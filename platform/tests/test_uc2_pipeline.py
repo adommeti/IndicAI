@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 import yaml
+from indic_platform.config.settings import anthropic_api_key
 from indic_platform.eval.runners.run_uc2 import load_segments, load_terminology
 from indic_platform.eval.runners.run_uc2 import mentions as runner_mentions
 from training_localizer import stages
@@ -631,7 +632,7 @@ async def test_live_one_segment_through_translate_and_post_edit() -> None:
     assert any("ऀ" <= ch <= "ॿ" for ch in translated), "Devanagari output"
 
     structured = None
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if anthropic_api_key():
         from indic_platform.adapters.claude import Claude
 
         claude = Claude()

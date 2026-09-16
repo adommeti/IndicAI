@@ -29,9 +29,9 @@ demo this to anyone.
 | `uv`, Python 3.12 | the agent side | `uv run python -V` |
 | A microphone and Chrome or Firefox | you are the employee in this demo | |
 | `SARVAM_API_KEY` | Saaras STT and Bulbul TTS — **this costs money**, see step 2 | |
-| `ANTHROPIC_API_KEY` | `helpdesk_agent.graph:decide` produces the reply | |
+| `INDICAI_ANTHROPIC_API_KEY` (or `ANTHROPIC_API_KEY`) | `helpdesk_agent.graph:decide` produces the reply | `INDICAI_ANTHROPIC_API_KEY` is read first and `ANTHROPIC_API_KEY` second (`platform/config/settings.py`): inside a Claude Code session the second name belongs to the agent harness and is stripped. |
 
-Without `ANTHROPIC_API_KEY` there is no reply to speak, and the failure you see will be a
+Without an Anthropic key there is no reply to speak, and the failure you see will be a
 Claude failure, not the STT-failure path in step 6. Without `SARVAM_API_KEY` nothing is
 transcribed at all.
 
@@ -99,7 +99,7 @@ Vendor keys live in `.env`, not in `.env.stack` and never in the repo:
 
 ```
 SARVAM_API_KEY=...        # Saaras (STT) and Bulbul (TTS)
-ANTHROPIC_API_KEY=...     # graph.decide
+INDICAI_ANTHROPIC_API_KEY=...   # graph.decide (or ANTHROPIC_API_KEY outside a Claude Code session)
 LIVEKIT_URL=ws://localhost:7880
 ```
 
@@ -400,7 +400,7 @@ Other failures and how they differ:
 |---|---|
 | No audio at all, no data messages, agent stdout quiet | the browser never joined: token expired, wrong room name, or `ws://localhost:7880` not up (`make stack-status`) |
 | Joined, mic live, no partials | the agent is not in the room, or is in a different room |
-| Partials fine, no reply | `ANTHROPIC_API_KEY` missing or `decide` failing — check agent stdout; this is not the chat-mode path |
+| Partials fine, no reply | Anthropic key missing or `decide` failing — check agent stdout; this is not the chat-mode path |
 | Reply text appears but no audio | Bulbul leg — check the `adapter_calls` row for `bulbul:v3` |
 | Chat-mode data message | the intended STT-failure path, above |
 

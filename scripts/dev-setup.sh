@@ -10,4 +10,4 @@ git config --local commit.gpgsign false
 [ -f .env.stack ] || python3 infra/bootstrap.py
 uv sync --frozen --all-packages
 uv run pre-commit install >/dev/null 2>&1 || true
-echo "dev-setup: done. Fill SARVAM_API_KEY / ANTHROPIC_API_KEY in .env, then: make stack-core && make check"
+echo "dev-setup: done. Fill SARVAM_API_KEY and an Anthropic key (INDICAI_ANTHROPIC_API_KEY, or ANTHROPIC_API_KEY outside a Claude Code session) in .env, then: make stack-core && make check"

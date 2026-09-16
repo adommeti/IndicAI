@@ -46,7 +46,11 @@ AHEAD="$(git rev-list --count "origin/$BASE..HEAD" 2>/dev/null || echo 0)"
 DIRTY="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 KEYS=""
 [ -n "${SARVAM_API_KEY:-}" ] && KEYS="$KEYS SARVAM_API_KEY" || KEYS="$KEYS !SARVAM_API_KEY"
-[ -n "${ANTHROPIC_API_KEY:-}" ] && KEYS="$KEYS ANTHROPIC_API_KEY" || KEYS="$KEYS !ANTHROPIC_API_KEY"
+# Either name counts. ANTHROPIC_API_KEY is stripped inside a Claude Code session
+# (the harness owns it), so reporting only that one made a configured key look absent.
+if [ -n "${INDICAI_ANTHROPIC_API_KEY:-}" ]; then KEYS="$KEYS INDICAI_ANTHROPIC_API_KEY"
+elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then KEYS="$KEYS ANTHROPIC_API_KEY"
+else KEYS="$KEYS !ANTHROPIC_API_KEY"; fi
 ACTIVE=""
 [ -f "$STATE_DIR/active-prompt" ] && ACTIVE="$(cat "$STATE_DIR/active-prompt")"
 

@@ -9,7 +9,7 @@ Two entry points, named for exactly what they run, because the difference shows
 up in the metrics and a report must not blur it:
 
   `full`                  adapt (Claude) -> translate (Mayura) -> post_edit
-                          (Claude + enforcement). Needs ANTHROPIC_API_KEY and
+                          (Claude + enforcement). Needs an Anthropic key and
                           SARVAM_API_KEY.
   `translate_and_enforce` translate (Mayura) -> post_edit (enforcement only).
                           Needs SARVAM_API_KEY. No adapt, so nothing compresses
@@ -26,6 +26,8 @@ and re-run adapt, which is a per-module call, once for every segment in it.
 import asyncio
 import os
 from typing import Any, Protocol
+
+from indic_platform.config.settings import anthropic_api_key
 
 from training_localizer import stages
 from training_localizer.stages import SourceSegment
@@ -177,9 +179,10 @@ def full(segment: RunnerSegment, language: str) -> str:
     """adapt -> translate -> post_edit, every stage as shipped."""
     global _full
     if _full is None:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
+        if not anthropic_api_key():
             raise RuntimeError(
-                "eval_hook:full needs ANTHROPIC_API_KEY for adapt and post_edit. "
+                "eval_hook:full needs an Anthropic key (INDICAI_ANTHROPIC_API_KEY, or "
+                "ANTHROPIC_API_KEY outside a Claude Code session) for adapt and post_edit. "
                 "Use eval_hook:translate_and_enforce to measure the Sarvam-only path."
             )
         _full = Localizer(use_claude=True)
