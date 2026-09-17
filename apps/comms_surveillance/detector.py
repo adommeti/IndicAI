@@ -454,7 +454,27 @@ def transcript_text(segments: list[matcher.Segment]) -> str:
     return "\n".join(s.text for s in segments)
 
 
-@lru_cache(maxsize=1)
+#: The cached adapter, the event loop its connection pool belongs to, and the redactor
+#: it was built with. The loop is held by reference rather than by `id()`: `asyncio.run`
+#: frees its loop on return, CPython reuses the address, and a key built from `id()`
+#: therefore reports a brand-new loop as the old one -- which is the very bug below,
+#: reintroduced by its own fix. Holding the object guarantees a new loop is a new
+#: identity. One closed loop object is the entire cost.
+_ADAPTER: Any = None
+_ADAPTER_LOOP: Any = None
+_ADAPTER_REDACTOR: Any = None
+
+
+def _current_loop() -> Any:
+    """The running event loop, or None when called synchronously."""
+    import asyncio
+
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 def claude(redactor: Any = None) -> Any:
     """A Claude adapter with redaction off, as PRD E9 requires for this app.
 
@@ -463,13 +483,57 @@ def claude(redactor: Any = None) -> Any:
     documented override in `apps/comms_surveillance/README.md`; redaction stays
     on for everything that reaches a log or a trace, which is the platform
     default everywhere else.
+
+    ## Why this is not an `lru_cache`
+
+    It was one, and that is wrong for an async client. `AsyncAnthropic` owns an httpx
+    connection pool whose sockets are registered with the event loop that first used
+    them, so a cached instance is usable only from that loop. `detect` -- the eval's
+    entry point -- calls `asyncio.run` once per transcript, creating a fresh loop each
+    time and closing the previous one. The first transcript succeeded and the second
+    raised `RuntimeError: Event loop is closed`, which the SDK re-raised as
+    `APIConnectionError: Connection error.`: a network error for what was really a
+    lifetime bug, on a run that had already spent money.
+
+    No single-call test could catch it, because one call is one loop. It took the first
+    live 200-item eval to surface -- which is why it sat here undetected for as long as
+    the key needed to run that eval was itself blocked by a name collision.
+
+    Rebuilding on a loop change, rather than keeping one adapter per loop, holds a
+    single live client: a 200-item eval would otherwise accumulate 200, each with
+    sockets against a loop that no longer exists.
     """
+    global _ADAPTER, _ADAPTER_LOOP, _ADAPTER_REDACTOR
     from indic_platform.adapters.claude import Claude
 
-    return Claude(
-        redactor=redactor or (lambda text: text),
-        wrapper=lambda text: wrap_untrusted(text, "transcript"),
+    loop = _current_loop()
+    stale = (
+        _ADAPTER is None
+        or _ADAPTER_LOOP is not loop
+        or _ADAPTER_REDACTOR is not redactor
+        or (loop is not None and loop.is_closed())
     )
+    if stale:
+        _ADAPTER = Claude(
+            redactor=redactor or (lambda text: text),
+            wrapper=lambda text: wrap_untrusted(text, "transcript"),
+        )
+        _ADAPTER_LOOP = loop
+        _ADAPTER_REDACTOR = redactor
+    return _ADAPTER
+
+
+def _clear_adapter() -> None:
+    """Drop the cached adapter. Kept as `claude.cache_clear` for callers."""
+    global _ADAPTER, _ADAPTER_LOOP, _ADAPTER_REDACTOR
+    _ADAPTER = None
+    _ADAPTER_LOOP = None
+    _ADAPTER_REDACTOR = None
+
+
+# Preserves the surface the `lru_cache` gave this function, so tests and any
+# caller that resets the adapter keep working unchanged.
+claude.cache_clear = _clear_adapter  # type: ignore[attr-defined]
 
 
 async def triage(text: str, *, client: Any = None, settings: DetectorSettings = SETTINGS) -> Triage:
