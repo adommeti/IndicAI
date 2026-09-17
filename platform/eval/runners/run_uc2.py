@@ -30,7 +30,6 @@ a floor under the baseline and hide a broken check.
 """
 
 import argparse
-import asyncio
 import importlib
 import json
 from collections.abc import Callable
@@ -38,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from indic_platform.eval.aio import LoopRunner, close_batch
 from indic_platform.eval.report import Report
 from indic_platform.text import mentions
 from pydantic import BaseModel, Field
@@ -394,6 +394,10 @@ def claude_judge(model: str, client: Any | None = None) -> Judge:
     back_prompt = prompt_body(prompts / "uc2_backtranslate.md")
     judge_prompt = prompt_body(prompts / "uc2_qa_judge.md")
     sut = client if client is not None else Claude()
+    # One loop for all 180 calls. `asyncio.run` per reference closed the loop that
+    # `sut`'s connection pool was bound to, so reference 2 failed with an
+    # APIConnectionError wrapping "Event loop is closed". See platform/eval/aio.py.
+    runner = LoopRunner()
 
     def judge(source: str, produced: str, language: str) -> FidelityVerdict:
         async def run() -> FidelityVerdict:
@@ -410,8 +414,9 @@ def claude_judge(model: str, client: Any | None = None) -> Judge:
                 model=model,
             )
 
-        return asyncio.run(run())
+        return runner.run(run())
 
+    judge.close = runner.close  # type: ignore[attr-defined]
     return judge
 
 
@@ -688,14 +693,19 @@ def main() -> None:
     if args.live and args.translate:
         print(estimate_pipeline_cost(load_segments(), LANGUAGES))
 
-    report = evaluate(
-        translate=translate,
-        judge=judge,
-        strict=not args.baseline,
-        fidelity_source=args.fidelity_source,
-        sut=args.translate or "baseline (untranslated source)",
-        pre_edit=pre_edit,
-    )
+    try:
+        report = evaluate(
+            translate=translate,
+            judge=judge,
+            strict=not args.baseline,
+            fidelity_source=args.fidelity_source,
+            sut=args.translate or "baseline (untranslated source)",
+            pre_edit=pre_edit,
+        )
+    finally:
+        # The judge owns an event loop once it is the live one; a run that raises
+        # part-way through the batch must still give it back.
+        close_batch(judge)
     report.write(args.output)
     print(
         json.dumps(

@@ -22,7 +22,7 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc1 | P6 | partial | uc1/P5 | React widget, replay endpoint, Grafana dashboard | S,C,K | widget, governance-gated replay and the dashboard built; Grafana provisioning wired for the first time (no dashboard here had ever been loaded). Chrome end-to-end and "dashboard renders" are UNMEASURED (no browser, no Docker); no LiveKit token endpoint exists. Run after uc1/P7 at the user's request. See BLOCKERS |
 | uc1 | P7 | partial | uc1/P6 | Security + retention + spend caps; docs/security/uc1-review.md | S,C | redaction proven on the wire and a 4-3-3 mobile leak fixed; spend caps, retention sweep and the CI policy gate in place. F4 is not all green: the DPA gate is unpassed, retention has never been scheduled, the audio policy matches nothing, and CI gates the adversarial threshold but not agent quality. Run before uc1/P6 at the user's request. See BLOCKERS |
 | uc2 | P0-spike | partial | program/P0 | Vendor contract spike → docs/adr/0003 | L | see docs/build/BLOCKERS.md |
-| uc2 | P1 | done | uc2/P0-spike | Terminology files, golden set, eval runner | S,L | pending PR |
+| uc2 | P1 | done | uc2/P0-spike | Terminology files, golden set, eval runner | S,L | judge measured live 2026-09-17: fidelity 4.56 over 90 draft references (8 below 4, listed in the golden README). This is a draft-reference number, not the B6 product gate |
 | uc2 | P2 | partial | uc2/P1 | Celery pipeline: adapt → translate → post_edit → QA → quiz | S,C,K,L | see docs/build/BLOCKERS.md |
 | uc2 | P3 | partial | uc2/P2 | Reviewer UI with LOCKED enforcement | S,C | see docs/build/BLOCKERS.md |
 | uc2 | P4 | partial | uc2/P3 | Production: dubbing, TTS, VTT, packaging | S,K,L | see docs/build/BLOCKERS.md |

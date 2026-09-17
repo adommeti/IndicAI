@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from indic_platform.eval.aio import LoopRunner, close_batch
 from indic_platform.eval.report import THRESHOLDS, Report, Thresholds
 from pydantic import BaseModel, Field
 
@@ -811,11 +812,15 @@ def evaluate(
 
 def saaras_diarizer() -> Callable[[str, str], list[dict[str, Any]]]:
     """Real Saaras batch diarization, for `--diarize`."""
-    import asyncio
-
     from indic_platform.adapters.sarvam_stt import SarvamSTT
 
     stt = SarvamSTT()
+    # One loop for all 20 audio items, for the reason in platform/eval/aio.py:
+    # `stt`'s connection pool binds to the first loop that drives it, and
+    # `asyncio.run` per item would close that loop under item 2. This path has
+    # never run (the Saaras upload host is off the network allowlist -- see
+    # docs/build/BLOCKERS.md), so the defect here is latent rather than observed.
+    runner = LoopRunner()
 
     def transcribe(path: str, language: str) -> list[dict[str, Any]]:
         async def run() -> list[dict[str, Any]]:
@@ -830,8 +835,9 @@ def saaras_diarizer() -> Callable[[str, str], list[dict[str, Any]]]:
                 for s in produced
             ]
 
-        return asyncio.run(run())
+        return runner.run(run())
 
+    transcribe.close = runner.close  # type: ignore[attr-defined]
     return transcribe
 
 
@@ -890,13 +896,17 @@ def main() -> None:
         transcribe = saaras_diarizer()
 
     gate = Thresholds.load(args.thresholds, app=args.gates) if args.thresholds else None
-    report = evaluate(
-        detect=detect,
-        strict=not args.baseline,
-        transcribe=transcribe,
-        sut=args.detect or "baseline (flags nothing)",
-        thresholds=gate,
-    )
+    try:
+        report = evaluate(
+            detect=detect,
+            strict=not args.baseline,
+            transcribe=transcribe,
+            sut=args.detect or "baseline (flags nothing)",
+            thresholds=gate,
+        )
+    finally:
+        # Give the diarizer's loop back even if the batch raised part-way.
+        close_batch(transcribe)
     report.write(args.output)
     print(
         json.dumps(
