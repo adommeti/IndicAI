@@ -99,3 +99,48 @@ Measured against the timing table in `platform/config/timing.yaml`, the draft
 ±15%. That is the harness working: it says the `adapt` stage in PRD D7 — which is
 told to shorten wording rather than meaning when a segment is too dense — is
 load-bearing for UC2, not optional polish. `uc2/P2` should expect to compress.
+
+## Reviewer worklist: the 8 draft references the judge doubts
+
+The references here are DRAFT placeholders awaiting a human reviewer. Running the
+D7 back-translation judge against them (`run_uc2 --live`, 90 references, 180
+`claude-haiku-4-5` calls, ~Rs 27 estimated) puts a number on which drafts to look
+at first rather than leaving a reviewer to read all 90. It reports
+**`fidelity_mean_references` 4.56 / 5** over 90 references; 8 scored below 4. Two
+independent runs produced identical scores on all 90 (temperature 0):
+
+| module | seg | language | score | what the back-translation lost or changed |
+|---|---|---|---|---|
+| comp-201 | 3 | ta-IN | 1 | "Material non-public" came back as "Non-material public" — the obligation is reversed |
+| comp-201 | 1 | te-IN | 1 | "insider trading" came back as "benefits of internal trade" — a prohibition read as a benefit |
+| comp-201 | 1 | ta-IN | 2 | "insider trading" → "internal trade"; "market conduct" lost its regulatory register |
+| comp-201 | 4 | ta-IN | 2 | "press release" → "newspaper publication"; "material" lost its defined sense |
+| comp-201 | 6 | ta-IN | 2 | "passing it on" → "smuggling it" — neutral description of tipping turned criminal |
+| comp-201 | 8 | ta-IN | 2 | the same-day duty to report to Compliance weakened to merely notifying |
+| comp-201 | 3 | te-IN | 2 | "Material non-public information" → "non-private information" |
+| sec-102 | 7 | ta-IN | 3 | lost that pasting into Teams is data *leaving* an approved system |
+
+Two things this says, and one it does not.
+
+**It says the drafts are weakest exactly where the cost of being wrong is
+highest.** Seven of eight are `comp-201`, the compliance module, and the two
+score-1 rows invert a regulatory obligation rather than merely blurring it. A
+reader of the Tamil or Telugu draft would come away with the opposite duty.
+
+**It says ta-IN needs the most reviewer time** — six of eight rows, against two
+for te-IN and none for hi-IN.
+
+**It does not say UC2 meets the B6 fidelity gate**, and the runner no longer
+lets anyone read it that way. This judges the draft *references*, which is what
+the P1 prompt asks for ("implement the judge now against the reference
+translations"). The B6 gate is about what the pipeline produces, which is
+`--fidelity-source sut` and belongs to `uc2/P2`.
+
+That distinction used to live only in prose like this paragraph, while
+`docs/eval/uc2.json` published the same number under the gate's own key and
+emitted `quality_gates.fidelity_mean: true` — a B6 PASS for UC2 that nothing
+about UC2 had earned, and exactly the placeholder passing score
+`.claude/rules/eval.md` forbids. The references number now has its own key and
+`fidelity_mean` is reported `unmeasured` with its reason, so the two cannot be
+confused by a machine reader either
+(`test_fidelity_against_references_is_not_reported_as_the_b6_gate`).

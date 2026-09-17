@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
+from indic_platform.eval.aio import close_batch
 from indic_platform.eval.runners import run_uc3
 from indic_platform.eval.runners.run_uc3 import (
     CATEGORIES,
@@ -524,3 +525,23 @@ def test_every_real_adversarial_item_still_has_a_usable_control() -> None:
     assert metrics["adversarial_items"] == 20.0
     assert metrics["adversarial_comparable"] == 20.0
     assert unmeasured == ["adversarial_success"]
+
+
+def test_saaras_diarizer_attaches_its_loop_for_closing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The uc3 twin of the uc2 wiring test.
+
+    `saaras_diarizer` reuses one `SarvamSTT` across every audio item, so it must
+    drive them on one loop and hand that loop back. `close_batch` no-ops on a
+    callable without a `close`, so dropping the attachment would be invisible.
+    This path has never run live (the Saaras upload host is off the network
+    allowlist), which is exactly why it needs a test that does not need the
+    network.
+    """
+    from indic_platform.adapters import sarvam_stt
+
+    monkeypatch.setattr(sarvam_stt, "SarvamSTT", lambda *a, **k: object())
+    transcribe = run_uc3.saaras_diarizer()
+    try:
+        assert callable(getattr(transcribe, "close", None)), "must carry its loop"
+    finally:
+        close_batch(transcribe)

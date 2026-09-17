@@ -4,11 +4,16 @@ Measures four things over the `uc2_training` golden set:
 
   terminology_adherence  exact match against the target-language obligations —
                          approved glossary renderings and LOCKED statements.
-  fidelity_mean          back-translation fidelity 1-5 from a judge (D7). At P1
-                         the judge scores the reference translations themselves
-                         (`--fidelity-source references`, the default), because
-                         there is no pipeline yet; uc2/P2 points it at the
-                         translator with `--fidelity-source sut`.
+  fidelity_mean          back-translation fidelity 1-5 from a judge (D7), and
+                         the B6 gate. Only `--fidelity-source sut` produces it,
+                         because B6 asks about the system. At P1 there is no
+                         pipeline, so the default `--fidelity-source references`
+                         judges the reference translations instead and publishes
+                         that under `fidelity_mean_references`, leaving
+                         `fidelity_mean` unmeasured with its reason. The two are
+                         separate keys on purpose: a reader of docs/eval/uc2.json
+                         must not be able to mistake a number about draft golden
+                         data for a number about UC2.
   timing_fit_rate        estimated spoken length within tolerance of the segment
                          duration, from characters-per-second per language.
   quiz_validity          structural checks on the reference quiz items.
@@ -30,7 +35,6 @@ a floor under the baseline and hide a broken check.
 """
 
 import argparse
-import asyncio
 import importlib
 import json
 from collections.abc import Callable
@@ -38,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from indic_platform.eval.aio import LoopRunner, close_batch
 from indic_platform.eval.report import Report
 from indic_platform.text import mentions
 from pydantic import BaseModel, Field
@@ -356,12 +361,19 @@ def score_fidelity(
                     "lost_or_changed": verdict.lost_or_changed,
                 }
             )
+    # `fidelity_mean` is the B6 gate and B6 asks about the SYSTEM. Judging
+    # `source="references"` scores the golden data instead -- at P1 those are
+    # draft placeholders -- so that number gets its own key and the B6 metric is
+    # reported unmeasured. Publishing it as `fidelity_mean` put
+    # `quality_gates.fidelity_mean: true` into docs/eval/uc2.json off draft text,
+    # which is the placeholder passing score .claude/rules/eval.md forbids.
+    key = "fidelity_mean" if source == "sut" else "fidelity_mean_references"
     return (
         {
-            "fidelity_mean": sum(scores) / len(scores),
+            key: sum(scores) / len(scores),
             "fidelity_items": float(len(scores)),
         },
-        [],
+        [] if source == "sut" else ["fidelity_mean"],
         details,
     )
 
@@ -394,6 +406,11 @@ def claude_judge(model: str, client: Any | None = None) -> Judge:
     back_prompt = prompt_body(prompts / "uc2_backtranslate.md")
     judge_prompt = prompt_body(prompts / "uc2_qa_judge.md")
     sut = client if client is not None else Claude()
+    # One loop for the whole batch (2 calls per reference). `asyncio.run` per
+    # reference closed the loop that `sut`'s connection pool was bound to, so
+    # reference 2 failed with an APIConnectionError wrapping "Event loop is
+    # closed". See platform/eval/aio.py.
+    runner = LoopRunner()
 
     def judge(source: str, produced: str, language: str) -> FidelityVerdict:
         async def run() -> FidelityVerdict:
@@ -410,8 +427,9 @@ def claude_judge(model: str, client: Any | None = None) -> Judge:
                 model=model,
             )
 
-        return asyncio.run(run())
+        return runner.run(run())
 
+    judge.close = runner.close  # type: ignore[attr-defined]
     return judge
 
 
@@ -496,7 +514,16 @@ def evaluate(
             {
                 "check": "unmeasured",
                 "metric": "fidelity_mean",
-                "reason": "no judge injected; pass --judge (needs an Anthropic key)",
+                "reason": (
+                    "no judge injected; pass --live (needs an Anthropic key)"
+                    if judge is None
+                    else (
+                        "the judge scored the reference translations, not the system under "
+                        "test, so this run measures the golden data and not UC2. The number "
+                        "is reported as fidelity_mean_references; the B6 gate needs "
+                        "--fidelity-source sut"
+                    )
+                ),
             },
         )
 
@@ -688,14 +715,19 @@ def main() -> None:
     if args.live and args.translate:
         print(estimate_pipeline_cost(load_segments(), LANGUAGES))
 
-    report = evaluate(
-        translate=translate,
-        judge=judge,
-        strict=not args.baseline,
-        fidelity_source=args.fidelity_source,
-        sut=args.translate or "baseline (untranslated source)",
-        pre_edit=pre_edit,
-    )
+    try:
+        report = evaluate(
+            translate=translate,
+            judge=judge,
+            strict=not args.baseline,
+            fidelity_source=args.fidelity_source,
+            sut=args.translate or "baseline (untranslated source)",
+            pre_edit=pre_edit,
+        )
+    finally:
+        # The judge owns an event loop once it is the live one; a run that raises
+        # part-way through the batch must still give it back.
+        close_batch(judge)
     report.write(args.output)
     print(
         json.dumps(
