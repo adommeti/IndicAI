@@ -7,7 +7,9 @@ it fails against a judge built on `asyncio.run` per item.
 """
 
 import asyncio
+import warnings
 
+import pytest
 from indic_platform.eval.aio import LoopRunner, close_batch
 
 
@@ -29,7 +31,7 @@ def test_runner_reuses_one_loop_across_calls() -> None:
 
 
 def test_pool_bound_to_first_loop_survives_the_batch() -> None:
-    """A client bound to the first loop must still work on call 90.
+    """A client bound to the first loop must still work on every later call.
 
     This models what `AsyncAnthropic` does: the connection pool captures the
     running loop the first time it is driven and raises if that loop is later
@@ -50,9 +52,6 @@ def test_pool_bound_to_first_loop_survives_the_batch() -> None:
             self.calls += 1
             return self.calls
 
-        async def aclose(self) -> None:
-            return None
-
     client = PoolBoundClient()
     runner = LoopRunner()
     try:
@@ -67,18 +66,31 @@ def test_close_is_idempotent_and_safe_when_unused() -> None:
     unused = LoopRunner()
     unused.close()
     unused.close()
+    assert unused._loop is None
 
     used = LoopRunner()
+    seen: list[asyncio.AbstractEventLoop] = []
 
-    async def noop() -> None:
-        return None
+    async def record() -> None:
+        seen.append(asyncio.get_running_loop())
 
-    used.run(noop())
+    used.run(record())
+    loop = seen[0]  # held, so the assertion cannot be fooled by a reused address
+    assert not loop.is_closed()
     used.close()
+    assert loop.is_closed()
+    assert used._loop is None
     used.close()
+    assert loop.is_closed()
 
 
-def test_runner_reopens_after_close() -> None:
+def test_closed_runner_refuses_to_open_a_second_loop() -> None:
+    """Reopening would recreate the very defect this class prevents.
+
+    A vendor client's pool stays bound to the first loop, so a quietly-created
+    second loop hands the caller `Event loop is closed` again -- from the object
+    that was supposed to stop it. Refusing is the honest behaviour.
+    """
     runner = LoopRunner()
 
     async def noop() -> None:
@@ -86,8 +98,57 @@ def test_runner_reopens_after_close() -> None:
 
     runner.run(noop())
     runner.close()
-    runner.run(noop())  # must not raise "Event loop is closed"
+    with pytest.raises(RuntimeError, match="closed"):
+        runner.run(noop())
+
+
+def test_a_refused_run_does_not_leak_its_coroutine() -> None:
+    """The refusal must close the coroutine it declined, or Python warns
+    'coroutine was never awaited' and the caller sees a confusing second error."""
+    runner = LoopRunner()
     runner.close()
+
+    async def noop() -> None:
+        return None
+
+    coro = noop()
+    with pytest.raises(RuntimeError):
+        runner.run(coro)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        del coro  # a still-pending coroutine would raise RuntimeWarning here
+
+
+def test_close_cancels_work_the_batch_left_running() -> None:
+    """`asyncio.run` cancels pending tasks; a reused loop must do it too, or a
+    batch that raised part-way leaves a task pending on a loop being closed."""
+    runner = LoopRunner()
+    started = asyncio.Event()
+    task: list[asyncio.Task[None]] = []
+
+    async def forever() -> None:
+        started.set()
+        await asyncio.sleep(3600)
+
+    async def spawn() -> None:
+        task.append(asyncio.create_task(forever()))
+        await started.wait()
+
+    runner.run(spawn())
+    assert not task[0].done(), "the task outlives the coroutine that spawned it"
+    runner.close()
+    assert task[0].cancelled() or task[0].done()
+
+
+def test_context_manager_closes_on_the_way_out() -> None:
+    seen: list[asyncio.AbstractEventLoop] = []
+
+    async def record() -> None:
+        seen.append(asyncio.get_running_loop())
+
+    with LoopRunner() as runner:
+        runner.run(record())
+    assert seen[0].is_closed()
 
 
 def test_close_batch_ignores_a_callable_without_a_loop() -> None:
@@ -96,8 +157,20 @@ def test_close_batch_ignores_a_callable_without_a_loop() -> None:
     def stub_judge(source: str, produced: str, language: str) -> str:
         return "fine"
 
-    close_batch(stub_judge)
+    close_batch(stub_judge)  # must not raise
     close_batch(None)
+    assert stub_judge("a", "b", "hi-IN") == "fine", "the stub is untouched"
+
+
+def test_close_batch_calls_a_carried_close_exactly_once() -> None:
+    calls: list[int] = []
+
+    def judge() -> None:
+        return None
+
+    judge.close = lambda: calls.append(1)  # type: ignore[attr-defined]
+    close_batch(judge)
+    assert calls == [1]
 
 
 def test_close_batch_closes_a_callable_that_carries_one() -> None:

@@ -7,6 +7,7 @@ proves the terminology check discriminates rather than passing everything.
 
 import pytest
 import yaml
+from indic_platform.eval.aio import close_batch
 from indic_platform.eval.runners import run_uc2
 from indic_platform.eval.runners.run_uc2 import (
     FidelityVerdict,
@@ -304,7 +305,10 @@ def test_claude_judge_runs_both_d7_legs_against_a_mocked_adapter() -> None:
     """Regression: `claude_judge` must be constructible and callable, not dead code."""
     fake = FakeClaude()
     judge = run_uc2.claude_judge("claude-haiku-4-5", client=fake)
-    verdict = judge("Report phishing within 24 hours.", "24 घंटे के भीतर सूचित करें।", "hi-IN")
+    try:
+        verdict = judge("Report phishing within 24 hours.", "24 घंटे के भीतर सूचित करें।", "hi-IN")
+    finally:
+        close_batch(judge)
 
     assert verdict.score == 4
     assert len(fake.calls) == 2, "backtranslate then judge"
@@ -322,7 +326,11 @@ def test_judge_legs_go_through_the_temperature_zero_adapter_path() -> None:
     """Both rubrics declare temperature 0; `structured` is the adapter call that
     sets it, so the judge must not reach for `stream_text`."""
     fake = FakeClaude()
-    run_uc2.claude_judge("claude-haiku-4-5", client=fake)("Source text.", "लक्ष्य पाठ।", "hi-IN")
+    judge = run_uc2.claude_judge("claude-haiku-4-5", client=fake)
+    try:
+        judge("Source text.", "लक्ष्य पाठ।", "hi-IN")
+    finally:
+        close_batch(judge)
     assert not hasattr(fake, "stream_text_called")
     for call in fake.calls:
         assert call["system"], "system prompt is the cached, versioned rubric"
@@ -460,3 +468,51 @@ def test_pre_edit_adherence_is_the_number_that_can_fail() -> None:
 def test_pre_edit_metrics_are_absent_unless_asked_for() -> None:
     report = evaluate(strict=False)
     assert "terminology_adherence_pre_edit" not in report.metrics
+
+
+def test_claude_judge_attaches_its_loop_for_closing() -> None:
+    """`close_batch` no-ops on a callable with no `close`, so without this test
+    dropping `judge.close = runner.close` in run_uc2 would leak an event loop per
+    batch with the whole suite still green."""
+    judge = run_uc2.claude_judge("claude-haiku-4-5", client=FakeClaude())
+    try:
+        assert callable(getattr(judge, "close", None)), "the judge must carry its loop"
+    finally:
+        close_batch(judge)
+
+
+def test_fidelity_against_references_is_not_reported_as_the_b6_gate() -> None:
+    """eval.md: never emit a placeholder passing score.
+
+    `--fidelity-source references` scores the golden data, which at P1 is draft
+    placeholder text. Publishing that as `fidelity_mean` put
+    `quality_gates.fidelity_mean: true` into docs/eval/uc2.json off draft
+    translations -- a B6 PASS for UC2 that nothing about UC2 had earned.
+    """
+
+    def judge(source: str, produced: str, language: str) -> FidelityVerdict:
+        return FidelityVerdict(score=5, reason="stub")
+
+    report = evaluate(judge=judge, strict=False)  # default source: references
+    assert report.metrics["fidelity_mean_references"] == 5.0, "the number is still reported"
+    assert report.metrics["fidelity_items"] == 90
+    assert "fidelity_mean" not in report.metrics
+    assert "fidelity_mean" not in report.quality_gates, "B6 gate must not fire on golden data"
+    assert "fidelity_mean" in report.unmeasured
+    reason = next(
+        d["reason"]
+        for d in report.details
+        if d["check"] == "unmeasured" and d["metric"] == "fidelity_mean"
+    )
+    assert "sut" in str(reason), "the reason must say how to actually measure it"
+
+
+def test_strict_reference_run_cannot_pass_on_fidelity_alone() -> None:
+    """The failure mode in full: a strict run whose only good number came from
+    judging draft references must not report a B6 fidelity pass."""
+
+    def judge(source: str, produced: str, language: str) -> FidelityVerdict:
+        return FidelityVerdict(score=5, reason="stub")
+
+    report = evaluate(judge=judge, strict=True)
+    assert not any(gate.startswith("b6:fidelity_mean") for gate in report.gates)

@@ -104,9 +104,10 @@ load-bearing for UC2, not optional polish. `uc2/P2` should expect to compress.
 
 The references here are DRAFT placeholders awaiting a human reviewer. Running the
 D7 back-translation judge against them (`run_uc2 --live`, 90 references, 180
-`claude-haiku-4-5` calls, ~Rs 27) puts a number on which drafts to look at first
-rather than leaving a reviewer to read all 90. Mean fidelity **4.56 / 5** over 90
-references; 8 scored below 4:
+`claude-haiku-4-5` calls, ~Rs 27 estimated) puts a number on which drafts to look
+at first rather than leaving a reviewer to read all 90. It reports
+**`fidelity_mean_references` 4.56 / 5** over 90 references; 8 scored below 4. Two
+independent runs produced identical scores on all 90 (temperature 0):
 
 | module | seg | language | score | what the back-translation lost or changed |
 |---|---|---|---|---|
@@ -129,10 +130,17 @@ reader of the Tamil or Telugu draft would come away with the opposite duty.
 **It says ta-IN needs the most reviewer time** — six of eight rows, against two
 for te-IN and none for hi-IN.
 
-**It does not say UC2 meets the B6 fidelity gate.** This judges the draft
-*references*, which is what the P1 prompt asks for ("implement the judge now
-against the reference translations"). The B6 gate is about what the pipeline
-produces, which is `--fidelity-source sut` and belongs to `uc2/P2`. A mean of
-4.56 here is a statement about placeholder data, and reusing it as a product
-number would be exactly the placeholder-passing-score that `.claude/rules/eval.md`
-forbids.
+**It does not say UC2 meets the B6 fidelity gate**, and the runner no longer
+lets anyone read it that way. This judges the draft *references*, which is what
+the P1 prompt asks for ("implement the judge now against the reference
+translations"). The B6 gate is about what the pipeline produces, which is
+`--fidelity-source sut` and belongs to `uc2/P2`.
+
+That distinction used to live only in prose like this paragraph, while
+`docs/eval/uc2.json` published the same number under the gate's own key and
+emitted `quality_gates.fidelity_mean: true` — a B6 PASS for UC2 that nothing
+about UC2 had earned, and exactly the placeholder passing score
+`.claude/rules/eval.md` forbids. The references number now has its own key and
+`fidelity_mean` is reported `unmeasured` with its reason, so the two cannot be
+confused by a machine reader either
+(`test_fidelity_against_references_is_not_reported_as_the_b6_gate`).
