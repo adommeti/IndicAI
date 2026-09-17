@@ -24,9 +24,12 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc2 | P0-spike | partial | program/P0 | Vendor contract spike → docs/adr/0003 | L | see docs/build/BLOCKERS.md |
 | uc2 | P1 | done | uc2/P0-spike | Terminology files, golden set, eval runner | S,L | pending PR |
 | uc2 | P2 | partial | uc2/P1 | Celery pipeline: adapt → translate → post_edit → QA → quiz | S,C,K,L | see docs/build/BLOCKERS.md |
+| uc2 | P2-eval | pending | uc2/P1 | Measure the UC2 B6 gates on the real pipeline (fidelity, adherence, timing-fit) | S,L | runnable now: eval_hook needs no DB or broker and INDICAI_ANTHROPIC_API_KEY resolves. Measures the uc2/P2 pipeline code, which is merged; `needs` names the harness it runs (uc2/P1) because uc2/P2 is graded partial for exactly this measurement |
 | uc2 | P3 | partial | uc2/P2 | Reviewer UI with LOCKED enforcement | S,C | see docs/build/BLOCKERS.md |
 | uc2 | P4 | partial | uc2/P3 | Production: dubbing, TTS, VTT, packaging | S,K,L | see docs/build/BLOCKERS.md |
 | uc2 | P5 | partial | uc2/P4 | Pilot delivery page, quiz, comprehension report | S,C,K | see docs/build/BLOCKERS.md |
+| uc2 | P6-security | pending | — | Security, roles and spend caps for UC2; docs/security/uc2-review.md | S,L | UC2 has never had a security pass and PRD D13 has no uc2 security prompt — this row records that omission. Remediates merged code, so no prompt gates it |
+| uc2 | P7-produce | pending | — | Give the UC2 production stage a trigger (uc2.produce has no caller) | S,C | production chain from uc2/P4 is merged and unreachable; a real dub still needs the blob allowlist and ffmpeg, so it stays mocked here |
 | uc3 | P1 | partial | program/P0 | Synthetic golden set (200), audio subset, eval runner | S,L | diarization accuracy unmeasured, see BLOCKERS |
 | uc3 | P2 | partial | uc3/P1 | Ingestion + batch STT/diarization + transliteration | S,C,K,L | golden ingest and diarization accuracy blocked, see BLOCKERS |
 | uc3 | P3 | done | uc3/P2 | Lexicon matcher (Stage 0) | S | |
@@ -34,10 +37,14 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc3 | P5 | done | uc3/P4 | Append-only audit schema with hash chain, DB roles | S,C,K | chain verify 10003 rows in 0.46s; app role denied UPDATE/DELETE |
 | uc3 | P6 | partial | uc3/P5 | Reviewer UI, roles, metrics | S,C | role matrix enforced and mutation-checked; live end-to-end demo and MSAL blocked, see BLOCKERS |
 | uc3 | P7 | partial | uc3/P6 | Security review, retention, spend caps; CI policy gate | S,C | retention sweep (disabled until ADR 0004, and it cannot reach chained evidence -- ADR 0016), per-call spend scope, TLS-by-default recording grants, disposition idempotency, and a Stage 0 regression gate in CI. Adversarial success on the real three-stage detector is UNMEASURED (no ANTHROPIC_API_KEY); nothing persists analysis_runs/flags outside tests, so the chain guards two empty tables; Langfuse has no per-app scoping. See BLOCKERS |
+| uc3 | P8-pipeline | pending | uc3/P5 | Join ingestion to the detector and persist through the audit chain | S,C | the largest open gap: nothing outside tests writes analysis_runs or flags, so the chain, the queue and the metrics all describe empty tables. Proven in CI's postgres job |
+| uc3 | P9-precision | pending | uc3/P3 | Bring UC3 flag precision to the B6 gate (measured 0.30 against 0.80) | S,L | recall 0.986 must not be traded away for it; the adversarial-scoring decision is a prerequisite the owner still owes, see the prompt |
 | program | P9-adrs | done | program/P0 | ADRs 0001/0002/0005–0008 + index | S | pending PR |
 | program | P8-eval-refactor | pending | uc1/P3,uc2/P2,uc3/P4 | Shared eval harness: common schema, judge, `make eval` | S,K,L | |
-| program | P10-azure-deploy | pending | uc1/P7,uc2/P5,uc3/P7 | Bicep single-VM POC, Key Vault, OIDC deploy workflow | S,C | |
-| program | P11-release-readiness | pending | program/P8-eval-refactor,program/P10-azure-deploy,program/P9-adrs | README, demo, pilot checklist, release eval, tag | S,C,K,L | |
+| program | P12-runtime | pending | — | Runnable product: app images, compose services, Celery worker + beat, /metrics | S,C | no Dockerfile, no app service, no worker/beat and no /metrics endpoint exist; 17 tasks and 4 beat schedules never execute. P10 assumes the apps can start |
+| program | P13-gate-integrity | pending | — | Make the CI gates test what their names claim; fix false documentation | S | the three offline eval golden sets are byte-identical and score no app code; 13 Playwright tests run nowhere; no React component is ever rendered |
+| program | P10-azure-deploy | pending | uc1/P7,uc2/P5,uc3/P7,program/P12-runtime | Bicep single-VM POC, Key Vault, OIDC deploy workflow | S,C | |
+| program | P11-release-readiness | pending | program/P8-eval-refactor,program/P10-azure-deploy,program/P9-adrs,program/P13-gate-integrity | README, demo, pilot checklist, release eval, tag | S,C,K,L | |
 
 ## Recommended execution order and parallelism
 
