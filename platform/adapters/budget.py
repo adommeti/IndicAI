@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from functools import lru_cache
+from functools import cache
 from typing import Any, Protocol
 
 from indic_platform.config.settings import settings
@@ -220,11 +220,21 @@ class SpendLedger:
     enabled: bool = True
     fallback_seconds: float = 30.0
     clock: Callable[[], float] = time.time
+    #: Which app this ledger accounts for. Namespaces every key, so two apps sharing one
+    #: Redis keep separate day and month totals and one cannot spend the other's headroom
+    #: (PRD B8: caps are per app). Empty pools them under the original keys, which is what
+    #: the eval runners and the test suite want and keeps pre-existing data readable.
+    app: str = ""
     _fallback: InMemoryCounterStore = field(init=False, repr=False)
     _degraded_until: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._fallback = InMemoryCounterStore(clock=self.clock)
+
+    @property
+    def prefix(self) -> str:
+        """Key namespace for this ledger: `indic:spend` alone, or `indic:spend:<app>`."""
+        return f"{PREFIX}:{self.app}" if self.app else PREFIX
 
     # -- storage, with a cooldown fallback when the shared backend misbehaves ---------------
     def _active(self) -> CounterStore:
@@ -266,7 +276,7 @@ class SpendLedger:
 
     def _month_key(self, now: datetime | None = None) -> _ScopeKey:
         now = now or self._now()
-        return _ScopeKey("month", f"{PREFIX}:month:{now:%Y-%m}", _end_of_month(now), None)
+        return _ScopeKey("month", f"{self.prefix}:month:{now:%Y-%m}", _end_of_month(now), None)
 
     def _scopes(self, session_id: str | None) -> tuple[_ScopeKey, ...]:
         """The scopes a call is charged to, refusing ones first and the month always last.
@@ -281,14 +291,19 @@ class SpendLedger:
             scopes.append(
                 _ScopeKey(
                     "session",
-                    f"{PREFIX}:session:{session_id}",
+                    f"{self.prefix}:session:{session_id}",
                     SESSION_TTL_SECONDS,
                     self.session_cap_inr,
                 )
             )
         if self.day_cap_inr > 0:
             scopes.append(
-                _ScopeKey("day", f"{PREFIX}:day:{now:%Y-%m-%d}", _end_of_day(now), self.day_cap_inr)
+                _ScopeKey(
+                    "day",
+                    f"{self.prefix}:day:{now:%Y-%m-%d}",
+                    _end_of_day(now),
+                    self.day_cap_inr,
+                )
             )
         scopes.append(self._month_key(now))
         return tuple(scopes)
@@ -300,9 +315,9 @@ class SpendLedger:
             return 0.0
         now = self._now()
         key = {
-            "session": f"{PREFIX}:session:{session_id}",
-            "day": f"{PREFIX}:day:{now:%Y-%m-%d}",
-            "month": f"{PREFIX}:month:{now:%Y-%m}",
+            "session": f"{self.prefix}:session:{session_id}",
+            "day": f"{self.prefix}:day:{now:%Y-%m-%d}",
+            "month": f"{self.prefix}:month:{now:%Y-%m}",
         }[scope]
         store = self._active()
         try:
@@ -377,7 +392,7 @@ class SpendLedger:
                 continue
             # One marker per threshold per month: the crossing alerts, the calls after it
             # do not. The marker expires with the month it belongs to.
-            if not await self._mark_once(f"{PREFIX}:alert:{stamp}:{threshold}", month_ttl):
+            if not await self._mark_once(f"{self.prefix}:alert:{stamp}:{threshold}", month_ttl):
                 continue
             BUDGET_ALERTS.labels(str(threshold)).inc()
             log.warning(
@@ -392,18 +407,35 @@ class SpendLedger:
             )
 
 
-@lru_cache(maxsize=1)
-def default_ledger() -> SpendLedger:
-    """The process ledger: Redis-backed when REDIS_URL is configured, in-memory otherwise."""
+@cache
+def ledger_for(app: str) -> SpendLedger:
+    """The ledger for one app: Redis-backed when REDIS_URL is configured, in-memory otherwise.
+
+    Cached per app rather than globally so a process that does account for more than one
+    app -- an eval runner, a test -- gets a distinct ledger per name instead of whichever
+    one happened to be built first.
+    """
     budget = settings.budget
+    monthly, session_cap, day_cap = budget.for_app(app)
     store: CounterStore = (
         RedisCounterStore(settings.redis_url) if settings.redis_url else InMemoryCounterStore()
     )
     return SpendLedger(
         store,
-        monthly_budget_inr=budget.monthly_inr,
-        session_cap_inr=budget.session_inr,
-        day_cap_inr=budget.day_inr,
+        monthly_budget_inr=monthly,
+        session_cap_inr=session_cap,
+        day_cap_inr=day_cap,
         unknown_reserve_inr=budget.unknown_reserve_inr,
         enabled=budget.enabled,
+        app=app,
     )
+
+
+def default_ledger() -> SpendLedger:
+    """The ledger for the app this process declares itself to be (`INDICAI_APP`).
+
+    Read through `settings.app` on every call rather than captured at import: a test that
+    monkeypatches the app name, and a worker that is configured after import, both get the
+    ledger they asked for. The per-app instances themselves are still cached.
+    """
+    return ledger_for(settings.app)
