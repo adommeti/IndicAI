@@ -23,6 +23,7 @@ from celery import Celery, chain
 from indic_platform.adapters.claude import Claude
 from indic_platform.adapters.sarvam_translate import SarvamTranslate
 from indic_platform.db.models import Localization, Module, QuizItem, Segment
+from indic_platform.tasks import BudgetAwareTask
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -55,6 +56,10 @@ celery_app.conf.update(
 RETRY_ON = (OSError, TimeoutError, DBAPIError)
 STAGE_TASK = {
     "autoretry_for": RETRY_ON,
+    # Every task in this app inherits the spend-refusal boundary: a BudgetExceeded
+    # becomes a recorded BUDGET_EXCEEDED state that stops the chain, not a FAILED
+    # task with a traceback that reads like a broken worker.
+    "base": BudgetAwareTask,
     "retry_backoff": True,
     "retry_backoff_max": 300,
     "retry_jitter": True,

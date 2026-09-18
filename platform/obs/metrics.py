@@ -22,3 +22,8 @@ BUDGET_DEGRADED = Counter(
     "adapter_budget_degraded_total",
     "Spend-ledger backend failures that fell back to in-process accounting",
 )
+TASK_BUDGET_STOPS = Counter(
+    "task_budget_stops_total",
+    "Celery tasks stopped by a spend cap before the vendor was called",
+    ["task", "scope"],
+)
