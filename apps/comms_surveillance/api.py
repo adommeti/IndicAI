@@ -36,9 +36,12 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
+from fastapi.staticfiles import StaticFiles
+from indic_platform import serving
 from indic_platform.db.models import AnalysisRun, Call, Disposition, Flag, TranscriptSegment
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import case, func, select
@@ -85,11 +88,16 @@ app = FastAPI(
     redoc_url="/redoc" if _PUBLIC_SCHEMA else None,
     openapi_url="/openapi.json" if _PUBLIC_SCHEMA else None,
 )
+serving.install(app, distribution="comms-surveillance")
+
+#: The bundle `ui/vite.config.ts` builds, whose own comment says "the API serves this
+#: bundle from /". It did not until now. Mounted at the bottom of this file.
+UI_DIST = Path(__file__).parent / "ui" / "dist"
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "stage": "P6"}
+def health() -> dict[str, object]:
+    return serving.health_payload("comms-surveillance")
 
 
 # --- session ------------------------------------------------------------------
@@ -663,3 +671,15 @@ async def chain_status(
         "unverified": [table["table"] for table in tables if table["ok"] is None],
         "checked_at": datetime.now(UTC).isoformat(),
     }
+
+
+# Mounted at "/ui", NOT at "/" as uc1 and uc2 are, and that difference is deliberate.
+# A mount owns every path beneath it *including* ones no route matched, so a catch-all
+# at "/" answers a method this API does not allow -- `HEAD /flags/<id>` -- with a
+# StaticFiles 404 instead of letting the request reach the role dependency that refuses
+# it. `test_probing_with_other_methods_does_not_get_governance_a_transcript` pins that
+# contract, and a confidential app's refusal semantics are not something to relax so a
+# bundle can sit one path higher. Mounted last all the same, so it cannot shadow
+# `/metrics` or anything declared above.
+if UI_DIST.is_dir():
+    app.mount("/ui", StaticFiles(directory=UI_DIST, html=True), name="ui")

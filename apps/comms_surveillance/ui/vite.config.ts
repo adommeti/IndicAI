@@ -1,7 +1,8 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-/** The API serves this bundle from "/" in production (api.py mounts ui/dist last),
+/** The API serves this bundle from "/ui" in production (api.py mounts ui/dist last;
+ * see the comment there for why this app does not mount at "/" the way uc1 and uc2 do),
  *  so the default API base is the empty string and every path in the contract --
  *  /me, /flags, /qa-sample, /metrics/*, /audit/* -- is same-origin. In `npm run dev`
  *  those exact prefixes are proxied to the local FastAPI instead. */

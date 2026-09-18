@@ -1,10 +1,13 @@
 import os
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.staticfiles import StaticFiles
+from indic_platform import serving
 from indic_platform.db.models import Session as SessionRow
 from indic_platform.db.models import TicketFiling, Turn
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,11 +33,16 @@ def _refuse_dev_bypass_in_production() -> None:
 _refuse_dev_bypass_in_production()
 
 app = FastAPI(title="helpdesk agent")
+serving.install(app, distribution="helpdesk-agent")
+
+#: The bundle `ui/vite.config.ts` builds. Mounted at the bottom of this file, which is
+#: what the README has claimed all along and what this app did not actually do.
+UI_DIST = Path(__file__).parent / "ui" / "dist"
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "stage": "scaffold"}
+def health() -> dict[str, object]:
+    return serving.health_payload("helpdesk-agent")
 
 
 class ChatTurn(BaseModel):
@@ -326,3 +334,10 @@ async def session_replay(
     ).all()
     response.headers["Cache-Control"] = "no-store"
     return replay_payload(session, list(turns), _by_turn_index(filings))
+
+
+# The UI mount goes LAST, on purpose: a mount at "/" swallows every path that reaches
+# it, so any route -- or the /metrics mount -- declared after it would never be matched.
+# Adding an endpoint below this line is a bug.
+if UI_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="ui")
