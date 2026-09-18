@@ -4,6 +4,52 @@ x-health: &health
   timeout: 5s
   retries: 12
   start_period: 30s
+# Everything an app process needs inside the compose network. Host ports differ from
+# service ports on purpose (.env.example documents the host-side URLs); these are the
+# in-network ones. Vendor keys are passed THROUGH from the host environment and never
+# written into the file -- `${SARVAM_API_KEY}` with no default is empty if unset, which
+# is what makes a missing key a vendor error rather than a silent wrong-key error.
+x-app-env: &app-env
+  ENV: dev
+  DATABASE_URL: postgresql+psycopg://platform:${STACK_PASSWORD:?Run make bootstrap}@postgres:5432/platform
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+  REDIS_URL: redis://redis:6379/0
+  QDRANT_URL: http://qdrant:6333
+  TEI_URL: http://tei:80
+  SPARSE_URL: http://bge-sparse:80
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: minio
+  MINIO_SECRET_KEY: ${STACK_PASSWORD}
+  MINIO_SECURE: 'false'
+  # uc1's retention sweep deletes for real by default (`dry_run_default()` in
+  # apps/helpdesk_agent/retention.py is false when unset), and until P12 it had never
+  # executed -- uc1's Celery app did not register the task its beat published. Giving it
+  # a worker is what turns that dormant job on, so the local stack pins the rehearsal
+  # default and a real deletion becomes a deliberate act. uc3's sweep already requires
+  # UC3_RETENTION_ENABLED=true for the same reason (ADR 0004).
+  UC1_RETENTION_DRY_RUN: ${UC1_RETENTION_DRY_RUN:-true}
+  SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+  INDICAI_ANTHROPIC_API_KEY: ${INDICAI_ANTHROPIC_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  LANGFUSE_HOST: http://langfuse:3000
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+# An API: built image, shared env, restarted if it dies, healthcheck from the Dockerfile.
+x-app-api: &app-api
+  environment: *app-env
+  restart: unless-stopped
+# A worker or beat: same image and env, but no port and no HTTP healthcheck -- neither
+# process serves HTTP, and the Dockerfile's healthcheck would mark both unhealthy.
+x-app-worker: &app-worker
+  environment:
+    <<: *app-env
+    WORKER_METRICS_PORT: '9100'
+  restart: unless-stopped
+  healthcheck: {disable: true}
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
 x-langfuse-env: &langfuse-env
   HOSTNAME: 0.0.0.0
   DATABASE_URL: postgresql://langfuse:${STACK_PASSWORD:?Run make bootstrap}@langfuse-postgres:5432/langfuse
@@ -225,10 +271,75 @@ services:
       <<: *health
       start_period: 120s
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3030/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+  # --- the product -------------------------------------------------------------------
+  # Three APIs, a worker per app, and a beat for each app that actually schedules
+  # something. Before P12 none of these existed: the repo had 16 registered Celery tasks
+  # and no process anywhere to run one, so retention, the nightly chain verify and ticket
+  # retries were code that had never executed outside a test.
+  uc1-api:
+    <<: *app-api
+    image: indic/uc1:dev
+    build: {context: ., dockerfile: infra/docker/Dockerfile.app, args: {APP: helpdesk_agent, APP_KEY: uc1}}
+    ports: ['127.0.0.1:8001:8000']
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+      tei: {condition: service_healthy}
+  uc1-worker:
+    <<: *app-worker
+    image: indic/uc1:dev
+    build: {context: ., dockerfile: infra/docker/Dockerfile.app, args: {APP: helpdesk_agent, APP_KEY: uc1}}
+    command: ['celery', '-A', 'helpdesk_agent.ticketing', 'worker', '-Q', 'uc1', '--pool', 'threads', '--concurrency', '2', '--loglevel', 'INFO']
+  uc1-beat:
+    <<: *app-worker
+    image: indic/uc1:dev
+    build: {context: ., dockerfile: infra/docker/Dockerfile.app, args: {APP: helpdesk_agent, APP_KEY: uc1}}
+    # `retention` is imported for its beat entry; a beat that does not import the module
+    # that registers the schedule publishes nothing and fails silently.
+    command: ['celery', '-A', 'helpdesk_agent.retention', 'beat', '--loglevel', 'INFO']
+  uc2-api:
+    <<: *app-api
+    image: indic/uc2:dev
+    build: {context: ., dockerfile: infra/docker/Dockerfile.app, args: {APP: training_localizer, APP_KEY: uc2}}
+    ports: ['127.0.0.1:8002:8000']
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+  uc2-worker:
+    <<: *app-worker
+    image: indic/uc2:dev
+    build: {context: ., dockerfile: infra/docker/Dockerfile.app, args: {APP: training_localizer, APP_KEY: uc2}}
+    command: ['celery', '-A', 'training_localizer.pipeline', 'worker', '-Q', 'uc2', '--pool', 'threads', '--concurrency', '2', '--loglevel', 'INFO']
+  # No uc2-beat: training_localizer registers no beat_schedule. Its work is started by a
+  # reviewer pressing a button, not by a clock. A beat with an empty schedule would be a
+  # container that looks like it is doing something and is not.
+  uc3-api:
+    <<: *app-api
+    image: indic/uc3:dev
+    build: {context: ., dockerfile: infra/docker/Dockerfile.app, args: {APP: comms_surveillance, APP_KEY: uc3}}
+    ports: ['127.0.0.1:8003:8000']
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+  uc3-worker:
+    <<: *app-worker
+    image: indic/uc3:dev
+    build: {context: ., dockerfile: infra/docker/Dockerfile.app, args: {APP: comms_surveillance, APP_KEY: uc3}}
+    # Its own queue and its own worker: a night's batch STT must not sit in front of a
+    # UC1 ticket retry, which is exactly what one shared queue did.
+    command: ['celery', '-A', 'comms_surveillance.ingest', 'worker', '-Q', 'uc3', '--pool', 'threads', '--concurrency', '2', '--loglevel', 'INFO']
+  uc3-beat:
+    <<: *app-worker
+    image: indic/uc3:dev
+    build: {context: ., dockerfile: infra/docker/Dockerfile.app, args: {APP: comms_surveillance, APP_KEY: uc3}}
+    command: ['celery', '-A', 'comms_surveillance.ingest', 'beat', '--loglevel', 'INFO']
   prometheus:
     image: prom/prometheus:v3.5.0
     ports: ['127.0.0.1:9090:9090']
-    volumes: ['./infra/prometheus.yaml:/etc/prometheus/prometheus.yml:ro', 'prometheus-data:/prometheus']
+    volumes: ['./infra/prometheus.yaml:/etc/prometheus/prometheus.yml:ro', './infra/alerts.yaml:/etc/prometheus/alerts.yaml:ro', 'prometheus-data:/prometheus']
     healthcheck:
       <<: *health
       test: ['CMD', 'wget', '-qO-', 'http://localhost:9090/-/healthy']

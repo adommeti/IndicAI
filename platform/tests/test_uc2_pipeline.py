@@ -675,8 +675,15 @@ def client() -> Any:
 
 
 def test_health_is_public() -> None:
+    """Public, and true: it used to answer a hard-coded `stage: "P2"` that went stale the
+    moment uc2/P3 merged and was never updated again. Everything here is read at request
+    time, so there is nothing left to go stale."""
     response = client().get("/health")
-    assert response.status_code == 200 and response.json()["stage"] == "P2"
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "stage" not in body, "a hard-coded build stage is what this endpoint got wrong"
+    assert body["version"] and body["version"] != "unknown"
 
 
 def test_every_write_fails_closed_without_trusted_sso() -> None:

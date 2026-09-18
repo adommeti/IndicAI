@@ -45,3 +45,20 @@ datasources:
       connMaxLifetime: 14400
     secureJsonData:
       password: $STACK_PASSWORD
+
+  # Added by program/P12. Until the apps and workers served /metrics there was nothing
+  # for Prometheus to scrape from this programme, so a Prometheus datasource would have
+  # pointed at a server holding only its own and the infrastructure's samples. The uc3
+  # dashboard's operational panels -- the audit chain gauge E8 asks for an alert on, and
+  # spend -- read from here; the review-quality panels stay on Postgres, because
+  # precision is a reviewer's decision and lives in the dispositions table.
+  - name: prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: false
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s

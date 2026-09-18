@@ -1,0 +1,20 @@
+# The build needs the uv workspace and the app sources. Everything below either bloats
+# the context, leaks local state into an image, or gets rebuilt inside it.
+.git
+.github
+.venv
+**/.venv
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+**/*.egg-info
+# Never copy a developer's secrets into a layer. Keys come from the environment.
+.env
+.env.stack
+.claude
+docs/eval
+build

@@ -51,6 +51,7 @@ from typing import Any
 import httpx
 from celery import Celery
 from indic_platform.db.models import TicketFiling
+from indic_platform.tasks import BudgetAwareTask
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -400,9 +401,23 @@ celery_app = Celery(
     "helpdesk_agent",
     broker=os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"),
     backend=os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
+    # `retention` registers `uc1.retention_sweep` and adds its beat entry at import time,
+    # and a worker started on this module imported neither: `-A helpdesk_agent.ticketing`
+    # registered only `uc1.file_ticket`, so the beat published a sweep the worker did not
+    # recognise and silently discarded. uc3 already carries the same `include` for the same
+    # reason. Named here rather than imported at the top because retention imports
+    # `celery_app` from this module.
+    include=["helpdesk_agent.retention"],
 )
 celery_app.conf.update(
     task_acks_late=True,
+    # Each app owns a queue. All three Celery apps share one broker, and before this
+    # they all published to Celery's default `celery` queue: a UC3 sweep of a night's
+    # recordings sat in front of UC1's ticket retries in the same FIFO, so the app that
+    # spent nothing waited on the app that did. Workers are started with `-Q uc1`
+    # (docker-compose.yml), which is what makes the separation real -- a queue nothing
+    # consumes is just a backlog.
+    task_default_queue="uc1",
     task_reject_on_worker_lost=True,
     task_serializer="json",
     result_serializer="json",
@@ -414,6 +429,10 @@ celery_app.conf.update(
 RETRY_ON = (TicketingUnavailable, OSError, TimeoutError, DBAPIError)
 TASK = {
     "autoretry_for": RETRY_ON,
+    # Every task in this app inherits the spend-refusal boundary: a BudgetExceeded
+    # becomes a recorded BUDGET_EXCEEDED state that stops the chain, not a FAILED
+    # task with a traceback that reads like a broken worker.
+    "base": BudgetAwareTask,
     "retry_backoff": True,
     "retry_backoff_max": 600,
     "retry_jitter": True,

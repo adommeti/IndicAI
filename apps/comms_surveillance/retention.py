@@ -77,6 +77,7 @@ from typing import Any, Protocol
 
 from celery.schedules import crontab
 from indic_platform.db.models import Call, RetentionDeletion, TranscriptSegment
+from indic_platform.tasks import BudgetAwareTask
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -580,6 +581,9 @@ async def sweep(
 RETRY_ON = (OSError, TimeoutError, DBAPIError)
 TASK = {
     "autoretry_for": RETRY_ON,
+    # Its own dict, separate from the app module's: a retention sweep must carry the
+    # spend boundary too, and defining the options here meant it silently did not.
+    "base": BudgetAwareTask,
     "retry_backoff": True,
     "retry_backoff_max": 600,
     "retry_jitter": True,

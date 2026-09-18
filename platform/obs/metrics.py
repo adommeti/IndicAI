@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 CALLS = Counter("adapter_calls_total", "Adapter outcomes", ["vendor", "capability", "status"])
 LATENCY = Histogram("adapter_latency_seconds", "Adapter call duration", ["vendor", "capability"])
@@ -21,4 +21,17 @@ BUDGET_ALERTS = Counter(
 BUDGET_DEGRADED = Counter(
     "adapter_budget_degraded_total",
     "Spend-ledger backend failures that fell back to in-process accounting",
+)
+TASK_BUDGET_STOPS = Counter(
+    "task_budget_stops_total",
+    "Celery tasks stopped by a spend cap before the vendor was called",
+    ["task", "scope"],
+)
+AUDIT_CHAIN_BREAKS = Gauge(
+    "uc3_audit_chain_breaks",
+    "Audit chains currently failing verification (PRD E8's nightly re-walk)",
+)
+AUDIT_CHAIN_LAST_VERIFIED = Gauge(
+    "uc3_audit_chain_last_verified_timestamp_seconds",
+    "Unix time the chain verification last completed, break or no break",
 )

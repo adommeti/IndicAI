@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
+from indic_platform import serving
 from indic_platform.db.models import Artifact, Module, QuizAttempt, QuizItem, Segment
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
@@ -35,6 +36,7 @@ from training_localizer.review import OverrideRequired, review_rows, review_summ
 from training_localizer.terminology import load_glossary, resolve_locked_id
 
 app = FastAPI(title="training localizer")
+serving.install(app, distribution="training-localizer")
 
 # The reviewer UI is a static bundle; `npm run build` in apps/training_localizer/ui
 # produces it. Mounted last (see the bottom of this module) so it cannot shadow an
@@ -46,8 +48,8 @@ Language = Literal["hi-IN", "te-IN", "ta-IN"]
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "stage": "P2"}
+def health() -> dict[str, object]:
+    return serving.health_payload("training-localizer")
 
 
 def authenticated_owner(request: Request) -> str:

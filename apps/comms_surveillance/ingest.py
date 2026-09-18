@@ -33,6 +33,7 @@ from celery.schedules import crontab
 from indic_platform.adapters import budget
 from indic_platform.adapters.base import TranscriptSegment as AdapterSegment
 from indic_platform.db.models import Call, TranscriptSegment
+from indic_platform.tasks import BudgetAwareTask
 from sqlalchemy import delete, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -58,6 +59,13 @@ celery_app = Celery(
 )
 celery_app.conf.update(
     task_acks_late=True,
+    # Each app owns a queue. All three Celery apps share one broker, and before this
+    # they all published to Celery's default `celery` queue: a UC3 sweep of a night's
+    # recordings sat in front of UC1's ticket retries in the same FIFO, so the app that
+    # spent nothing waited on the app that did. Workers are started with `-Q uc3`
+    # (docker-compose.yml), which is what makes the separation real -- a queue nothing
+    # consumes is just a backlog.
+    task_default_queue="uc3",
     task_reject_on_worker_lost=True,
     task_serializer="json",
     accept_content=["json"],
@@ -75,6 +83,10 @@ celery_app.conf.update(
 RETRY_ON = (OSError, TimeoutError, DBAPIError)
 TASK = {
     "autoretry_for": RETRY_ON,
+    # Every task in this app inherits the spend-refusal boundary: a BudgetExceeded
+    # becomes a recorded BUDGET_EXCEEDED state that stops the chain, not a FAILED
+    # task with a traceback that reads like a broken worker.
+    "base": BudgetAwareTask,
     "retry_backoff": True,
     "retry_backoff_max": 600,
     "retry_jitter": True,
