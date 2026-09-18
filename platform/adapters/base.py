@@ -52,7 +52,15 @@ class Dubbing(Protocol):
 
 class LLM(Protocol):
     async def structured(
-        self, *, system: str, user: str, schema: type[T], model: str, cache_system: bool = True
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: type[T],
+        model: str,
+        cache_system: bool = True,
+        max_tokens: int = 1024,
+        timeout_s: float | None = None,
     ) -> T: ...
     def stream_text(
         self, *, system: str, messages: list[dict[str, Any]], model: str

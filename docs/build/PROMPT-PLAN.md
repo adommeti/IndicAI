@@ -24,7 +24,7 @@ Verification tiers: **S** = in-session (`make check`: lint, typecheck, unit, off
 | uc2 | P0-spike | partial | program/P0 | Vendor contract spike → docs/adr/0003 | L | see docs/build/BLOCKERS.md |
 | uc2 | P1 | done | uc2/P0-spike | Terminology files, golden set, eval runner | S,L | pending PR |
 | uc2 | P2 | partial | uc2/P1 | Celery pipeline: adapt → translate → post_edit → QA → quiz | S,C,K,L | see docs/build/BLOCKERS.md |
-| uc2 | P2-eval | pending | uc2/P1 | Measure the UC2 B6 gates on the real pipeline (fidelity, adherence, timing-fit) | S,L | runnable now: eval_hook needs no DB or broker and INDICAI_ANTHROPIC_API_KEY resolves. Measures the uc2/P2 pipeline code, which is merged; `needs` names the harness it runs (uc2/P1) because uc2/P2 is graded partial for exactly this measurement |
+| uc2 | P2-eval | partial | uc2/P1 | Measure the UC2 B6 gates on the real pipeline (fidelity, adherence, timing-fit) | S,L | three real defects found and fixed by running it live (adapt truncation, post_edit truncation on Indic script, adapt timeout at the raised cap); all four B6 numbers still UNMEASURED -- the Anthropic account hit its usage limit mid-run and does not reset until 2026-10-01. See docs/build/BLOCKERS.md |
 | uc2 | P3 | partial | uc2/P2 | Reviewer UI with LOCKED enforcement | S,C | see docs/build/BLOCKERS.md |
 | uc2 | P4 | partial | uc2/P3 | Production: dubbing, TTS, VTT, packaging | S,K,L | see docs/build/BLOCKERS.md |
 | uc2 | P5 | partial | uc2/P4 | Pilot delivery page, quiz, comprehension report | S,C,K | see docs/build/BLOCKERS.md |

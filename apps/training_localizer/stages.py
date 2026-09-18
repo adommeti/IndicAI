@@ -29,6 +29,33 @@ POST_EDIT_MODEL = "claude-sonnet-5"
 JUDGE_MODEL = "claude-haiku-4-5"
 QUIZ_MODEL = "claude-sonnet-5"
 
+# `adapt` is the one stage whose schema is a list the size of a whole module: it
+# returns adapted text AND a rationale for every non-locked segment, so the
+# response scales with the module while the adapter's default cap does not. One
+# 18-segment module measured 2,725 output tokens against the 1024 default, which
+# truncated it -- `stop_reason` came back `max_tokens` and the adapter surfaced
+# what looked like a refusal. This is a ceiling, not a spend: billing is for
+# tokens generated. Sized at roughly 3x the measured need so a longer module does
+# not rediscover the same wall.
+ADAPT_MAX_TOKENS = 8192
+# Raising the cap did not make `adapt` generate more than it needed -- it made it
+# generate what it always needed, which takes time the model-keyed default never
+# had to allow for. Measured at the raised cap: ta-IN 22.5s, hi-IN 25.3s, te-IN
+# 47.8s (5,457 output tokens) against `Claude.timeout("claude-sonnet-5")` = 60s.
+# Telugu costs about double the other two in both tokens and wall-clock, so the
+# 60s default failed intermittently on exactly the Telugu modules. A timeout is a
+# safety bound, not a budget: this one is set well clear of the worst observed.
+ADAPT_TIMEOUT_S = 180.0
+
+# `post_edit` is per-segment, so this one is not about batching: it is about the
+# script. Measured on SHORT segments against the 1024 default: hi-IN 345-604
+# output tokens, te-IN 986, ta-IN 957 -- Telugu and Tamil land within 4% of the
+# cap before the segment is even long, because Indic scripts tokenize far more
+# heavily than Latin and the reply carries the rewritten text AND a change list.
+# The 1024 default was sized for Latin output and is not safe for any of the
+# three pilot languages.
+POST_EDIT_MAX_TOKENS = 4096
+
 # D10: the dub must land within +/-15% of the source segment duration.
 TOLERANCE = 0.15
 
@@ -37,7 +64,15 @@ class Structured(Protocol):
     """`Claude.structured`, narrowed to what the stages use."""
 
     def __call__(
-        self, *, system: str, user: str, schema: type[T], model: str, cache_system: bool = True
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: type[T],
+        model: str,
+        cache_system: bool = True,
+        max_tokens: int = 1024,
+        timeout_s: float | None = None,
     ) -> Awaitable[T]: ...
 
 
@@ -192,6 +227,8 @@ async def adapt(
         user=wrap_untrusted(json.dumps({"language": language, "segments": payload})),
         schema=AdaptedScript,
         model=model,
+        max_tokens=ADAPT_MAX_TOKENS,
+        timeout_s=ADAPT_TIMEOUT_S,
     )
     for item in draft.segments:
         if item.seg_id in by_id:
@@ -226,6 +263,8 @@ async def adapt(
             user=wrap_untrusted(json.dumps({"language": language, "segments": retry_payload})),
             schema=AdaptedScript,
             model=model,
+            max_tokens=ADAPT_MAX_TOKENS,
+            timeout_s=ADAPT_TIMEOUT_S,
         )
         for item in shortened.segments:
             if item.seg_id in by_id:
@@ -310,6 +349,7 @@ async def post_edit(
             user=wrap_untrusted(json.dumps(payload, ensure_ascii=False)),
             schema=PostEdit,
             model=model,
+            max_tokens=POST_EDIT_MAX_TOKENS,
         )
         text = edited.text
         changes += [

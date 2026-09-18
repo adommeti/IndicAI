@@ -42,3 +42,14 @@ are enforced and tested; `docker compose config` and a build of every image pass
   puts it on a VM.
 - Keep `platform/` changes minimal — the metrics and budget modules exist and are tested; this is
   wiring and configuration, not a rewrite of either.
+
+## Added after uc2/P2-eval
+- Celery task time limits. `apps/training_localizer/pipeline.py:56` defines `STAGE_TASK` with a
+  retry policy but no `soft_time_limit` or `time_limit`, and nine `uc2.*` tasks use it. uc2/P2-eval
+  raised `adapt`'s per-call vendor budget from the 60s model default to 180s, so a stage that hangs
+  now occupies a worker for correspondingly longer with nothing above it to reclaim the slot. Give
+  the stage tasks a bound — but size it per task, not uniformly: `uc2.dub` polls a Sarvam dubbing
+  job whose real duration is unmeasured (the blob-storage allowlist blocks a real dub from this
+  environment), and a uniform limit that kills a legitimate dub mid-flight is worse than the hang
+  it guards against. Measure a dub first, or give `uc2.dub` its own limit derived from the job's
+  published deadline. The same applies to the uc1 and uc3 task sets.

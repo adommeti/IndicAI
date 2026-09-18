@@ -70,9 +70,26 @@ class FakeClaude:
         self.replies = replies or {}
 
     async def structured(
-        self, *, system: str, user: str, schema: type, model: str, cache_system: bool = True
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: type,
+        model: str,
+        cache_system: bool = True,
+        max_tokens: int = 1024,
+        timeout_s: float | None = None,
     ) -> Any:
-        self.calls.append({"system": system, "user": user, "schema": schema, "model": model})
+        self.calls.append(
+            {
+                "system": system,
+                "user": user,
+                "schema": schema,
+                "model": model,
+                "max_tokens": max_tokens,
+                "timeout_s": timeout_s,
+            }
+        )
         queue = self.replies.get(schema)
         if queue:
             return queue.pop(0)
@@ -759,3 +776,63 @@ def test_module_upload_rejects_malformed_segments() -> None:
         from training_localizer.api import app
 
         app.dependency_overrides.clear()
+
+
+async def test_adapt_sizes_its_response_cap_for_the_whole_module() -> None:
+    """`adapt` returns one object per non-locked segment, so 1024 cannot hold it.
+
+    Measured live before this was fixed: an 18-segment module stopped at exactly
+    1024 output tokens with `stop_reason: max_tokens`, and the adapter surfaced it
+    as what looked like a refusal. With the cap raised the same module completed
+    in 2,725. Without this assertion, dropping `max_tokens=` from the call site is
+    invisible to every mocked test and fails only on a live run that costs money.
+    """
+    segments = [
+        SourceSegment(
+            seg_id=i, start_ms=i * 1000, end_ms=(i + 1) * 1000, source_text=f"Sentence {i}."
+        )
+        for i in range(18)
+    ]
+    fake = FakeClaude(
+        {
+            AdaptedScript: [
+                AdaptedScript(
+                    segments=[
+                        AdaptedSegment(seg_id=s.seg_id, text=s.source_text, rationale="fits")
+                        for s in segments
+                    ]
+                )
+            ]
+        }
+    )
+    await stages.adapt(segments, "hi-IN", structured=fake.structured)
+
+    call = next(c for c in fake.calls if c["schema"] is AdaptedScript)
+    assert call["max_tokens"] == stages.ADAPT_MAX_TOKENS
+    assert call["max_tokens"] > 1024, "the adapter default is what truncated this stage"
+    # The cap and the clock travel together: generating what the cap now allows
+    # measured 47.8s for a Telugu module against the adapter's 60s model default.
+    assert call["timeout_s"] == stages.ADAPT_TIMEOUT_S
+    assert call["timeout_s"] > 60, "60s is what the raised cap started overrunning"
+
+
+async def test_post_edit_sizes_its_cap_for_indic_script_output() -> None:
+    """Per-segment, but the script is what blows the budget.
+
+    Measured against the 1024 default on SHORT segments: hi-IN 345-604 output
+    tokens, te-IN 986, ta-IN 957. Telugu and Tamil land within 4% of the cap
+    before the segment is even long, so a normal-length one truncates and the
+    stage fails. hi-IN alone would never have shown it -- which is why a test
+    that only exercises Hindi is not evidence this stage works.
+    """
+    fake = FakeClaude({PostEdit: [PostEdit(text="अनुवाद", changes=[])]})
+    await stages.post_edit(
+        source_text="Report phishing within 24 hours.",
+        translated="24 घंटे के भीतर सूचित करें।",
+        language="te-IN",
+        glossary=load_glossary(),
+        structured=fake.structured,
+    )
+    call = next(c for c in fake.calls if c["schema"] is PostEdit)
+    assert call["max_tokens"] == stages.POST_EDIT_MAX_TOKENS
+    assert call["max_tokens"] > 1024, "te-IN measured 986 against a 1024 cap"

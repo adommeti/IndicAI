@@ -45,3 +45,15 @@ both the uc2 residency position and the PRD's missing-prompt omission.
   exists to avoid.
 - `quiz_attempts` is the only uc2 table carrying an employee identifier. Say what that means for
   T2, T3 and T5 explicitly rather than leaving a reader to infer it.
+
+## Added after uc2/P2-eval
+- Claude structured calls are never pre-checked against a spend cap. `Claude.structured` builds its
+  `units` dict empty and fills it from `usage` only after the response arrives, so by the time
+  `AdapterRuntime.call` computes `projected, _ = cost(model, units or {})` and reserves against the
+  ledger, the projection is zero: every LLM call is admitted and settled after the fact. Sarvam
+  adapters that know their duration or character count up front do not have this hole. uc2/P2-eval
+  raised the response ceilings on `adapt` (8192) and `post_edit` (4096), which multiplies what a
+  single unchecked call can charge. Decide whether to project from an input-derived estimate
+  (`max_tokens` is the worst case and is known before the call) and reconcile on settle, or to
+  accept post-hoc settlement and say so explicitly in the security review. Do not leave it
+  undocumented: F4 claims spend caps are enforced.
