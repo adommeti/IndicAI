@@ -8,7 +8,7 @@ load_dotenv(ROOT / ".env.stack", override=True)
 
 import os  # noqa: E402
 
-from pydantic import BaseModel, Field  # noqa: E402
+from pydantic import BaseModel, Field, field_validator  # noqa: E402
 from pydantic_settings import BaseSettings, SettingsConfigDict  # noqa: E402
 
 #: Where the Anthropic key is read from, in order of preference.
@@ -105,9 +105,40 @@ class BudgetSettings(BaseModel):
     day_inr: float = Field(default=5_000.0, ge=0)
     #: Headroom a call with unknowable units (a stream billed on duration) must find free.
     unknown_reserve_inr: float = Field(default=5.0, ge=0)
-    #: Per-app overrides, seeded from `APP_BUDGETS`. Override one value without restating
+    #: Per-app overrides, merged over `APP_BUDGETS`. Override one value without restating
     #: the rest: `BUDGET__APPS__UC3__DAY_INR=2000`.
     apps: dict[str, AppBudget] = Field(default_factory=lambda: dict(APP_BUDGETS))
+
+    @field_validator("apps", mode="after")
+    @classmethod
+    def _merge_over_defaults(cls, apps: dict[str, AppBudget]) -> dict[str, AppBudget]:
+        """Fill in the apps an override did not mention.
+
+        pydantic REPLACES a dict field wholesale rather than merging into its
+        `default_factory`, so setting one documented knob -- `BUDGET__APPS__UC3__DAY_INR`
+        -- left `apps` as `{"uc3": ...}` and silently put uc1 and uc2 back on the pooled
+        budget this class exists to split, including the Rs 250 session cap that would
+        refuse every uc2 dub. The failure was invisible: nothing errors, the caps are just
+        the wrong ones. Merging per app AND per field means an override names exactly what
+        it changes.
+        """
+        merged = dict(APP_BUDGETS)
+        for app, override in apps.items():
+            base = merged.get(app)
+            merged[app] = (
+                override
+                if base is None
+                else AppBudget(
+                    monthly_inr=(
+                        base.monthly_inr if override.monthly_inr is None else override.monthly_inr
+                    ),
+                    session_inr=(
+                        base.session_inr if override.session_inr is None else override.session_inr
+                    ),
+                    day_inr=base.day_inr if override.day_inr is None else override.day_inr,
+                )
+            )
+        return merged
 
     def for_app(self, app: str) -> tuple[float, float, float]:
         """`(monthly, session, day)` caps for ``app``, falling back to the shared defaults.

@@ -168,22 +168,26 @@ jobs:
       # and an npm tree per app, which is minutes, and the cache makes a docs-only PR
       # cheap. load:false because nothing downstream runs the image -- this job asks
       # whether it BUILDS, and `make up` is what runs it.
-      - name: build ${{ matrix.app }}
+      - name: build ${{ matrix.app.package }}
         uses: docker/build-push-action@v6
         with:
           context: .
           file: infra/docker/Dockerfile.app
           build-args: |
-            APP=${{ matrix.app }}
+            APP=${{ matrix.app.package }}
+            APP_KEY=${{ matrix.app.key }}
             GIT_SHA=${{ github.sha }}
           push: false
           load: false
-          cache-from: type=gha,scope=${{ matrix.app }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          cache-from: type=gha,scope=${{ matrix.app.package }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app.package }}
     strategy:
       fail-fast: false
       matrix:
-        app: [helpdesk_agent, training_localizer, comms_surveillance]
+        app:
+          - {key: uc1, package: helpdesk_agent}
+          - {key: uc2, package: training_localizer}
+          - {key: uc3, package: comms_surveillance}
 
   integration:
     name: integration (postgres · redis · qdrant)

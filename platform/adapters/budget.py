@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -88,7 +89,13 @@ class InMemoryCounterStore:
     def __init__(self, clock: Callable[[], float] = time.time) -> None:
         self._clock = clock
         self._values: dict[str, tuple[float, float]] = {}
-        self._lock = asyncio.Lock()
+        # A threading.Lock, NOT an asyncio.Lock. An asyncio.Lock binds to the first event
+        # loop that awaits it and raises on any other, and every Celery task runs its own
+        # `asyncio.run(...)`; under the threads pool two tasks run concurrently in two
+        # threads with two loops, and the second one to arrive fails inside a spend
+        # control. Nothing under this lock awaits -- the critical sections are dict
+        # arithmetic -- so a plain mutex is both correct and loop-agnostic.
+        self._lock = threading.Lock()
 
     def _live(self, key: str) -> tuple[float, float] | None:
         entry = self._values.get(key)
@@ -100,7 +107,7 @@ class InMemoryCounterStore:
         return entry
 
     async def incr(self, key: str, amount: float, ttl: int) -> float:
-        async with self._lock:
+        with self._lock:
             entry = self._live(key)
             total = (entry[0] if entry else 0.0) + amount
             expires = entry[1] if entry else self._clock() + ttl
@@ -108,12 +115,12 @@ class InMemoryCounterStore:
             return total
 
     async def get(self, key: str) -> float:
-        async with self._lock:
+        with self._lock:
             entry = self._live(key)
             return entry[0] if entry else 0.0
 
     async def mark_once(self, key: str, ttl: int) -> bool:
-        async with self._lock:
+        with self._lock:
             if self._live(key) is not None:
                 return False
             self._values[key] = (1.0, self._clock() + ttl)
@@ -131,19 +138,29 @@ return total
 
     def __init__(self, url: str) -> None:
         self.url = url
-        self._redis: Any = None
-        self._loop: asyncio.AbstractEventLoop | None = None
+        # Per THREAD, not per instance. A redis-py pool belongs to the loop that created
+        # it, and the old single slot was rebound by whichever thread ran last: under the
+        # threads pool two concurrent tasks each saw the other's loop, rebuilt the client
+        # in a loop, and could await on a client a different thread had just swapped out
+        # ("attached to a different loop"). Thread-local state means a thread only ever
+        # sees the client it built, and the loop check below still handles the same
+        # thread running a second `asyncio.run`.
+        self._local = threading.local()
 
     def _client(self) -> Any:
-        # A redis-py pool belongs to the loop that created it; Celery workers and tests each
-        # run their own, so rebind when the running loop changes.
         loop = asyncio.get_running_loop()
-        if self._redis is None or self._loop is not loop:
+        client = getattr(self._local, "redis", None)
+        if client is None or getattr(self._local, "loop", None) is not loop:
             from redis.asyncio import Redis
 
-            self._redis = Redis.from_url(self.url)
-            self._loop = loop
-        return self._redis
+            # The superseded client belonged to a loop that is already closed, so it
+            # cannot be awaited shut here; dropping the reference lets its sockets close
+            # with it. Rebinding is rare -- once per thread per loop -- because a worker
+            # thread reuses its loop across tasks.
+            client = Redis.from_url(self.url)
+            self._local.redis = client
+            self._local.loop = loop
+        return client
 
     async def incr(self, key: str, amount: float, ttl: int) -> float:
         return float(await self._client().eval(self.SCRIPT, 1, key, amount, ttl))

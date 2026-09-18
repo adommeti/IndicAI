@@ -7,8 +7,10 @@ next morning, and the refusal would surface in the app that had spent nothing.
 """
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+import yaml
 from indic_platform.adapters.budget import (
     BudgetExceeded,
     InMemoryCounterStore,
@@ -17,7 +19,12 @@ from indic_platform.adapters.budget import (
     ledger_for,
 )
 from indic_platform.config import settings as settings_module
-from indic_platform.config.settings import APP_BUDGETS, AppBudget, BudgetSettings
+from indic_platform.config.settings import (
+    APP_BUDGETS,
+    AppBudget,
+    BudgetSettings,
+    Settings,
+)
 
 START = datetime(2026, 3, 10, 6, 0, tzinfo=UTC).timestamp()
 
@@ -110,10 +117,55 @@ def test_an_unknown_app_pools_rather_than_silently_capping_at_zero() -> None:
 
 
 def test_an_override_replaces_only_the_value_it_names() -> None:
+    """Per field: uc3's other two caps stay at ITS defaults, not the shared pool's."""
     budget = BudgetSettings(apps={"uc3": AppBudget(day_inr=7.0)})
     monthly, session_cap, day_cap = budget.for_app("uc3")
     assert day_cap == 7.0
-    assert (monthly, session_cap) == (budget.monthly_inr, budget.session_inr)
+    assert (monthly, session_cap) == (
+        APP_BUDGETS["uc3"].monthly_inr,
+        APP_BUDGETS["uc3"].session_inr,
+    ), "an override must not drop uc3 back to the pooled budget"
+
+
+def test_an_override_for_one_app_leaves_the_others_alone() -> None:
+    """pydantic replaces a dict field wholesale rather than merging into its
+    default_factory, so `BUDGET__APPS__UC3__DAY_INR=2000` left `apps` as `{"uc3": ...}`
+    and silently put uc1 and uc2 back on the pooled budget this class exists to split --
+    including the Rs 250 session cap that would refuse every uc2 dub. Nothing errored;
+    the caps were just the wrong ones."""
+    budget = BudgetSettings(apps={"uc3": AppBudget(day_inr=2000.0)})
+    for app in ("uc1", "uc2"):
+        assert budget.for_app(app) != budget.for_app(""), f"{app} fell back to the pooled budget"
+    assert budget.for_app("uc2")[1] == APP_BUDGETS["uc2"].session_inr
+
+
+def test_the_environment_override_path_merges_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shape `.env.example` documents, exercised as the environment actually sets it."""
+    monkeypatch.setenv("BUDGET__APPS__UC3__DAY_INR", "2000")
+    budget = Settings().budget
+    assert budget.for_app("uc3")[2] == 2000.0
+    assert budget.for_app("uc1") == (6_500.0, 250.0, 650.0)
+
+
+def test_the_name_the_image_sets_resolves_to_a_real_cap() -> None:
+    """The defect this guards: the image exported INDICAI_APP as the PACKAGE name
+    (`helpdesk_agent`), while the caps are keyed `uc1|uc2|uc3`, so `for_app()` fell through
+    to the pooled defaults and every per-app cap was inert in every container. Nothing
+    failed -- uc1 simply ran on a Rs 5,000 day cap instead of Rs 650.
+    """
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "infra" / "docker" / "Dockerfile.app"
+    ).read_text()
+    assert "INDICAI_APP=${APP_KEY}" in dockerfile, "the image must export the short app name"
+    compose = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text()
+    )
+    budget = BudgetSettings()
+    pooled = budget.for_app("")
+    for service, expected in (("uc1-api", "uc1"), ("uc2-api", "uc2"), ("uc3-api", "uc3")):
+        key = compose["services"][service]["build"]["args"]["APP_KEY"]
+        assert key == expected
+        assert budget.for_app(key) != pooled, f"{key} would run on the pooled budget"
 
 
 def test_the_process_ledger_follows_the_app_the_process_declares(

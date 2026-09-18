@@ -401,6 +401,13 @@ celery_app = Celery(
     "helpdesk_agent",
     broker=os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"),
     backend=os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
+    # `retention` registers `uc1.retention_sweep` and adds its beat entry at import time,
+    # and a worker started on this module imported neither: `-A helpdesk_agent.ticketing`
+    # registered only `uc1.file_ticket`, so the beat published a sweep the worker did not
+    # recognise and silently discarded. uc3 already carries the same `include` for the same
+    # reason. Named here rather than imported at the top because retention imports
+    # `celery_app` from this module.
+    include=["helpdesk_agent.retention"],
 )
 celery_app.conf.update(
     task_acks_late=True,

@@ -479,7 +479,7 @@ async def _quiz(module_id: uuid.UUID, language: str) -> dict[str, Any]:
         await eng.dispose()
 
 
-@celery_app.task(name="uc2.localize")
+@celery_app.task(name="uc2.localize", base=BudgetAwareTask)
 def localize(module_id: str, languages: list[str] | None = None) -> dict[str, Any]:
     """Queue the D5 chain per language.
 
@@ -754,7 +754,7 @@ async def _package(module_id: uuid.UUID, language: str) -> dict[str, Any]:
         await eng.dispose()
 
 
-@celery_app.task(name="uc2.produce")
+@celery_app.task(name="uc2.produce", base=BudgetAwareTask)
 def produce(module_id: str, video_uri: str, languages: list[str] | None = None) -> dict[str, Any]:
     """Queue production for each language, in PRD D4 step 8-9 order.
 

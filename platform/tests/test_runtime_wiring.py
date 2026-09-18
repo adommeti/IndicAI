@@ -7,8 +7,11 @@ scrape target pointing at a port nothing serves, an alert whose metric no code e
 """
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,35 +38,70 @@ def test_every_app_has_an_api_and_a_worker() -> None:
         assert f"{app}-worker" in services, f"{app} has 16 tasks and nothing to run them"
 
 
+def worker_module(app: str) -> str:
+    """The module each worker's `-A` names, read off the compose command."""
+    command = compose()["services"][f"{app}-worker"]["command"]
+    return command[command.index("-A") + 1]
+
+
+def beat_module(app: str) -> str:
+    command = compose()["services"][f"{app}-beat"]["command"]
+    return command[command.index("-A") + 1]
+
+
+def registry(module: str) -> dict[str, list[str]]:
+    """Import `module` in a CLEAN interpreter and report what a worker would see.
+
+    A subprocess, deliberately. The in-process version of this check passed while the
+    uc1 defect was live: pytest had already imported `helpdesk_agent.retention` through
+    another test module, which registers the task on the shared app object no matter what
+    `include` says. Only a fresh interpreter that imports exactly what `-A` names
+    reproduces what the worker actually loads.
+    """
+    code = (
+        "import json,importlib;"
+        f"m=importlib.import_module({module!r});"
+        "a=m.celery_app;a.loader.import_default_modules();"
+        "print(json.dumps({'tasks':sorted(a.tasks),"
+        "'beat':[e['task'] for e in (a.conf.beat_schedule or {}).values()],"
+        "'queue':a.conf.task_default_queue}))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT, check=True
+    )
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
 def test_a_beat_exists_exactly_where_something_is_scheduled() -> None:
     """uc2 gets no beat: it registers no beat_schedule, and a beat with an empty schedule
     is a container that looks like it is doing something and is not."""
     services = compose()["services"]
     assert "uc1-beat" in services and "uc3-beat" in services
     assert "uc2-beat" not in services
-    uc2 = (ROOT / "apps" / "training_localizer" / "pipeline.py").read_text()
-    assert "beat_schedule" not in uc2, "uc2 now schedules something and needs a beat"
+    assert not registry("training_localizer.pipeline")["beat"], (
+        "uc2 now schedules something and needs a beat"
+    )
 
 
-def test_each_worker_consumes_only_its_own_queue() -> None:
-    """The regression: all three Celery apps published to Celery's default queue on one
-    broker, so a UC3 batch night sat in front of UC1's ticket retries in the same FIFO."""
-    services = compose()["services"]
-    for app in APPS:
-        command = services[f"{app}-worker"]["command"]
-        assert "-Q" in command, f"{app}-worker consumes every queue"
-        assert command[command.index("-Q") + 1] == app
-        # Threads, not prefork: a forked child has its own Prometheus registry, so the
-        # process serving WORKER_METRICS_PORT would report zeroes forever.
-        assert command[command.index("--pool") + 1] == "threads"
+@pytest.mark.parametrize("app", ["uc1", "uc3"])
+def test_every_scheduled_task_is_registered_on_the_worker_that_runs_it(app: str) -> None:
+    """The defect this exists for: uc1's Celery app had no `include` for its retention
+    module, so `-A helpdesk_agent.ticketing` registered only `uc1.file_ticket`. uc1-beat
+    published `uc1.retention_sweep` to queue `uc1` every night and uc1-worker discarded it
+    as unregistered -- retention, the headline thing that giving the apps a worker was
+    supposed to make run at all, never ran. Nothing errored; the task simply vanished.
+    """
+    scheduled = set(registry(beat_module(app))["beat"])
+    assert scheduled, f"{app}-beat schedules nothing"
+    runnable = set(registry(worker_module(app))["tasks"])
+    assert scheduled <= runnable, (
+        f"{app}-beat schedules {scheduled - runnable}, which {app}-worker cannot run"
+    )
 
 
-def test_each_app_publishes_to_the_queue_its_worker_consumes() -> None:
-    """A queue nothing consumes is just a backlog; a worker on the wrong queue is worse."""
-    for app, package in PACKAGES.items():
-        module = {"uc1": "ticketing", "uc2": "pipeline", "uc3": "ingest"}[app]
-        source = (ROOT / "apps" / package / f"{module}.py").read_text()
-        assert f'task_default_queue="{app}"' in source, f"{package} does not publish to {app}"
+@pytest.mark.parametrize("app", ["uc1", "uc2", "uc3"])
+def test_each_app_publishes_to_the_queue_its_worker_consumes(app: str) -> None:
+    assert registry(worker_module(app))["queue"] == app
 
 
 def test_prometheus_scrapes_the_apps_and_the_workers() -> None:

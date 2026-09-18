@@ -55,11 +55,11 @@ stack-status:
 # `up` already builds these (it passes --build), so these targets are for building
 # without starting, which is what CI does.
 image-uc1:
-	docker build -f infra/docker/Dockerfile.app --build-arg APP=helpdesk_agent --build-arg GIT_SHA=$$(git rev-parse HEAD) -t indic/uc1:dev .
+	docker build -f infra/docker/Dockerfile.app --build-arg APP=helpdesk_agent --build-arg APP_KEY=uc1 --build-arg GIT_SHA=$$(git rev-parse HEAD) -t indic/uc1:dev .
 image-uc2:
-	docker build -f infra/docker/Dockerfile.app --build-arg APP=training_localizer --build-arg GIT_SHA=$$(git rev-parse HEAD) -t indic/uc2:dev .
+	docker build -f infra/docker/Dockerfile.app --build-arg APP=training_localizer --build-arg APP_KEY=uc2 --build-arg GIT_SHA=$$(git rev-parse HEAD) -t indic/uc2:dev .
 image-uc3:
-	docker build -f infra/docker/Dockerfile.app --build-arg APP=comms_surveillance --build-arg GIT_SHA=$$(git rev-parse HEAD) -t indic/uc3:dev .
+	docker build -f infra/docker/Dockerfile.app --build-arg APP=comms_surveillance --build-arg APP_KEY=uc3 --build-arg GIT_SHA=$$(git rev-parse HEAD) -t indic/uc3:dev .
 images: image-uc1 image-uc2 image-uc3
 # Parses and resolves every interpolation without a daemon, so it runs anywhere the
 # docker CLI is installed -- including an agent session, where builds cannot.

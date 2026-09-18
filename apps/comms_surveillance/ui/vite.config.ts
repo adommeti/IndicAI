@@ -19,6 +19,11 @@ export default defineConfig({
       ]),
     ),
   },
+  // `base` must match the mount path. The API serves this bundle from "/ui" (api.py),
+  // and with Vite's default base of "/" index.html asks for "/assets/index-*.js",
+  // which nothing serves there: every asset 404s and the page renders blank while the
+  // mount itself looks fine.
+  base: "/ui/",
   build: { outDir: "dist", sourcemap: true },
   test: { environment: "jsdom", globals: true, include: ["tests/**/*.test.ts?(x)"] },
 });

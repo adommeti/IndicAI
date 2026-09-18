@@ -21,7 +21,12 @@ groups:
       # is indistinguishable from a clean chain, and looks healthier than a real break.
       # Nightly at 05:00 UTC, so 26h is one missed run plus room for a slow night.
       - alert: AuditChainVerificationStale
-        expr: time() - uc3_audit_chain_last_verified_timestamp_seconds > 93600
+        # The `> 0` guard is load-bearing. A freshly started worker has the gauge at 0, so
+        # `time() - 0` is ~1.8e9 and this fired critical 30 minutes after every restart,
+        # claiming the nightly job had not completed when the worker had merely booted.
+        expr: >-
+          uc3_audit_chain_last_verified_timestamp_seconds > 0
+          and time() - uc3_audit_chain_last_verified_timestamp_seconds > 93600
         for: 30m
         labels: {severity: critical, app: uc3}
         annotations:
@@ -32,7 +37,11 @@ groups:
       # Never scraped at all -- no beat has ever run, or the worker is not exposing its
       # metrics port. Distinct from stale because the remedy is different.
       - alert: AuditChainNeverVerified
-        expr: absent(uc3_audit_chain_last_verified_timestamp_seconds)
+        # `== 0`, not `absent()`. The gauge is created at import, so the series exists as
+        # soon as anything scrapes a worker and `absent()` could never be true -- the rule
+        # meant for "no verification has ever run" was the one rule guaranteed never to
+        # fire. 0 is the value a gauge that has never been set actually has.
+        expr: uc3_audit_chain_last_verified_timestamp_seconds == 0
         for: 1h
         labels: {severity: warning, app: uc3}
         annotations:

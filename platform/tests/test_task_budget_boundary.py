@@ -92,12 +92,21 @@ def test_a_task_that_succeeds_is_untouched(celery_app: Celery) -> None:
     assert result.state == "SUCCESS" and result.result == "done"
 
 
-def test_every_app_binds_the_boundary_to_all_of_its_tasks() -> None:
-    """Applied through each app's shared task-options dict, so a task added later gets
-    it without anyone remembering to."""
-    from comms_surveillance.ingest import TASK as uc3_task
-    from helpdesk_agent.ticketing import TASK as uc1_task
-    from training_localizer.pipeline import STAGE_TASK as uc2_task
+def test_every_registered_task_binds_the_boundary() -> None:
+    """Asserted over the REGISTRY, not the options dict.
 
-    for name, options in (("uc1", uc1_task), ("uc2", uc2_task), ("uc3", uc3_task)):
-        assert options["base"] is BudgetAwareTask, f"{name} tasks bypass the spend boundary"
+    The options-dict version of this test passed while `uc2.localize` and `uc2.produce`
+    were declared with a bare `@celery_app.task(name=...)` and inherited nothing: it
+    proved the dict was right, not that every task used it. Any task added later without
+    the shared options fails here.
+    """
+    from comms_surveillance.ingest import celery_app as uc3
+    from helpdesk_agent.ticketing import celery_app as uc1
+    from training_localizer.pipeline import celery_app as uc2
+
+    for prefix, app in (("uc1", uc1), ("uc2", uc2), ("uc3", uc3)):
+        app.loader.import_default_modules()
+        for name, task in app.tasks.items():
+            if not name.startswith(f"{prefix}."):
+                continue
+            assert isinstance(task, BudgetAwareTask), f"{name} bypasses the spend boundary"

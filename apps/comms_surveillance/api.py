@@ -90,8 +90,8 @@ app = FastAPI(
 )
 serving.install(app, distribution="comms-surveillance")
 
-#: The bundle `ui/vite.config.ts` builds, whose own comment says "the API serves this
-#: bundle from /". It did not until now. Mounted at the bottom of this file.
+#: The bundle `ui/vite.config.ts` builds. Mounted at "/ui" at the bottom of this file --
+#: see the comment there for why this app does not mount at "/" the way uc1 and uc2 do.
 UI_DIST = Path(__file__).parent / "ui" / "dist"
 
 

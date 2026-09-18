@@ -17,7 +17,13 @@ WORKDIR /ui
 COPY apps/${APP}/ui/package.json apps/${APP}/ui/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY apps/${APP}/ui/ ./
-RUN npm run build
+RUN npm run build \
+  # All three vite configs build with sourcemap: true, which is right for local
+  # development and wrong for the image: the .map files sit next to the bundle and
+  # are served unauthenticated, handing any reader the original TypeScript. Dropped
+  # here rather than in three vite configs so one rule covers every app and nobody
+  # loses sourcemaps on their own machine.
+  && find dist -name "*.map" -delete
 
 # ---- python dependencies ------------------------------------------------------------
 FROM python:3.12-slim AS deps
@@ -38,6 +44,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---- runtime ------------------------------------------------------------------------
 FROM python:3.12-slim AS runtime
 ARG APP
+# The SHORT name (uc1|uc2|uc3), not the package name. These are two different
+# namespaces and conflating them is silent: `APP_BUDGETS` is keyed uc1/uc2/uc3, so an
+# image that exported INDICAI_APP=helpdesk_agent fell through `for_app()` to the pooled
+# defaults and every per-app spend cap was inert in every container -- uc1 running on a
+# Rs 5,000 day cap instead of Rs 650, uc2 on the Rs 250 session cap its own comment says
+# would refuse every dub. Nothing failed; the caps were simply never the ones intended.
+ARG APP_KEY
 ARG GIT_SHA=""
 COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /usr/local/bin/uv
 WORKDIR /srv
@@ -50,7 +63,7 @@ ENV PATH=/srv/.venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    INDICAI_APP=${APP} \
+    INDICAI_APP=${APP_KEY} \
     INDICAI_GIT_SHA=${GIT_SHA} \
     APP_MODULE=${APP}
 

@@ -698,7 +698,7 @@ def emit_chain_metric(summary: dict[str, Any]) -> bool:
     # operator reads after the fact; it is not what pages anyone, and until P12
     # this span was the ONLY place a break was published, so E8's "alerts on any
     # break" had no alerting path at all. The gauge is what
-    # `infra/prometheus/alerts.yaml` fires on.
+    # `infra/alerts.yaml` fires on.
     AUDIT_CHAIN_BREAKS.set(summary["breaks"])
     # Set on every run, clean or not, so a verification that stopped running is
     # distinguishable from one that keeps finding nothing. Breaks frozen at 0 by
