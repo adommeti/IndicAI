@@ -91,7 +91,8 @@ def test_an_unconfigured_process_says_so_instead_of_claiming_an_app(
 
 def test_the_image_sha_wins_over_the_package_version(monkeypatch: pytest.MonkeyPatch) -> None:
     """In a container the package version is a constant; the sha says what actually shipped."""
-    monkeypatch.setenv("INDICAI_GIT_SHA", "0123456789abcdef0123")
+    # Not a credential: a stand-in commit sha. pragma: allowlist secret
+    monkeypatch.setenv("INDICAI_GIT_SHA", "0123456789abcdef0123")  # pragma: allowlist secret
     assert serving.app_version("indic-platform") == "0123456789ab"
     monkeypatch.delenv("INDICAI_GIT_SHA")
     assert serving.app_version("indic-platform") == "0.1.0"

@@ -98,15 +98,51 @@ standard. Langfuse connects to `langfuse-postgres:5432` on the Compose network.
 | langfuse | 3002 → 3000 | TCP |
 | grafana | 3001 → 3000 | TCP |
 | prometheus | 9090 → 9090 | TCP |
+| uc1-api (helpdesk agent) | 8001 → 8000 | TCP |
+| uc2-api (training localizer) | 8002 → 8000 | TCP |
+| uc3-api (comms surveillance) | 8003 → 8000 | TCP |
+| uc1-worker · uc2-worker · uc3-worker | none (internal 9100, metrics) | TCP |
+| uc1-beat · uc3-beat | none | — |
 | langfuse-postgres | none (internal 5432) | TCP |
 | langfuse-worker | none (internal 3030) | TCP |
 | clickhouse | none (internal 8123/9000) | TCP |
 
 `make logs` tails this project's services; no existing projects are stopped or reconfigured.
-Prometheus scrapes itself, Qdrant and LiveKit. App metric serving, dashboards, KB ingestion,
-voice routing and UIs are subsequent application work. `make ingest-kb` exits with an explicit
+Prometheus scrapes itself, Qdrant, LiveKit, the three app APIs and the three Celery workers. `make ingest-kb` exits with an explicit
 prerequisite message until the UC1 corpus/pipeline exists. `make voice-test` runs Sarvam's
 live smoke; the command above runs both vendors.
+
+## Running the product
+
+`make up` builds the three app images and starts everything: the APIs, a Celery worker per
+app and a beat for each app that schedules work. `make apps-up` starts just the apps and
+their workers; `make images` builds the images without starting anything, which is what CI
+does on every PR.
+
+| | uc1 helpdesk | uc2 localizer | uc3 surveillance |
+|---|---|---|---|
+| API | http://127.0.0.1:8001 | http://127.0.0.1:8002 | http://127.0.0.1:8003 |
+| UI | `/` | `/` | `/ui` |
+| health | `/health` | `/health` | `/health` |
+| metrics | `/metrics` | `/metrics` | `/metrics` |
+| queue | `uc1` | `uc2` | `uc3` |
+| beat | yes (retention) | none — nothing scheduled | yes (sweep, chain verify, retention) |
+
+Each app publishes to its own queue and its worker consumes only that queue, so a UC3 sweep
+of a night's recordings cannot sit in front of a UC1 ticket retry. uc3 serves its bundle at
+`/ui` rather than `/` because a catch-all mount answers a method its API does not allow with
+a StaticFiles 404 instead of the role refusal its tests pin — see the comment in
+`apps/comms_surveillance/api.py`.
+
+Metrics are scraped from the APIs *and* the workers, because the work happens in the
+workers: a spend refusal inside a task, and the nightly uc3 audit-chain verification PRD E8
+requires an alert on, are recorded nowhere else. Alert rules are in `infra/alerts.yaml`;
+before P12 the repo had two dashboards and no rules, and a dashboard is something you look
+at once you already know.
+
+Spend caps are per app (`INDICAI_APP` selects them), derived from each PRD's own POC
+estimate at the 2× factor B8 mandates. A refused call returns 429 from an API and stops the
+task — and its chain — in a worker, rather than surfacing as a 500 or a crash.
 
 ## Evaluation and boundaries
 
