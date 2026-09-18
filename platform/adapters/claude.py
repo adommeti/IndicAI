@@ -45,8 +45,26 @@ class Claude:
         return 20 if "haiku" in model else 60
 
     async def structured(
-        self, *, system: str, user: str, schema: type[T], model: str, cache_system: bool = True
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: type[T],
+        model: str,
+        cache_system: bool = True,
+        max_tokens: int = 1024,
     ) -> T:
+        """`max_tokens` caps the response, so a caller whose schema is a LIST must
+        size it for the whole list. 1024 suits a single verdict or decision and is
+        the default every existing caller keeps; it is far too small for a batched
+        schema, and the failure is silent-looking -- the response is truncated,
+        `stop_reason` comes back `max_tokens`, `parsed_output` is None, and what
+        surfaces reads like a refusal. `training_localizer.stages.adapt` measured
+        2,725 output tokens for one 18-segment module against this 1024 cap.
+
+        Raising the cap does not by itself cost more: billing is for tokens
+        generated, not for the ceiling.
+        """
         if not cache_system:
             raise ValueError("Stable system prompts must use caching")
         clean_system = self.redact(system)
@@ -56,7 +74,7 @@ class Claude:
         async def generate() -> Any:
             result = await self.client.with_options(max_retries=0).messages.parse(
                 model=model,
-                max_tokens=1024,
+                max_tokens=max_tokens,
                 system=[
                     {"type": "text", "text": clean_system, "cache_control": {"type": "ephemeral"}}
                 ],
@@ -84,7 +102,16 @@ class Claude:
             generate, model=model, units=units, timeout=self.timeout(model), prompt_version=version
         )
         if result.stop_reason != "end_turn" or result.parsed_output is None:
-            raise ValueError("Claude refused or returned incomplete structured output")
+            # Name the reason. "refused" and "truncated" need different fixes, and
+            # reporting a truncation as a refusal sends the reader looking for a
+            # content problem that is not there.
+            detail = (
+                f"hit max_tokens={max_tokens} and was truncated; raise max_tokens "
+                f"for this call or send a smaller batch"
+                if result.stop_reason == "max_tokens"
+                else f"stop_reason={result.stop_reason!r}"
+            )
+            raise ValueError(f"Claude returned no usable structured output: {detail}")
         return validate_or_reject(result.parsed_output.model_dump_json(), schema)
 
     async def stream_text(
