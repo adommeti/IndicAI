@@ -53,6 +53,7 @@ class Claude:
         model: str,
         cache_system: bool = True,
         max_tokens: int = 1024,
+        timeout_s: float | None = None,
     ) -> T:
         """`max_tokens` caps the response, so a caller whose schema is a LIST must
         size it for the whole list. 1024 suits a single verdict or decision and is
@@ -63,13 +64,19 @@ class Claude:
         2,725 output tokens for one 18-segment module against this 1024 cap.
 
         Raising the cap does not by itself cost more: billing is for tokens
-        generated, not for the ceiling.
+        generated, not for the ceiling. It does cost TIME, which is why `timeout_s`
+        is a sibling argument: `self.timeout(model)` is keyed on the model alone,
+        so it cannot know that this particular call asked for thousands of tokens.
+        Measured on `stages.adapt` at its raised cap: 22.5s for a Tamil module,
+        25.3s for Hindi, 47.8s for Telugu -- against a 60s model default. A caller
+        that raises `max_tokens` should consider raising this too.
         """
         if not cache_system:
             raise ValueError("Stable system prompts must use caching")
         clean_system = self.redact(system)
         version = hashlib.sha256(clean_system.encode()).hexdigest()[:16]
         units: dict[str, float] = {}
+        budget = self.timeout(model) if timeout_s is None else timeout_s
 
         async def generate() -> Any:
             result = await self.client.with_options(max_retries=0).messages.parse(
@@ -83,7 +90,7 @@ class Claude:
                 # Sonnet 5 rejects legacy sampling controls (SDK MIGRATION.md).
                 # Keep zero on older models; do not claim determinism for Sonnet 5.
                 extra_body={} if model == "claude-sonnet-5" else {"temperature": 0},
-                timeout=self.timeout(model),
+                timeout=budget,
             )
             units.update(
                 {
@@ -99,7 +106,7 @@ class Claude:
             return result
 
         result = await self.runtime.call(
-            generate, model=model, units=units, timeout=self.timeout(model), prompt_version=version
+            generate, model=model, units=units, timeout=budget, prompt_version=version
         )
         if result.stop_reason != "end_turn" or result.parsed_output is None:
             # Name the reason. "refused" and "truncated" need different fixes, and

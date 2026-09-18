@@ -78,6 +78,7 @@ class FakeClaude:
         model: str,
         cache_system: bool = True,
         max_tokens: int = 1024,
+        timeout_s: float | None = None,
     ) -> Any:
         self.calls.append(
             {
@@ -86,6 +87,7 @@ class FakeClaude:
                 "schema": schema,
                 "model": model,
                 "max_tokens": max_tokens,
+                "timeout_s": timeout_s,
             }
         )
         queue = self.replies.get(schema)
@@ -808,6 +810,10 @@ async def test_adapt_sizes_its_response_cap_for_the_whole_module() -> None:
     call = next(c for c in fake.calls if c["schema"] is AdaptedScript)
     assert call["max_tokens"] == stages.ADAPT_MAX_TOKENS
     assert call["max_tokens"] > 1024, "the adapter default is what truncated this stage"
+    # The cap and the clock travel together: generating what the cap now allows
+    # measured 47.8s for a Telugu module against the adapter's 60s model default.
+    assert call["timeout_s"] == stages.ADAPT_TIMEOUT_S
+    assert call["timeout_s"] > 60, "60s is what the raised cap started overrunning"
 
 
 async def test_post_edit_sizes_its_cap_for_indic_script_output() -> None:

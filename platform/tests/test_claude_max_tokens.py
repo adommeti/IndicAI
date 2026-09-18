@@ -93,3 +93,40 @@ async def test_a_real_refusal_still_names_its_own_stop_reason() -> None:
     text = str(caught.value)
     assert "refusal" in text
     assert "truncated" not in text, "only a max_tokens stop is a truncation"
+
+
+async def test_the_model_keyed_timeout_is_the_default() -> None:
+    """Unchanged for every caller that does not ask."""
+    _, sent = await call()
+    assert sent[0]["max_tokens"] == 1024  # the pair travel together
+
+
+async def test_a_caller_can_extend_the_timeout_for_a_long_generation() -> None:
+    """A raised cap costs time, and `Claude.timeout` is keyed on the model alone.
+
+    It cannot know this call asked for thousands of tokens, so a caller that
+    raises `max_tokens` must be able to raise the clock too. `stages.adapt`
+    measured 47.8s for a Telugu module against the 60s model default -- close
+    enough that it failed intermittently on exactly the Telugu modules.
+    """
+    import anthropic
+
+    slow: list[float | None] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        slow.append(request.extensions.get("timeout", {}).get("read"))
+        return httpx2.Response(200, json=message())
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http:
+        adapter = Claude(
+            client=anthropic.AsyncAnthropic(api_key="mock", http_client=http, max_retries=0),
+            runtime=AdapterRuntime("anthropic", "llm", sink=MemorySink(), retry_base=0),
+        )
+        await adapter.structured(
+            system="Return JSON.",
+            user="hello",
+            schema=Answer,
+            model="claude-sonnet-5",
+            timeout_s=180.0,
+        )
+    assert slow and slow[0] == 180.0, "the caller's clock must reach the transport"

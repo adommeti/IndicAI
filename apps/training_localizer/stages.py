@@ -38,6 +38,14 @@ QUIZ_MODEL = "claude-sonnet-5"
 # tokens generated. Sized at roughly 3x the measured need so a longer module does
 # not rediscover the same wall.
 ADAPT_MAX_TOKENS = 8192
+# Raising the cap did not make `adapt` generate more than it needed -- it made it
+# generate what it always needed, which takes time the model-keyed default never
+# had to allow for. Measured at the raised cap: ta-IN 22.5s, hi-IN 25.3s, te-IN
+# 47.8s (5,457 output tokens) against `Claude.timeout("claude-sonnet-5")` = 60s.
+# Telugu costs about double the other two in both tokens and wall-clock, so the
+# 60s default failed intermittently on exactly the Telugu modules. A timeout is a
+# safety bound, not a budget: this one is set well clear of the worst observed.
+ADAPT_TIMEOUT_S = 180.0
 
 # `post_edit` is per-segment, so this one is not about batching: it is about the
 # script. Measured on SHORT segments against the 1024 default: hi-IN 345-604
@@ -64,6 +72,7 @@ class Structured(Protocol):
         model: str,
         cache_system: bool = True,
         max_tokens: int = 1024,
+        timeout_s: float | None = None,
     ) -> Awaitable[T]: ...
 
 
@@ -219,6 +228,7 @@ async def adapt(
         schema=AdaptedScript,
         model=model,
         max_tokens=ADAPT_MAX_TOKENS,
+        timeout_s=ADAPT_TIMEOUT_S,
     )
     for item in draft.segments:
         if item.seg_id in by_id:
@@ -254,6 +264,7 @@ async def adapt(
             schema=AdaptedScript,
             model=model,
             max_tokens=ADAPT_MAX_TOKENS,
+            timeout_s=ADAPT_TIMEOUT_S,
         )
         for item in shortened.segments:
             if item.seg_id in by_id:
