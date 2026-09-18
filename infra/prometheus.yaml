@@ -1,6 +1,30 @@
 global:
   scrape_interval: 15s
+rule_files:
+  - /etc/prometheus/alerts.yaml
 scrape_configs:
+  # The product. Before P12 none of these existed as processes, so every counter in
+  # platform/obs/metrics.py -- including the T9 budget alerts -- incremented into a
+  # registry nobody scraped.
+  - job_name: apps
+    static_configs:
+      - targets: ['uc1-api:8000']
+        labels: {app: uc1}
+      - targets: ['uc2-api:8000']
+        labels: {app: uc2}
+      - targets: ['uc3-api:8000']
+        labels: {app: uc3}
+  # Workers are scraped separately because that is where the work happens: a spend
+  # refusal inside a task and the nightly uc3 chain verification are both recorded in
+  # a worker, never in an API. They serve WORKER_METRICS_PORT (platform/tasks.py).
+  - job_name: workers
+    static_configs:
+      - targets: ['uc1-worker:9100']
+        labels: {app: uc1}
+      - targets: ['uc2-worker:9100']
+        labels: {app: uc2}
+      - targets: ['uc3-worker:9100']
+        labels: {app: uc3}
   - job_name: prometheus
     static_configs:
       - targets: ['localhost:9090']

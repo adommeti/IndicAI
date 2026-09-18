@@ -1,0 +1,294 @@
+{
+ "uid": "uc3-comms-surveillance",
+ "title": "UC3 \u2014 comms surveillance",
+ "tags": [
+  "uc3",
+  "indic-ai"
+ ],
+ "timezone": "utc",
+ "schemaVersion": 39,
+ "refresh": "1m",
+ "time": {
+  "from": "now-30d",
+  "to": "now"
+ },
+ "templating": {
+  "list": [
+   {
+    "name": "datasource",
+    "type": "datasource",
+    "query": "postgres",
+    "current": {
+     "text": "platform",
+     "value": "platform"
+    }
+   }
+  ]
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "stat",
+   "title": "Audit chains currently broken",
+   "description": "PRD E8's nightly re-walk. This is the number infra/alerts.yaml pages on, and until program/P12 it existed only as a Langfuse span -- a tracing backend nobody is woken by. 0 is the only acceptable value: a break means either a bug in the append path or somebody with more privilege than the app editing the audit trail of a regulated recordkeeping system.",
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 0
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "uc3_audit_chain_breaks",
+     "legendFormat": "broken chains"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Time since the chain was last verified",
+   "description": "The failure the panel to the left cannot show. A breaks gauge stuck at 0 because the beat died looks exactly like a clean chain -- healthier, in fact, than a real break. Nightly at 05:00 UTC, so anything approaching 26h means the verification is not running. 'No data' means it has never run at all.",
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 0
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "time() - uc3_audit_chain_last_verified_timestamp_seconds",
+     "legendFormat": "age"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 93600
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "UC3 vendor spend (INR, cumulative)",
+   "description": "Charged to uc3's own ledger namespace. Per-app caps arrived with program/P12: before it, one process-wide counter meant a night's batch STT could consume the headroom uc1 needed the next morning. E13 puts uc3's variable line near the top of the programme's spend, dominated by Saaras batch STT.",
+   "gridPos": {
+    "h": 5,
+    "w": 12,
+    "x": 12,
+    "y": 0
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (vendor, capability) (adapter_spend_inr_total{app=\"uc3\"})",
+     "legendFormat": "{{vendor}}/{{capability}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyINR"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 4,
+   "type": "table",
+   "title": "Reviewer-decided precision by category",
+   "description": "confirmed / (confirmed + false_positive) over the latest disposition per flag. Three rules, all of them from apps/comms_surveillance/metrics.py and all easy to get quietly wrong: latest is by `seq` and never by created_at (rows written in one transaction share a timestamp); needs_more_context and escalated are a reviewer saying 'not yet' and 'not mine', so they are in neither the numerator nor the denominator; and a zero denominator is NULL, never 0.0 -- a category nobody has decided a flag in has no precision. EXCLUDES flags raised outside the dashboard window, which is on flags.created_at (when the detector fired) rather than on the decision, so a slow queue cannot smear one week's model behaviour across the next. The B6 gate is 0.80; uc3/P7 measured 0.30 over 242 flags.",
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 5
+   },
+   "datasource": {
+    "type": "postgres",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "format": "table",
+     "rawSql": "select f.category as category,\n       count(*) filter (where d.disposition = 'confirmed') as confirmed,\n       count(*) filter (where d.disposition = 'false_positive') as false_positive,\n       count(*) filter (where d.disposition in ('confirmed','false_positive')) as decided,\n       case when count(*) filter (where d.disposition in ('confirmed','false_positive')) = 0\n            then null\n            else count(*) filter (where d.disposition = 'confirmed')::float\n                 / count(*) filter (where d.disposition in ('confirmed','false_positive'))\n       end as precision\n  from flags f\n  left join lateral (\n       select disposition from dispositions\n        where flag_id = f.id order by seq desc limit 1\n  ) d on true\n where f.created_at between $__timeFrom() and $__timeTo()\n group by f.category order by f.category"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "precision"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "percentunit"
+       },
+       {
+        "id": "decimals",
+        "value": 2
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 5,
+   "type": "piechart",
+   "title": "Review queue by latest disposition",
+   "description": "How much of the queue has actually been decided. The undecided slice is the denominator the precision panel does not have: a large one means precision is measured over a small, possibly unrepresentative sample of the detector's output.",
+   "gridPos": {
+    "h": 9,
+    "w": 6,
+    "x": 12,
+    "y": 5
+   },
+   "datasource": {
+    "type": "postgres",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "format": "table",
+     "rawSql": "select coalesce(d.disposition, 'undecided') as state, count(*) as flags\n  from flags f\n  left join lateral (\n       select disposition from dispositions\n        where flag_id = f.id order by seq desc limit 1\n  ) d on true\n where f.created_at between $__timeFrom() and $__timeTo()\n group by 1 order by 2 desc"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Flags raised per day by category",
+   "description": "The detector's output rate, independent of anyone reviewing it. Read alongside precision: uc3/P7 found recall 0.986 and clean_flag_rate 0.0, so the precision problem is over-flagging WITHIN calls that contain something, not flagging calls that are clean -- a spike here without a matching confirmed count is that.",
+   "gridPos": {
+    "h": 9,
+    "w": 6,
+    "x": 18,
+    "y": 5
+   },
+   "datasource": {
+    "type": "postgres",
+    "uid": "${datasource}"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "format": "time_series",
+     "rawSql": "select date_trunc('day', f.created_at) as time, f.category as metric, count(*) as value\n  from flags f\n where f.created_at between $__timeFrom() and $__timeTo()\n group by 1, 2 order by 1"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Calls refused by a spend cap",
+   "description": "A refusal is the cap working, not an error -- the call was stopped before the vendor was touched. A sustained stream means real work is being turned away and somebody should decide whether the cap is wrong or the caller is.",
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 0,
+    "y": 14
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (scope) (rate(adapter_budget_refusals_total{app=\"uc3\"}[15m]))",
+     "legendFormat": "{{scope}} cap"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Vendor call outcomes",
+   "description": "Saaras batch STT dominates uc3's critical path and its cost. A non-ok rate that stays up means the nightly sweep is not completing, which the flag-rate panel will show as a gap a day later.",
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 12,
+    "y": 14
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (vendor, capability, status) (rate(adapter_calls_total{app=\"uc3\"}[15m]))",
+     "legendFormat": "{{vendor}}/{{capability}} {{status}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  }
+ ]
+}

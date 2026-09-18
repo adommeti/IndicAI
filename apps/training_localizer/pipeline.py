@@ -42,6 +42,13 @@ celery_app = Celery(
 )
 celery_app.conf.update(
     task_acks_late=True,
+    # Each app owns a queue. All three Celery apps share one broker, and before this
+    # they all published to Celery's default `celery` queue: a UC3 sweep of a night's
+    # recordings sat in front of UC1's ticket retries in the same FIFO, so the app that
+    # spent nothing waited on the app that did. Workers are started with `-Q uc2`
+    # (docker-compose.yml), which is what makes the separation real -- a queue nothing
+    # consumes is just a backlog.
+    task_default_queue="uc2",
     task_reject_on_worker_lost=True,
     task_serializer="json",
     result_serializer="json",

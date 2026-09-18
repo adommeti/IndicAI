@@ -15,10 +15,12 @@ anything else, so this records the refusal and then stops.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from celery import Task
 from celery.exceptions import Ignore
+from celery.signals import celeryd_init
 from indic_platform.adapters.budget import BudgetExceeded
 from indic_platform.obs.metrics import TASK_BUDGET_STOPS
 
@@ -51,3 +53,42 @@ class BudgetAwareTask(Task):
             # `Ignore` leaves the state just set in place. Without it Celery would
             # overwrite it with FAILURE and log the traceback this class exists to avoid.
             raise Ignore() from exc
+
+
+def serve_worker_metrics(port: int | None = None) -> int | None:
+    """Expose this worker's Prometheus registry over HTTP.
+
+    A Celery worker serves no HTTP, so every counter it increments -- the spend
+    refusals above, and the `uc3_audit_chain_breaks` gauge the nightly verification
+    sets -- was invisible to Prometheus. The API processes expose `/metrics`, but the
+    API is not where any of this happens.
+
+    Port comes from `WORKER_METRICS_PORT`; unset means "do not serve", which keeps a
+    developer running a worker by hand from failing on a bound port.
+
+    This is why the compose workers run `--pool=threads`. Under the default prefork
+    pool a task executes in a forked child with its own registry, so the parent that
+    serves this endpoint would report zeroes forever while the real numbers went to a
+    process nothing scrapes. Threads share one registry, and these tasks are I/O-bound
+    on vendor calls and Postgres, so the GIL is not what bounds them.
+    """
+    from prometheus_client import start_http_server
+
+    chosen = port if port is not None else int(os.environ.get("WORKER_METRICS_PORT", "0") or 0)
+    if chosen <= 0:
+        return None
+    start_http_server(chosen)
+    log.info("worker metrics on :%d", chosen)
+    return chosen
+
+
+@celeryd_init.connect
+def _start_worker_metrics(**_: Any) -> None:
+    """Started once per worker, in the process that owns the registry."""
+    try:
+        serve_worker_metrics()
+    except OSError:
+        # A bound port must not stop a worker from consuming its queue. The
+        # scrape target going missing is an alerting problem; a worker that
+        # refuses to start is an outage.
+        log.exception("worker metrics endpoint could not start; continuing without it")

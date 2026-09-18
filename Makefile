@@ -32,7 +32,8 @@ COMPOSE = docker compose --env-file .env.stack
 ZAMMAD = zammad-postgresql zammad-redis zammad-memcached zammad-init \
 	zammad-railsserver zammad-nginx zammad-scheduler zammad-websocket
 .PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc1-regression eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-regression eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
-        check check-quick check-full test-ticketing stack-core stack-obs stack-voice stack-sparse stack-ticketing stack-status stack-logs ship plan
+        check check-quick check-full test-ticketing stack-core stack-obs stack-voice stack-sparse stack-ticketing stack-status stack-logs ship plan \
+        images image-uc1 image-uc2 image-uc3 compose-config apps-up apps-logs
 bootstrap:
 	python3 infra/bootstrap.py
 up: bootstrap
@@ -50,6 +51,25 @@ stack-ticketing: bootstrap
 	$(COMPOSE) --profile ticketing up -d --wait --wait-timeout 900 zammad-railsserver zammad-nginx
 stack-status:
 	bash scripts/stack.sh status
+# --- the product ---------------------------------------------------------------------
+# `up` already builds these (it passes --build), so these targets are for building
+# without starting, which is what CI does.
+image-uc1:
+	docker build -f infra/docker/Dockerfile.app --build-arg APP=helpdesk_agent --build-arg GIT_SHA=$$(git rev-parse HEAD) -t indic/uc1:dev .
+image-uc2:
+	docker build -f infra/docker/Dockerfile.app --build-arg APP=training_localizer --build-arg GIT_SHA=$$(git rev-parse HEAD) -t indic/uc2:dev .
+image-uc3:
+	docker build -f infra/docker/Dockerfile.app --build-arg APP=comms_surveillance --build-arg GIT_SHA=$$(git rev-parse HEAD) -t indic/uc3:dev .
+images: image-uc1 image-uc2 image-uc3
+# Parses and resolves every interpolation without a daemon, so it runs anywhere the
+# docker CLI is installed -- including an agent session, where builds cannot.
+compose-config: bootstrap
+	$(COMPOSE) config --quiet && echo "compose config ok"
+# The three APIs, their workers and their beats, without the observability stack.
+apps-up: bootstrap
+	$(COMPOSE) up -d --build --wait --wait-timeout 1200 uc1-api uc1-worker uc1-beat uc2-api uc2-worker uc3-api uc3-worker uc3-beat
+apps-logs:
+	$(COMPOSE) logs -f uc1-api uc1-worker uc1-beat uc2-api uc2-worker uc3-api uc3-worker uc3-beat
 stack-logs:
 	bash scripts/stack.sh logs
 check:

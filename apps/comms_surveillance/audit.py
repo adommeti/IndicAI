@@ -72,12 +72,14 @@ window closes at the database rather than by hoping.
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from indic_platform.db.models import AnalysisRun, Base, Disposition, Flag
+from indic_platform.obs.metrics import AUDIT_CHAIN_BREAKS, AUDIT_CHAIN_LAST_VERIFIED
 from sqlalchemy import (
     BigInteger,
     Column,
@@ -692,6 +694,16 @@ def emit_chain_metric(summary: dict[str, Any]) -> bool:
         "tables": {t["table"]: t["ok"] for t in summary["tables"]},
         "unanchored": list(summary.get("unanchored", [])),
     }
+    # Prometheus first, and unconditionally. Langfuse is a tracing backend an
+    # operator reads after the fact; it is not what pages anyone, and until P12
+    # this span was the ONLY place a break was published, so E8's "alerts on any
+    # break" had no alerting path at all. The gauge is what
+    # `infra/prometheus/alerts.yaml` fires on.
+    AUDIT_CHAIN_BREAKS.set(summary["breaks"])
+    # Set on every run, clean or not, so a verification that stopped running is
+    # distinguishable from one that keeps finding nothing. Breaks frozen at 0 by
+    # a dead beat looks exactly like health, which is the failure this guards.
+    AUDIT_CHAIN_LAST_VERIFIED.set(time.time())
     try:
         default_sink().emit(record)
     except Exception:
