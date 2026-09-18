@@ -58,7 +58,7 @@ See [contracts](platform/adapters/base.py) and [SDK verification](docs/adapter-v
 | TTS | `SarvamTTS` | `stream(text_chunks, language, voice)`; REST convenience `speak(...)` |
 | Translate | `SarvamTranslate` | `translate(text, source="auto", target, mode="formal")` |
 | Dubbing | `SarvamDubbing` | `submit(video_uri, target_languages, voice_map)`, `status(job_id)`, `fetch(job_id)` |
-| LLM | `Claude` | `structured(system, user, schema, model, cache_system=True)`, `stream_text(system, messages, model)`; constructor takes `redactor` and `wrapper` so an app can document an evidence-preserving override (PRD E9) |
+| LLM | `Claude` | `structured(system, user, schema, model, cache_system=True, max_tokens=1024, timeout_s=None)`, `stream_text(system, messages, model)`; constructor takes `redactor` and `wrapper` so an app can document an evidence-preserving override (PRD E9) |
 | VectorStore | Protocol for UC1 retrieval | `search(vector, limit=3, filters=None)` |
 
 Streaming Protocol methods return asynchronous iterators directly (declared with `def` in
@@ -70,6 +70,14 @@ storage integration. Dubbing supports the SDK's single `voice_id` per job and re
 multi-voice map explicitly. It disables voice cloning. Poll intervals cap at 30s; STT batch
 deadline is 600s. Submitted duration is used for estimated STT/dubbing billing, charged once
 at successful start; it is not a vendor invoice reconciliation.
+
+`Claude.structured`'s `max_tokens` and `timeout_s` are the caller's to size. The 1024-token
+default suits a single verdict; a schema that returns one object per input item must raise it,
+and so must the clock, because the runtime's model-keyed timeout cannot know how much this
+particular call asked for. Raising the cap does not raise cost -- billing is for tokens
+generated, not for the ceiling -- but it does raise time. Indic scripts tokenize far more
+heavily than Latin: the same segment rewritten cost 345-604 output tokens in Hindi and 986 in
+Telugu, so a cap that looks generous against an English sample can truncate in production.
 
 All adapters default to one shared process token bucket (1000 rpm with a one-request burst).
 Inject `RedisTokenBucket` with a common account key into runtimes to share the limit across

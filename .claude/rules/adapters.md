@@ -11,6 +11,11 @@ paths: ["platform/adapters/**", "platform/security/**", "platform/obs/**", "plat
 - All vendor calls go through `platform/adapters/runtime.py` (token bucket, retries with jitter on
   429/5xx max 3, circuit breaker, timeouts: streaming 30s idle, Sonnet 60s, Haiku 20s). Never call
   `httpx`/SDK clients directly from an app.
+- Those timeouts are model-keyed DEFAULTS, not the contract's ceiling. A caller that asks for a
+  long response passes an explicit per-call budget, and that budget must reach BOTH the transport
+  and the runtime's own `asyncio.timeout` — setting only the first leaves the call cancelled from
+  the outside at the model default. Raising a cap is free; raising the clock it implies is not
+  optional.
 - Batch submissions carry a content-derived idempotency key; apps still deduplicate durably.
 - Redaction (`redact.py`) runs before text leaves for a vendor or a log. Apps that need an
   override (comms_surveillance keeps phone/email as evidence) document it in their README and

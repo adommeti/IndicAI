@@ -60,3 +60,34 @@ than `kural`, so it is better on Tamil, not perfect.
 Billed against `mayura:v1` (the per-character text rate). Sarvam publishes no
 separate transliteration rate; if one appears it belongs in
 `platform/config/pricing.yaml`.
+
+## Anthropic `messages.parse` — response cap, stop reason and latency (uc2/P2-eval)
+
+Verified against the live API over four `make eval-uc2-live` runs on 2026-09-18, driving
+`training_localizer.stages` rather than a synthetic probe, so the shapes below are the ones the
+pipeline actually produces.
+
+| behaviour | observed |
+|---|---|
+| a reply that reaches `max_tokens` | `stop_reason == "max_tokens"`, `parsed_output is None`, `usage.output_tokens` exactly equal to the cap. No exception from the SDK — the truncation is only visible in `stop_reason`, which is why `Claude.structured` must inspect it |
+| a reply that completes | `stop_reason == "end_turn"`, `parsed_output` populated |
+| `max_tokens` on the request | honoured as a ceiling, not a target: the same call returned 2,725 output tokens under an 8192 cap and 5,457 under the same cap for a longer module |
+| billing | charged on tokens generated, not on the ceiling, so raising the cap costs nothing until the model uses it |
+| `timeout` on the request | reaches the transport as the httpx read timeout; it does not bound the runtime's own `asyncio.timeout`, which is passed separately |
+
+Output-token cost by script, same 18-segment module, one `adapt` call each:
+
+| language | output tokens | wall time |
+|---|---|---|
+| ta-IN | ~2,900 | 22.5s |
+| hi-IN | 2,725 | 25.3s |
+| te-IN | 5,457 | 47.8s |
+
+The ratio is the point: Indic scripts tokenize far more heavily than Latin, and Telugu was the
+expensive case on every measurement taken. A cap or a clock sized against an English or Hindi
+sample is not sized for Telugu. `post_edit` showed the same ordering on a single segment —
+hi-IN 345-604, ta-IN 957, te-IN 986 — against a 1024 default that had never been exercised in
+anything but Hindi.
+
+Not verified: `backtranslate_qa` and `quiz` beyond a single 691-token `quiz` probe. The account
+reached its usage limit before either stage completed live (`docs/build/BLOCKERS.md`).

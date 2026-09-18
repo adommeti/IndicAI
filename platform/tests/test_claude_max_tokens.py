@@ -13,6 +13,7 @@ sent one 18-segment module and the reply stopped dead at exactly 1024 output
 tokens. With the cap raised it completed in 2,725 (`stop_reason: end_turn`).
 """
 
+import asyncio
 import json
 from typing import Any
 
@@ -42,12 +43,21 @@ def message(stop_reason: str = "end_turn") -> dict[str, Any]:
     }
 
 
-async def call(stop_reason: str = "end_turn", **kwargs: Any) -> tuple[Any, list[dict[str, Any]]]:
-    """Drive `structured` against a mock transport and return (result, request bodies)."""
+async def call(
+    stop_reason: str = "end_turn", model: str = "claude-haiku-4-5", **kwargs: Any
+) -> tuple[Any, list[dict[str, Any]], list[float | None]]:
+    """Drive `structured` against a mock transport.
+
+    Returns (result, request bodies, per-request read timeouts). The clock is
+    observed the same way the cap is -- off the request that actually left --
+    because a default that only holds in the source is not a default.
+    """
     sent: list[dict[str, Any]] = []
+    clocks: list[float | None] = []
 
     def handle(request: httpx2.Request) -> httpx2.Response:
         sent.append(json.loads(request.content))
+        clocks.append(request.extensions.get("timeout", {}).get("read"))
         return httpx2.Response(200, json=message(stop_reason))
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http:
@@ -56,20 +66,20 @@ async def call(stop_reason: str = "end_turn", **kwargs: Any) -> tuple[Any, list[
             runtime=AdapterRuntime("anthropic", "llm", sink=MemorySink(), retry_base=0),
         )
         result = await adapter.structured(
-            system="Return JSON.", user="hello", schema=Answer, model="claude-haiku-4-5", **kwargs
+            system="Return JSON.", user="hello", schema=Answer, model=model, **kwargs
         )
-    return result, sent
+    return result, sent, clocks
 
 
 async def test_the_default_cap_is_unchanged_for_callers_that_do_not_ask() -> None:
     """Every pre-existing caller keeps 1024; widening the signature must not move it."""
-    _, sent = await call()
+    _, sent, _ = await call()
     assert sent[0]["max_tokens"] == 1024
 
 
 async def test_a_caller_can_size_the_cap_for_a_batched_schema() -> None:
     """`adapt` returns one object per segment, so its ceiling is its own business."""
-    _, sent = await call(max_tokens=8192)
+    _, sent, _ = await call(max_tokens=8192)
     assert sent[0]["max_tokens"] == 8192, "the caller's cap must reach the wire"
 
 
@@ -96,9 +106,11 @@ async def test_a_real_refusal_still_names_its_own_stop_reason() -> None:
 
 
 async def test_the_model_keyed_timeout_is_the_default() -> None:
-    """Unchanged for every caller that does not ask."""
-    _, sent = await call()
-    assert sent[0]["max_tokens"] == 1024  # the pair travel together
+    """A caller that does not ask still gets `Claude.timeout(model)`, not `timeout_s`'s None."""
+    _, _, haiku = await call(model="claude-haiku-4-5")
+    _, _, sonnet = await call(model="claude-sonnet-5")
+    assert haiku[0] == Claude.timeout("claude-haiku-4-5") == 20
+    assert sonnet[0] == Claude.timeout("claude-sonnet-5") == 60
 
 
 async def test_a_caller_can_extend_the_timeout_for_a_long_generation() -> None:
@@ -107,26 +119,67 @@ async def test_a_caller_can_extend_the_timeout_for_a_long_generation() -> None:
     It cannot know this call asked for thousands of tokens, so a caller that
     raises `max_tokens` must be able to raise the clock too. `stages.adapt`
     measured 47.8s for a Telugu module against the 60s model default -- close
-    enough that it failed intermittently on exactly the Telugu modules.
+    enough that it failed on exactly the Telugu modules.
     """
-    import anthropic
+    _, _, clocks = await call(model="claude-sonnet-5", timeout_s=180.0)
+    assert clocks[0] == 180.0, "the caller's clock must reach the transport"
 
-    slow: list[float | None] = []
 
-    def handle(request: httpx2.Request) -> httpx2.Response:
-        slow.append(request.extensions.get("timeout", {}).get("read"))
+async def test_the_runtime_budget_follows_the_callers_clock_not_the_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The HTTP read timeout is only half the fix; the runtime wraps the call too.
+
+    `AdapterRuntime.call` puts the whole operation inside `asyncio.timeout(...)`.
+    If that budget stayed on `Claude.timeout(model)` while only the transport
+    heard `timeout_s`, a long generation would still be cancelled from the
+    outside at the model default -- which is precisely how `adapt` failed. So
+    this drives a response that outlives the model's clock and survives the
+    caller's: the model default is shrunk to 50ms, the transport sleeps 200ms,
+    and the caller asks for 5s. Revert either half and this raises TimeoutError.
+    """
+    monkeypatch.setattr(Claude, "timeout", staticmethod(lambda model: 0.05))
+
+    async def handle(request: httpx2.Request) -> httpx2.Response:
+        await asyncio.sleep(0.2)
         return httpx2.Response(200, json=message())
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http:
         adapter = Claude(
-            client=anthropic.AsyncAnthropic(api_key="mock", http_client=http, max_retries=0),
+            client=AsyncAnthropic(api_key="mock", http_client=http, max_retries=0),
             runtime=AdapterRuntime("anthropic", "llm", sink=MemorySink(), retry_base=0),
         )
-        await adapter.structured(
+        answer = await adapter.structured(
             system="Return JSON.",
             user="hello",
             schema=Answer,
             model="claude-sonnet-5",
-            timeout_s=180.0,
+            timeout_s=5.0,
         )
-    assert slow and slow[0] == 180.0, "the caller's clock must reach the transport"
+    assert answer.answer == "ok"
+
+
+async def test_the_runtime_budget_still_cancels_a_generation_that_overruns() -> None:
+    """The other direction: `timeout_s` is a budget, not a licence to hang.
+
+    Without this, a test suite that only proves the clock can be *raised* would
+    pass just as well if the budget were dropped altogether.
+    """
+
+    async def handle(request: httpx2.Request) -> httpx2.Response:
+        await asyncio.sleep(1.0)
+        return httpx2.Response(200, json=message())
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http:
+        adapter = Claude(
+            client=AsyncAnthropic(api_key="mock", http_client=http, max_retries=0),
+            runtime=AdapterRuntime("anthropic", "llm", sink=MemorySink(), retry_base=0),
+        )
+        with pytest.raises(TimeoutError):
+            await adapter.structured(
+                system="Return JSON.",
+                user="hello",
+                schema=Answer,
+                model="claude-sonnet-5",
+                timeout_s=0.05,
+            )
