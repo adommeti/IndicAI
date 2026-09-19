@@ -14,21 +14,26 @@ The second is that a seeded queue is a *real* queue: written through
 the reviewer console calls.
 """
 
+import json
 import os
 import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
 from comms_surveillance import audit, demo_renderings, demo_seed
 from comms_surveillance.lexicon import matcher
 from indic_platform.eval.runners.run_uc3 import Transcript
+from sqlalchemy.dialects import postgresql
 
 #: A fixed clock, so every assertion below is about the seeder rather than about
 #: what day the test ran.
 AS_OF = datetime(2026, 9, 19, 9, 0, tzinfo=UTC)
+
+ROOT = Path(__file__).resolve().parents[2]
 
 #: The integration tests seed under their own prefix and delete it afterwards.
 #: Cleaning up by `demo/uc3/%` would delete the demo queue out from under
@@ -87,21 +92,37 @@ def test_the_english_rendering_is_a_recorded_translation_not_an_invention() -> N
     """
     store = demo_renderings.load()
     assert store, "demo/renderings.json is missing; regenerate with demo_renderings --write"
-    provenance = demo_renderings.provenance()
-    assert provenance["renderer"] == "comms_surveillance.detector.render_english"
-    assert provenance["model"]
+    assert demo_renderings.provenance()["renderer"] == (
+        "comms_surveillance.detector.render_english"
+    )
+    # Per span, not once for the file: a later run translates only what is
+    # missing, so a file-level stamp would relabel every older translation with
+    # whatever model happened to run last.
+    for entry in store.values():
+        assert entry["english"] and entry["model"] and entry["generated_at"]
 
     seen_non_english = False
     for call in _dataset(count=48):
         for flag in call.flags:
             if call.language in demo_renderings.NATIVE_ENGLISH:
-                # An English call renders itself, which needs no translator.
+                # An English call renders itself, so no translator is named.
                 assert flag.english_rendering == flag.evidence_span
+                assert flag.rendering_model == ""
                 continue
             seen_non_english = True
-            assert flag.english_rendering == store[demo_renderings.span_key(flag.evidence_span)]
-        if call.language not in demo_renderings.NATIVE_ENGLISH and call.flags:
-            assert demo_seed.run_output(call)["english_rendering_source"] == provenance
+            entry = store.get(demo_renderings.span_key(flag.evidence_span), {})
+            # Absent is allowed -- one Hinglish turn came back untranslated and
+            # was rejected rather than stored -- but never invented.
+            assert flag.english_rendering == entry.get("english", "")
+            assert flag.rendering_model == entry.get("model", "")
+        source = demo_seed.run_output(call)["english_rendering_source"]
+        if any(flag.rendering_model for flag in call.flags):
+            assert source["renderer"] == "comms_surveillance.detector.render_english"
+            assert source["models"] == sorted(
+                {f.rendering_model for f in call.flags if f.rendering_model}
+            )
+        else:
+            assert source == {}
     assert seen_non_english, "the sample had no non-English flag, so this proved nothing"
 
 
@@ -117,6 +138,7 @@ def test_a_missing_rendering_is_left_empty_rather_than_guessed() -> None:
         if call.language in demo_renderings.NATIVE_ENGLISH:
             continue
         assert all(flag.english_rendering == "" for flag in call.flags)
+        assert all(flag.rendering_model == "" for flag in call.flags)
         assert demo_seed.run_output(call)["english_rendering_source"] == {}
 
 
@@ -307,6 +329,76 @@ def test_escalation_reasons_come_from_the_real_combine_rule() -> None:
         assert bool(call.escalation_reasons) == (call.stage == "deep_analysis")
 
 
+# --- the exclusion, without a database -----------------------------------------
+
+
+def test_every_measuring_query_carries_the_demo_predicate() -> None:
+    """Compiled SQL, so a statement that loses the filter fails here rather than
+    in whatever dashboard someone is looking at.
+
+    Three of them, and they are reached by four different routes: `flag_statement`
+    serves `/metrics/precision` twice (by category and over time),
+    `qa_sample_statement` serves the false-negative estimate, and
+    `api.flag_summaries(qa_sample=True)` builds its own join for the lead's
+    stream -- which is exactly the one the first version of this exclusion
+    missed.
+    """
+    from comms_surveillance import api, metrics
+
+    statements = {
+        "flag_statement": metrics.flag_statement(None, None),
+        "qa_sample_statement": metrics.qa_sample_statement(None),
+        "queue_statement(qa_sample=True)": api.queue_statement(qa_sample=True),
+    }
+    for name, statement in statements.items():
+        # Compiled against the real dialect but with the parameters left bound:
+        # `literal_binds` cannot render a JSONB value, and the marker is one.
+        compiled = statement.compile(dialect=postgresql.dialect())
+        sql = str(compiled)
+        assert "analysis_runs" in sql, name
+        assert "NOT (analysis_runs.output @>" in sql, f"{name} lost the demo predicate"
+        assert metrics.DEMO_MARKER in compiled.params.values(), name
+
+
+def test_the_reviewer_queue_keeps_the_demo_rows() -> None:
+    """The other half of the rule, and the easier one to lose by tidying.
+
+    Excluding demo rows from the queue as well would be consistent and wrong:
+    the queue is what the seed exists to fill.
+    """
+    from comms_surveillance import api, metrics
+
+    compiled = api.queue_statement().compile(dialect=postgresql.dialect())
+    assert "@>" not in str(compiled)
+    assert "analysis_runs" not in str(compiled)
+    assert metrics.DEMO_MARKER not in compiled.params.values()
+
+
+def test_the_grafana_panels_that_measure_carry_it_too() -> None:
+    """The dashboard is a second implementation of the same numbers in raw SQL.
+
+    Nothing stops it drifting from `metrics.py` except this: the API exclusion
+    was in place and green while the Grafana precision panel was still
+    computing the fabricated figure from the same tables.
+    """
+    dashboard = json.loads((ROOT / "infra/grafana/dashboards/uc3.json").read_text(encoding="utf-8"))
+    reading_flags = [
+        panel
+        for panel in dashboard["panels"]
+        for target in panel.get("targets", [])
+        if " from flags f\n" in (target.get("rawSql") or "")
+    ]
+    assert len(reading_flags) == 3, [p["title"] for p in reading_flags]
+    for panel in reading_flags:
+        for target in panel["targets"]:
+            sql = target.get("rawSql") or ""
+            if " from flags f\n" not in sql:
+                continue
+            assert "join analysis_runs r on r.id = f.run_id" in sql, panel["title"]
+            assert "not (r.output @> '{\"demo\": true}')" in sql, panel["title"]
+        assert "demo_seed are excluded" in panel["description"], panel["title"]
+
+
 # --- persistence ---------------------------------------------------------------
 
 
@@ -350,12 +442,23 @@ async def _purge(factory: Any) -> None:
         await db.execute(delete(Call).where(Call.id.in_(ids)))
 
 
-async def _seeded_call_ids(db: Any) -> set[Any]:
+async def _seeded_call_ids(db: Any) -> set[uuid.UUID]:
     """The ids of this file's calls, so an assertion cannot reach another suite's."""
     from indic_platform.db.models import Call
     from sqlalchemy import select
 
     return set((await db.scalars(select(Call.id).where(Call.source_key.like(f"{FIXTURE}%")))).all())
+
+
+def _mine(rows: list[dict[str, Any]], call_ids: set[uuid.UUID]) -> list[dict[str, Any]]:
+    """This file's rows out of a queue response.
+
+    `flag_summaries` renders `call_id` as a string (`api._summary`) while the
+    column is a UUID, so the comparison has to convert. Comparing the two
+    directly is silently always false -- an empty result that looks like a
+    passing filter.
+    """
+    return [row for row in rows if uuid.UUID(row["call_id"]) in call_ids]
 
 
 @pytest.fixture
@@ -462,7 +565,10 @@ async def test_the_console_reads_back_what_was_seeded(seeded: Any) -> None:
         call_ids = await _seeded_call_ids(db)
 
     async with seeded() as db:
-        rows = [r for r in await flag_summaries(db) if r["call_id"] in call_ids]
+        # A limit well above anything the suite can leave behind: the scoping
+        # below runs in Python, so a seeded row that fell off the SQL page would
+        # make this flaky rather than wrong.
+        rows = _mine(await flag_summaries(db, limit=5000), call_ids)
         assert rows, "none of the seeded flags came back through the queue endpoint"
         assert len(rows) == sum(len(call.flags) for call in dataset)
 
@@ -518,6 +624,31 @@ async def test_the_stored_columns_say_demo_not_a_vendor_model(seeded: Any) -> No
             # No transcription happened, so no rupee figure is booked. A
             # fabricated one would flow into the cost panel as if measured.
             assert call.stt_cost_inr == 0
+
+
+@pytest.mark.integration
+async def test_the_queue_shows_demo_rows_and_the_qa_sample_stream_does_not(seeded: Any) -> None:
+    """The line this whole exclusion is drawn along.
+
+    The reviewer's queue must show seeded flags -- a demonstration with an empty
+    queue demonstrates nothing. The lead's QA-sample stream must not: it is a
+    measurement, and it feeds `metrics.false_negative_estimate`, where a seeded
+    call settling as "the detector missed nothing" is a fabricated datum in a
+    rate. Both come out of `flag_summaries`, so the distinction lives in one
+    branch of one function and is easy to lose.
+    """
+    from comms_surveillance.api import flag_summaries
+
+    dataset = demo_seed.build_dataset(count=48, as_of=AS_OF, key_prefix=FIXTURE)
+    async with seeded() as db:
+        await demo_seed.seed(db, dataset, lexicon_version="test")
+        await db.commit()
+        call_ids = await _seeded_call_ids(db)
+
+    async with seeded() as db:
+        assert _mine(await flag_summaries(db, limit=5000), call_ids)
+        sampled = _mine(await flag_summaries(db, qa_sample=True, limit=5000), call_ids)
+    assert sampled == [], "a seeded flag reached the lead's QA-sample measurement stream"
 
 
 @pytest.mark.integration

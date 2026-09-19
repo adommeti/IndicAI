@@ -316,11 +316,16 @@ def _category_precision(category: str, counts: dict[str, int] | None) -> Categor
 DEMO_MARKER: dict[str, Any] = {"demo": True}
 
 
-def _real_runs_only(statement: Select[Any]) -> Select[Any]:
+def demo_free(statement: Select[Any]) -> Select[Any]:
     """Drop rows produced by the demo seeder. See `DEMO_MARKER`.
 
     `~contains` rather than a `demo = false` test: a pipeline row has no `demo`
     key at all, and an equality test against a missing key is null, not true.
+
+    Public because `api.flag_summaries` needs it for the QA-sample stream, which
+    builds its own join to `analysis_runs` rather than going through any
+    statement here. Every place that *measures* must apply this; the reviewer's
+    queue must not, because showing the seeded flags is the whole point of them.
     """
     return statement.where(~AnalysisRun.output.contains(DEMO_MARKER))
 
@@ -349,7 +354,7 @@ def flag_statement(since: datetime | None, until: datetime | None) -> Select[Any
     detector, and bucketing by decision time would smear one week's model
     behaviour across however long the queue took to drain.
     """
-    statement = _real_runs_only(
+    statement = demo_free(
         select(Flag.id, Flag.category, Flag.created_at, Disposition.disposition, Disposition.seq)
         .select_from(Flag)
         # An inner join: `flags.run_id` is a non-nullable foreign key, so every
@@ -387,7 +392,7 @@ def qa_sample_statement(since: datetime | None) -> Select[Any]:
         .outerjoin(Disposition, Disposition.flag_id == Flag.id)
         .where(AnalysisRun.output.contains({"escalation_reasons": [QA_SAMPLE_REASON]}))
     )
-    statement = _real_runs_only(statement)
+    statement = demo_free(statement)
     if since is not None:
         statement = statement.where(AnalysisRun.created_at >= since)
     return statement

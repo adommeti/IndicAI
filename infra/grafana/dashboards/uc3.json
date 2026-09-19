@@ -142,7 +142,7 @@
    "id": 4,
    "type": "table",
    "title": "Reviewer-decided precision by category",
-   "description": "confirmed / (confirmed + false_positive) over the latest disposition per flag. Three rules, all of them from apps/comms_surveillance/metrics.py and all easy to get quietly wrong: latest is by `seq` and never by created_at (rows written in one transaction share a timestamp); needs_more_context and escalated are a reviewer saying 'not yet' and 'not mine', so they are in neither the numerator nor the denominator; and a zero denominator is NULL, never 0.0 -- a category nobody has decided a flag in has no precision. EXCLUDES flags raised outside the dashboard window, which is on flags.created_at (when the detector fired) rather than on the decision, so a slow queue cannot smear one week's model behaviour across the next. The B6 gate is 0.80; uc3/P7 measured 0.30 over 242 flags.",
+   "description": "confirmed / (confirmed + false_positive) over the latest disposition per flag. Three rules, all of them from apps/comms_surveillance/metrics.py and all easy to get quietly wrong: latest is by `seq` and never by created_at (rows written in one transaction share a timestamp); needs_more_context and escalated are a reviewer saying 'not yet' and 'not mine', so they are in neither the numerator nor the denominator; and a zero denominator is NULL, never 0.0 -- a category nobody has decided a flag in has no precision. EXCLUDES flags raised outside the dashboard window, which is on flags.created_at (when the detector fired) rather than on the decision, so a slow queue cannot smear one week's model behaviour across the next. The B6 gate is 0.80; uc3/P7 measured 0.30 over 242 flags. Rows written by comms_surveillance.demo_seed are excluded: a seeded disposition is a fabricated human verdict, and counting one would put an invented figure on this dashboard beside the measured ones.",
    "gridPos": {
     "h": 9,
     "w": 12,
@@ -157,7 +157,7 @@
     {
      "refId": "A",
      "format": "table",
-     "rawSql": "select f.category as category,\n       count(*) filter (where d.disposition = 'confirmed') as confirmed,\n       count(*) filter (where d.disposition = 'false_positive') as false_positive,\n       count(*) filter (where d.disposition in ('confirmed','false_positive')) as decided,\n       case when count(*) filter (where d.disposition in ('confirmed','false_positive')) = 0\n            then null\n            else count(*) filter (where d.disposition = 'confirmed')::float\n                 / count(*) filter (where d.disposition in ('confirmed','false_positive'))\n       end as precision\n  from flags f\n  left join lateral (\n       select disposition from dispositions\n        where flag_id = f.id order by seq desc limit 1\n  ) d on true\n where f.created_at between $__timeFrom() and $__timeTo()\n group by f.category order by f.category"
+     "rawSql": "select f.category as category,\n       count(*) filter (where d.disposition = 'confirmed') as confirmed,\n       count(*) filter (where d.disposition = 'false_positive') as false_positive,\n       count(*) filter (where d.disposition in ('confirmed','false_positive')) as decided,\n       case when count(*) filter (where d.disposition in ('confirmed','false_positive')) = 0\n            then null\n            else count(*) filter (where d.disposition = 'confirmed')::float\n                 / count(*) filter (where d.disposition in ('confirmed','false_positive'))\n       end as precision\n  from flags f\n  left join lateral (\n       select disposition from dispositions\n        where flag_id = f.id order by seq desc limit 1\n  ) d on true\n  join analysis_runs r on r.id = f.run_id\n where not (r.output @> '{\"demo\": true}')\n   and f.created_at between $__timeFrom() and $__timeTo()\n group by f.category order by f.category"
     }
    ],
    "fieldConfig": {
@@ -186,7 +186,7 @@
    "id": 5,
    "type": "piechart",
    "title": "Review queue by latest disposition",
-   "description": "How much of the queue has actually been decided. The undecided slice is the denominator the precision panel does not have: a large one means precision is measured over a small, possibly unrepresentative sample of the detector's output.",
+   "description": "How much of the queue has actually been decided. The undecided slice is the denominator the precision panel does not have: a large one means precision is measured over a small, possibly unrepresentative sample of the detector's output. Rows written by comms_surveillance.demo_seed are excluded: a seeded disposition is a fabricated human verdict, and counting one would put an invented figure on this dashboard beside the measured ones.",
    "gridPos": {
     "h": 9,
     "w": 6,
@@ -201,7 +201,7 @@
     {
      "refId": "A",
      "format": "table",
-     "rawSql": "select coalesce(d.disposition, 'undecided') as state, count(*) as flags\n  from flags f\n  left join lateral (\n       select disposition from dispositions\n        where flag_id = f.id order by seq desc limit 1\n  ) d on true\n where f.created_at between $__timeFrom() and $__timeTo()\n group by 1 order by 2 desc"
+     "rawSql": "select coalesce(d.disposition, 'undecided') as state, count(*) as flags\n  from flags f\n  left join lateral (\n       select disposition from dispositions\n        where flag_id = f.id order by seq desc limit 1\n  ) d on true\n  join analysis_runs r on r.id = f.run_id\n where not (r.output @> '{\"demo\": true}')\n   and f.created_at between $__timeFrom() and $__timeTo()\n group by 1 order by 2 desc"
     }
    ],
    "fieldConfig": {
@@ -213,7 +213,7 @@
    "id": 6,
    "type": "timeseries",
    "title": "Flags raised per day by category",
-   "description": "The detector's output rate, independent of anyone reviewing it. Read alongside precision: uc3/P7 found recall 0.986 and clean_flag_rate 0.0, so the precision problem is over-flagging WITHIN calls that contain something, not flagging calls that are clean -- a spike here without a matching confirmed count is that.",
+   "description": "The detector's output rate, independent of anyone reviewing it. Read alongside precision: uc3/P7 found recall 0.986 and clean_flag_rate 0.0, so the precision problem is over-flagging WITHIN calls that contain something, not flagging calls that are clean -- a spike here without a matching confirmed count is that. Rows written by comms_surveillance.demo_seed are excluded: a seeded disposition is a fabricated human verdict, and counting one would put an invented figure on this dashboard beside the measured ones.",
    "gridPos": {
     "h": 9,
     "w": 6,
@@ -228,7 +228,7 @@
     {
      "refId": "A",
      "format": "time_series",
-     "rawSql": "select date_trunc('day', f.created_at) as time, f.category as metric, count(*) as value\n  from flags f\n where f.created_at between $__timeFrom() and $__timeTo()\n group by 1, 2 order by 1"
+     "rawSql": "select date_trunc('day', f.created_at) as time, f.category as metric, count(*) as value\n  from flags f\n  join analysis_runs r on r.id = f.run_id\n where not (r.output @> '{\"demo\": true}')\n   and f.created_at between $__timeFrom() and $__timeTo()\n group by 1, 2 order by 1"
     }
    ],
    "fieldConfig": {

@@ -202,6 +202,10 @@ prefix). There is deliberately no reset: the app role holds no `DELETE` on the
 chained tables, and a seeder that worked around that would be a seeder that can
 rewrite an audit trail. To start over, start over with a fresh volume.
 
+`make seed-uc3` needs `DATABASE_URL` in the shell — the compose environment is
+not sourced for it — and `ENV` set to one of dev/local/test/ci. `--dry-run` shapes
+the dataset and prints what it would write, touching no database.
+
 Do not configure a retention window on a database holding demo data. Both
 retention gates are closed by default, but if one is opened the sweep will book
 fabricated `rows_matched`/`rows_deleted` into the shared deletion log with no

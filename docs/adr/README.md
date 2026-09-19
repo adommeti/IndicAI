@@ -30,6 +30,7 @@ or verify the decision. Anything not yet built is written as "not implemented â€
 | [0015](0015-governance-is-app-scoped-not-a-shared-claim.md) | `governance` denies content in uc3 and grants it in uc1; the role is app-scoped and the two must be different Entra groups | Accepted | `uc1/P6` |
 | [0016](0016-retention-cannot-reach-chained-evidence.md) | Retention deletes transcripts and recordings; quoted evidence inside the hash chain is outside any window uc3 can enforce | Accepted | `uc3/P7` |
 | [0017](0017-uc3-cross-border-unredacted-transcripts.md) | uc3 sends UNREDACTED employee call transcripts to a US-hosted model (the E9 override); accepted for synthetic data only, lapsing at ADR 0004 / DPA | Accepted | `uc3/P7` |
+| [0018](0018-demo-data-lives-in-the-real-tables-marked.md) | Demo data is written to the real chained tables, marked four ways and excluded from every measurement | Accepted | uc3 demo, ahead of `uc3/P8-pipeline` |
 
 ## Reserved number
 

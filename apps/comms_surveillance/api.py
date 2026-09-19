@@ -44,7 +44,7 @@ from fastapi.staticfiles import StaticFiles
 from indic_platform import serving
 from indic_platform.db.models import AnalysisRun, Call, Disposition, Flag, TranscriptSegment
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import case, func, select
+from sqlalchemy import Select, case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from starlette.concurrency import run_in_threadpool
@@ -186,15 +186,21 @@ def _summary(flag: Flag, disposition: str | None) -> dict[str, Any]:
     }
 
 
-async def flag_summaries(
-    session: AsyncSession,
+def queue_statement(
     *,
     severity: str | None = None,
     undispositioned: bool = False,
     qa_sample: bool = False,
     limit: int = 500,
-) -> list[dict[str, Any]]:
-    """The queue, in severity order, each flag carrying its latest disposition."""
+) -> Select[Any]:
+    """The queue query, separated from running it so a test can read the SQL.
+
+    Worth separating because one branch of it carries a rule that is invisible
+    in the result: the QA-sample stream excludes demo-seeded rows and the
+    reviewer's queue deliberately does not. Both are correct, neither is
+    obvious, and a test over rows cannot tell a missing filter from an empty
+    database.
+    """
     latest = _latest_disposition_subquery()
     query = (
         select(Flag, Disposition.disposition)
@@ -215,6 +221,32 @@ async def flag_summaries(
         query = query.join(AnalysisRun, AnalysisRun.id == Flag.run_id).where(
             AnalysisRun.output["escalation_reasons"].contains(["qa_sample"])
         )
+        # Demo rows are excluded here and nowhere else in this function. The
+        # reviewer's queue *must* show them -- a demonstration with an empty
+        # queue demonstrates nothing -- but this branch is not a queue: it is
+        # the lead's measurement stream, and it feeds
+        # `metrics.false_negative_estimate`. A seeded call settling as "the
+        # detector missed nothing" is a fabricated datum in a rate, which is the
+        # same defect the precision exclusion exists to prevent.
+        query = metrics.demo_free(query)
+    return query
+
+
+async def flag_summaries(
+    session: AsyncSession,
+    *,
+    severity: str | None = None,
+    undispositioned: bool = False,
+    qa_sample: bool = False,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """The queue, in severity order, each flag carrying its latest disposition."""
+    query = queue_statement(
+        severity=severity,
+        undispositioned=undispositioned,
+        qa_sample=qa_sample,
+        limit=limit,
+    )
     rows = (await session.execute(query)).all()
     return [_summary(flag, disposition) for flag, disposition in rows]
 
@@ -578,7 +610,9 @@ async def precision(
         # otherwise indistinguishable from a real one with no reviews yet, and
         # the difference between "nobody has decided anything" and "everything
         # here is seeded" is the difference between an honest empty chart and a
-        # misleading one.
+        # misleading one. Whole-table, not windowed like the figures beside it:
+        # it answers "does this database hold demo data", which is a property of
+        # the database rather than of the window.
         "demo_excluded": await metrics.demo_row_counts(session),
     }
 

@@ -210,8 +210,9 @@ work in [docs/build/PROMPT-PLAN.md](docs/build/PROMPT-PLAN.md).
 Program-level decisions and their consequences are recorded as ADRs, indexed in
 [docs/adr/README.md](docs/adr/README.md): reasoning in the user's language (0001), one platform
 package behind three apps (0002), hybrid hardened detection for surveillance (0005), meeting
-minutes as a separate consented module (0006), the build workflow (0007) and the cloud build
-environment contract (0008). ADRs 0003 (dubbing contract) and 0004 (surveillance scope) are
+minutes as a separate consented module (0006), the build workflow (0007), the cloud build
+environment contract (0008) and why demo data lives in the real audit tables, marked and
+excluded from every measurement (0018). ADRs 0003 (dubbing contract) and 0004 (surveillance scope) are
 reserved for the prompts and the governance gate that own them. `docs/prd-v2.md` is the
 specification and is read-only; deviations from it are recorded as ADRs.
 

@@ -267,6 +267,15 @@ class AnalysisRun(Base):
     prev_hash: Mapped[str] = mapped_column(String(64), default="")
     row_hash: Mapped[str] = mapped_column(String(64))
 
+    __table_args__ = (
+        # Three `@>` containment predicates read this column on request paths:
+        # the QA-sample statement, the demo-row exclusion every precision read
+        # applies, and the demo-row counts on the metrics responses. Without an
+        # index each is a sequential scan of the one table here designed only to
+        # grow (migration 0014).
+        Index("ix_analysis_runs_output_gin", "output", postgresql_using="gin"),
+    )
+
 
 class Flag(Base):
     """A candidate finding for human review (PRD E8). Append-only, hash-chained."""

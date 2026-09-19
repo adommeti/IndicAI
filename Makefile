@@ -173,10 +173,13 @@ voice-test:
 migrate:
 	$(UV) run alembic upgrade head
 # A demonstration queue for the uc3 reviewer console, shaped from the golden set.
-# Needs `make stack-core && make migrate`. Every row it writes is labelled
+# Needs `make stack-core && make migrate`, plus DATABASE_URL in the shell (the
+# compose environment is not sourced here) and ENV set to one of
+# dev/local/test/ci -- the seeder refuses anything else, because the rows it
+# writes are append-only and cannot be taken back. Every row is labelled
 # `demo-seed` and carries `"demo": true`, so nothing here can be mistaken for
-# detector output -- see the module docstring. Safe to re-run; it cannot undo
-# itself, because the tables it writes are append-only.
+# detector output, and the metrics exclude it -- see the module docstring.
+# Safe to re-run. `--dry-run` shapes the dataset and writes nothing.
 seed-uc3:
 	$(UV) run python -m comms_surveillance.demo_seed
 audit:

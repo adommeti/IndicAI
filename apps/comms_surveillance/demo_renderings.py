@@ -8,7 +8,7 @@ the wrong thing.
 
 So the renderings are produced **once**, here, by the same function the pipeline
 uses (`detector.render_english`, Haiku), and checked in to `demo/renderings.json`
-with the model and the date that produced them. The seeder reads that file and
+with the model and the date that produced each one. The seeder reads that file and
 nothing else. What the demo shows is therefore a real translation by a named
 model on a recorded date -- not a gloss this repository wrote by hand and not an
 empty field.
@@ -35,6 +35,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,13 @@ from indic_platform.eval.runners.run_uc3 import Transcript, load_transcripts
 from comms_surveillance import detector
 
 STORE = Path(__file__).parent / "demo" / "renderings.json"
+
+#: Prefixes every key. Without it the keys are bare 16-character hex strings,
+#: which the repository's secret scan reports as high-entropy strings -- a whole
+#: file of false positives, and the only ways to silence them would be to
+#: allow-list the file (so a real secret in it would never be seen again) or to
+#: accept a permanently red gate.
+KEY_PREFIX = "span:"
 
 #: Spans in these languages are already English; translating them would spend
 #: money to get the same string back.
@@ -57,7 +65,7 @@ def span_key(span: str) -> str:
     can change; the text cannot. This also means a rendering stays valid when the
     seeder's selection changes.
     """
-    return hashlib.sha256(span.strip().encode()).hexdigest()[:16]
+    return KEY_PREFIX + hashlib.sha256(span.strip().encode()).hexdigest()[:16]
 
 
 @cache
@@ -69,8 +77,14 @@ def _payload() -> dict[str, Any]:
     return dict(json.loads(STORE.read_text()))
 
 
-def load() -> dict[str, str]:
-    """The checked-in renderings, or empty if the file was never generated.
+def load() -> dict[str, dict[str, str]]:
+    """The checked-in renderings, keyed by span digest.
+
+    Each entry is `{"english", "model", "generated_at"}`. The model and date are
+    stored **per span**, not once for the file: a later run translates only what
+    is missing, so a file-level stamp would relabel every older translation with
+    whatever model happened to run last. Provenance that moves when you add a row
+    is not provenance.
 
     Empty is a supported state: `demo_seed` then leaves `english_rendering` blank,
     which is exactly what `detector.render_english` returns when its call fails,
@@ -78,17 +92,19 @@ def load() -> dict[str, str]:
 
     A copy, not the cached dict: `generate` mutates what `load` hands it.
     """
-    return dict(_payload().get("spans", {}))
+    return {key: dict(entry) for key, entry in _payload().get("spans", {}).items()}
 
 
 def provenance() -> dict[str, Any]:
-    """Who produced the renderings -- the function and the model -- and nothing
-    about the findings they sit beside."""
+    """Who produced the renderings -- the function -- and nothing about the
+    findings they sit beside. The model and date are per span; `demo_seed` adds
+    the ones a given call actually used."""
     return {k: v for k, v in _payload().items() if k != "spans"}
 
 
 def spans_needing_a_rendering(
-    transcripts: list[Transcript] | None = None, known: dict[str, str] | None = None
+    transcripts: list[Transcript] | None = None,
+    known: dict[str, dict[str, str]] | None = None,
 ) -> list[tuple[str, str]]:
     """Every (span, language) in the corpus that is not English and not yet done.
 
@@ -138,20 +154,31 @@ async def generate(limit: int | None = None, client: Any = None) -> dict[str, An
     """
     have = load()
     todo = spans_needing_a_rendering(known=have)[: limit if limit is not None else None]
-    failed = 0
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    failed: list[str] = []
     for span, _language in todo:
         rendered = await detector.render_english(
             detector.AnalysisFlag(category="conduct", severity="low", evidence_span=span),
             client=client,
         )
-        if rendered.strip():
-            have[span_key(span)] = rendered.strip()
-        else:
-            failed += 1
-    return {"spans": have, "translated": len(todo) - failed, "failed": failed}
+        text = rendered.strip()
+        # A result identical to its input is not a translation -- it is the model
+        # handing the span back, which happens on Roman-script Hinglish it reads
+        # as already English. Stored, it would sit under a heading promising an
+        # English rendering while saying nothing the reviewer could not already
+        # read. Counted as a failure, the console says so instead.
+        if not text or text == span.strip():
+            failed.append(span)
+            continue
+        have[span_key(span)] = {
+            "english": text,
+            "model": detector.TRIAGE_MODEL,
+            "generated_at": today,
+        }
+    return {"spans": have, "translated": len(todo) - len(failed), "failed": len(failed)}
 
 
-def write(spans: dict[str, str]) -> None:
+def write(spans: dict[str, dict[str, str]]) -> None:
     STORE.parent.mkdir(parents=True, exist_ok=True)
     _payload.cache_clear()
     STORE.write_text(
@@ -164,7 +191,6 @@ def write(spans: dict[str, str]) -> None:
                     "them are still recorded with model 'demo-seed'."
                 ),
                 "renderer": "comms_surveillance.detector.render_english",
-                "model": detector.TRIAGE_MODEL,
                 "spans": dict(sorted(spans.items())),
             },
             indent=2,

@@ -95,12 +95,17 @@ from indic_platform.eval.runners.run_uc3 import (
     strip_attack,
 )
 from sqlalchemy import select
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from comms_surveillance import audit, auth, demo_renderings, detector
 from comms_surveillance.lexicon import matcher
 from comms_surveillance.stage0 import segments_of
 from comms_surveillance.transliterate import offline
+
+#: The checked-in translations, as `demo_renderings.load` returns them.
+Renderings = dict[str, dict[str, str]]
 
 #: Every seeded object key begins with this. It is the idempotency key, and it is
 #: also how an operator tells demo data from ingested data at a glance.
@@ -182,6 +187,10 @@ class SeededFlag:
     start_ms: int
     evidence_span: str
     english_rendering: str
+    #: The model that produced `english_rendering`, or "" when the span is
+    #: already English or has no rendering. Carried per flag rather than per
+    #: file so that `run_output` can name the models a given call actually used.
+    rendering_model: str
     reasoning: str
     #: "label", "lexicon" or "injection" -- which part of this module produced it.
     origin: str
@@ -314,22 +323,24 @@ def _segments_for(item: Transcript) -> tuple[SeededSegment, ...]:
     return tuple(out)
 
 
-def _english(span: str, language: str, renderings: dict[str, str]) -> str:
-    """The English beside a span: itself if English, otherwise the checked-in
-    translation, otherwise nothing.
+def _english(span: str, language: str, renderings: Renderings) -> tuple[str, str]:
+    """The English beside a span, and the model that produced it.
 
-    Nothing is the supported fallback, not a failure: it is exactly what
-    `detector.render_english` returns when its call fails, and the console says
-    so rather than showing an empty box. Inventing a gloss here would put
-    English that no translator produced into an evidence record.
+    Itself if the call is English -- no translator involved, so no model is
+    named. Otherwise the checked-in translation with its own model. Otherwise
+    nothing, which is the supported fallback rather than a failure: it is
+    exactly what `detector.render_english` returns when its call fails, and the
+    console says so rather than showing an empty box. Inventing a gloss here
+    would put English that no translator produced into an evidence record.
     """
     if language in demo_renderings.NATIVE_ENGLISH:
-        return span
-    return renderings.get(demo_renderings.span_key(span), "")
+        return span, ""
+    entry = renderings.get(demo_renderings.span_key(span), {})
+    return entry.get("english", ""), entry.get("model", "")
 
 
 def _label_flags(
-    item: Transcript, segments: tuple[SeededSegment, ...], renderings: dict[str, str]
+    item: Transcript, segments: tuple[SeededSegment, ...], renderings: Renderings
 ) -> list[SeededFlag]:
     """The golden labels, as flags."""
     flags = []
@@ -345,7 +356,8 @@ def _label_flags(
                 speaker=label.speaker,
                 start_ms=start,
                 evidence_span=label.evidence_span,
-                english_rendering=_english(label.evidence_span, item.language_mix, renderings),
+                english_rendering="",
+                rendering_model="",
                 reasoning=(
                     f"Demo seed: this is the golden-set label on {item.id} "
                     f"({item.language_mix}, class {item.cls}), not a model's finding."
@@ -387,7 +399,7 @@ def _attack_turns(item: Transcript) -> list[str]:
 
 
 def _injection_flag(
-    item: Transcript, segments: tuple[SeededSegment, ...], renderings: dict[str, str]
+    item: Transcript, segments: tuple[SeededSegment, ...], renderings: Renderings
 ) -> list[SeededFlag]:
     """`instruction_like_content` for a turn that addresses the reviewing system.
 
@@ -408,7 +420,8 @@ def _injection_flag(
             speaker=segment.speaker,
             start_ms=segment.start_ms,
             evidence_span=segment.text,
-            english_rendering=_english(segment.text, item.language_mix, renderings),
+            english_rendering="",
+            rendering_model="",
             reasoning=(
                 "Demo seed: this turn addresses the reviewing system rather than the "
                 "other party. It is surfaced as a security signal, not a policy "
@@ -452,7 +465,7 @@ def build_dataset(
     transcripts: Sequence[Transcript] | None = None,
     lexicon: matcher.Lexicon | None = None,
     key_prefix: str = KEY_PREFIX,
-    renderings: dict[str, str] | None = None,
+    renderings: Renderings | None = None,
 ) -> list[SeededCall]:
     """Shape the whole dataset. Pure: no database, no network, no clock unless asked.
 
@@ -537,14 +550,21 @@ def build_dataset(
         # keeping the pre-verify span would quietly route around it. No seeded
         # span is long enough to be capped today; the point is that the seeder
         # has no looser path to the queue than the detector does.
-        flags = [
-            replace(
-                seeded,
-                evidence_span=verified.evidence_span,
-                dispositions=_dispositions(item, seeded, index),
+        # The English is looked up against the *verified* span, for the same
+        # reason: a capped span with the uncapped span's translation beside it
+        # would carry the capped text past the cap in the next field along.
+        flags = []
+        for index, (seeded, verified) in enumerate(zip(raw, checked.flags, strict=True)):
+            english, model = _english(verified.evidence_span, item.language_mix, glosses)
+            flags.append(
+                replace(
+                    seeded,
+                    evidence_span=verified.evidence_span,
+                    english_rendering=english,
+                    rendering_model=model,
+                    dispositions=_dispositions(item, seeded, index),
+                )
             )
-            for index, (seeded, verified) in enumerate(zip(raw, checked.flags, strict=True))
-        ]
 
         duration_ms = durations.get(item.id) or (segments[-1].end_ms if segments else 0)
         out.append(
@@ -612,13 +632,21 @@ def run_output(call: SeededCall) -> dict[str, Any]:
         # Where the English beside a non-English span came from, named so that a
         # reader can tell a real translation from a fabricated finding. It
         # describes the gloss only: the finding itself is still `demo-seed`.
-        "english_rendering_source": (
-            demo_renderings.provenance()
-            if call.language not in demo_renderings.NATIVE_ENGLISH
-            and any(f.english_rendering for f in call.flags)
-            else {}
-        ),
+        # The models are the ones this call's spans were actually rendered by,
+        # read off the flags rather than off a file-level stamp that a later
+        # regeneration would move.
+        "english_rendering_source": _rendering_source(call),
     }
+
+
+def _rendering_source(call: SeededCall) -> dict[str, Any]:
+    """The provenance of this call's English renderings, or `{}` when there are
+    none to account for -- an English call renders itself, and an unrendered
+    span claims no translator because none ran."""
+    models = sorted({f.rendering_model for f in call.flags if f.rendering_model})
+    if not models:
+        return {}
+    return {**demo_renderings.provenance(), "models": models}
 
 
 def transcript_sha256(call: SeededCall) -> str:
@@ -780,12 +808,27 @@ async def main(argv: Sequence[str] | None = None) -> int:
         print(str(refused))
         return 2
 
-    engine = create_async_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        # A named prerequisite rather than a KeyError traceback: `make seed-uc3`
+        # does not source the compose environment, so this is the ordinary way
+        # to get it wrong.
+        print("DATABASE_URL is not set; run `make stack-core && make migrate` and export it")
+        return 2
+
+    engine = create_async_engine(url, pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with factory() as session:
             written = await seed(session, dataset, lexicon_version=lex.version)
             await session.commit()
+    except OperationalError:
+        # The other ordinary way to get this wrong: a URL that is right and a
+        # stack that is down. Eighty lines of SQLAlchemy traceback do not say
+        # that any better than one line does.
+        print(f"could not connect to the database at {make_url(url).render_as_string()}")
+        print("start it with `make stack-core` and apply migrations with `make migrate`")
+        return 2
     finally:
         await engine.dispose()
     print(json.dumps({"shaped": summary, "written": written}, indent=2))
