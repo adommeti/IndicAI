@@ -191,11 +191,20 @@ rows are append-only and cannot be taken back.
 
 The metrics exclude it. A seeded `confirmed` is a fabricated human verdict, so
 counting it would put an invented precision on the governance dashboard beside
-the real measured figures. `metrics.DEMO_MARKER` drops every flag hanging off a
-demo run from `/metrics/precision`, `/metrics/false_negative_estimate` and
-`/qa-sample`, and both metrics responses report `demo_excluded` counts — a
-silent exclusion would leave an operator unable to tell an empty dashboard from
-one whose every row was filtered out.
+the real measured figures. `metrics.DEMO_MARKER` is applied at four sites, and
+the count is the point — the first attempt covered one and was wrong twice over:
+
+| surface | where |
+|---|---|
+| `/metrics/precision` | `metrics.flag_statement` |
+| `/metrics/false_negative_estimate` | `metrics.qa_sample_statement` |
+| `/qa-sample` | `api.queue_statement`, which joins `analysis_runs` itself |
+| the three Grafana panels reading `flags` | `infra/grafana/dashboards/uc3.json`, raw SQL |
+
+The reviewer's queue deliberately keeps them; showing the seeded flags is what
+they are for. Both metrics responses report `demo_excluded` counts — a silent
+exclusion would leave an operator unable to tell an empty dashboard from one
+whose every row was filtered out. See ADR 0018.
 
 Re-running is a no-op (`calls.source_key` is unique under a `demo/uc3/`
 prefix). There is deliberately no reset: the app role holds no `DELETE` on the

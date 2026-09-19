@@ -63,7 +63,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from indic_platform.db.models import AnalysisRun, Disposition, Flag
-from sqlalchemy import Select, func, select
+from sqlalchemy import Join, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from comms_surveillance.detector import CATEGORIES
@@ -316,17 +316,46 @@ def _category_precision(category: str, counts: dict[str, int] | None) -> Categor
 DEMO_MARKER: dict[str, Any] = {"demo": True}
 
 
+def _tables_in(froms: Iterable[Any]) -> set[Any]:
+    """Every table a statement selects from, joins included.
+
+    `get_final_froms` returns one `Join` for a joined statement rather than its
+    operands, so a membership test against it reports "not joined" for a
+    statement that plainly is. The walk is explicit because the alternative --
+    trusting the caller -- is what `demo_free` exists to stop trusting.
+    """
+    found: set[Any] = set()
+    for element in froms:
+        if isinstance(element, Join):
+            found |= _tables_in([element.left, element.right])
+        else:
+            found.add(element)
+    return found
+
+
 def demo_free(statement: Select[Any]) -> Select[Any]:
     """Drop rows produced by the demo seeder. See `DEMO_MARKER`.
 
     `~contains` rather than a `demo = false` test: a pipeline row has no `demo`
     key at all, and an equality test against a missing key is null, not true.
 
-    Public because `api.flag_summaries` needs it for the QA-sample stream, which
-    builds its own join to `analysis_runs` rather than going through any
+    Public because `api.queue_statement` needs it for the QA-sample stream,
+    which builds its own join to `analysis_runs` rather than going through any
     statement here. Every place that *measures* must apply this; the reviewer's
     queue must not, because showing the seeded flags is the whole point of them.
+
+    The join is required rather than added. Adding it would hide the topology
+    from the caller, and applied to a statement that has not joined
+    `analysis_runs` the bare `where` silently produces a cartesian product --
+    no SQLAlchemy warning, a compiled query that still mentions `analysis_runs`,
+    and numbers multiplied by the row count of a table designed only to grow.
+    Loud here beats wrong there.
     """
+    if AnalysisRun.__table__ not in _tables_in(statement.get_final_froms()):
+        raise ValueError(
+            "demo_free needs the statement to join analysis_runs; applied without it "
+            "the filter becomes a cross join"
+        )
     return statement.where(~AnalysisRun.output.contains(DEMO_MARKER))
 
 

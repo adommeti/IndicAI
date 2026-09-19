@@ -101,8 +101,16 @@ def test_the_english_rendering_is_a_recorded_translation_not_an_invention() -> N
     for entry in store.values():
         assert entry["english"] and entry["model"] and entry["generated_at"]
 
+    dataset = _dataset(count=48)
+    # A floor on renderings actually applied, checked before the loop below.
+    # Without it the loop's central assertion is satisfied by `"" == ""` and
+    # passes when every single lookup misses -- which it did, and which is
+    # exactly the inert assertion this file exists to avoid.
+    applied = [flag for call in dataset for flag in call.flags if flag.rendering_model]
+    assert len(applied) >= 20, f"only {len(applied)} flags carry a translation"
+
     seen_non_english = False
-    for call in _dataset(count=48):
+    for call in dataset:
         for flag in call.flags:
             if call.language in demo_renderings.NATIVE_ENGLISH:
                 # An English call renders itself, so no translator is named.
@@ -134,6 +142,12 @@ def test_a_missing_rendering_is_left_empty_rather_than_guessed() -> None:
     then claims no translator, because none ran.
     """
     dataset = demo_seed.build_dataset(count=24, as_of=AS_OF, renderings={})
+    # The mirror of the floor above: with the store empty, nothing may be
+    # rendered. Together the two pin the difference between "the lookup found
+    # nothing" and "there was nothing to find".
+    assert any(
+        call.language not in demo_renderings.NATIVE_ENGLISH and call.flags for call in dataset
+    ), "no non-English call with a flag in the sample, so this would prove nothing"
     for call in dataset:
         if call.language in demo_renderings.NATIVE_ENGLISH:
             continue
@@ -329,6 +343,21 @@ def test_escalation_reasons_come_from_the_real_combine_rule() -> None:
         assert bool(call.escalation_reasons) == (call.stage == "deep_analysis")
 
 
+def test_a_connection_failure_never_prints_the_password() -> None:
+    """The one-line message `main` prints on an unreachable database.
+
+    `render_as_string` hides the password by default, which is the whole reason
+    it is used instead of the raw URL -- and a default is exactly the kind of
+    thing a later edit turns off without noticing.
+    """
+    from sqlalchemy.engine import make_url
+
+    url = "postgresql+psycopg://platform:hunter2@db:5432/platform"  # pragma: allowlist secret
+    rendered = make_url(url).render_as_string()
+    assert "hunter2" not in rendered
+    assert "***" in rendered
+
+
 # --- the exclusion, without a database -----------------------------------------
 
 
@@ -360,6 +389,23 @@ def test_every_measuring_query_carries_the_demo_predicate() -> None:
         assert metrics.DEMO_MARKER in compiled.params.values(), name
 
 
+def test_demo_free_refuses_a_statement_that_has_not_joined_the_runs() -> None:
+    """Applied without the join it is a cross join, and a silent one.
+
+    The compiled SQL still says `analysis_runs`, so the predicate test above
+    would pass while every count was multiplied by the row count of a table
+    designed only to grow.
+    """
+    from comms_surveillance import metrics
+    from indic_platform.db.models import Flag
+    from sqlalchemy import select
+
+    with pytest.raises(ValueError, match="join analysis_runs"):
+        metrics.demo_free(select(Flag.id))
+    # And still accepts one that did join, however deeply nested.
+    metrics.demo_free(metrics.flag_statement(None, None))
+
+
 def test_the_reviewer_queue_keeps_the_demo_rows() -> None:
     """The other half of the rule, and the easier one to lose by tidying.
 
@@ -382,21 +428,31 @@ def test_the_grafana_panels_that_measure_carry_it_too() -> None:
     computing the fabricated figure from the same tables.
     """
     dashboard = json.loads((ROOT / "infra/grafana/dashboards/uc3.json").read_text(encoding="utf-8"))
-    reading_flags = [
-        panel
+
+    def reads_flags(sql: str) -> bool:
+        # Loose on purpose: a panel rewritten as `from flags as f` or onto one
+        # line must still be caught, or this guard silently stops guarding while
+        # the count below still holds.
+        return bool(re.search(r"\bfrom\s+flags\b", sql, re.IGNORECASE))
+
+    reading_flags = {
+        panel["title"]: panel
         for panel in dashboard["panels"]
-        for target in panel.get("targets", [])
-        if " from flags f\n" in (target.get("rawSql") or "")
+        if any(reads_flags(t.get("rawSql") or "") for t in panel.get("targets", []))
+    }
+    assert sorted(reading_flags) == [
+        "Flags raised per day by category",
+        "Review queue by latest disposition",
+        "Reviewer-decided precision by category",
     ]
-    assert len(reading_flags) == 3, [p["title"] for p in reading_flags]
-    for panel in reading_flags:
+    for title, panel in reading_flags.items():
         for target in panel["targets"]:
             sql = target.get("rawSql") or ""
-            if " from flags f\n" not in sql:
+            if not reads_flags(sql):
                 continue
-            assert "join analysis_runs r on r.id = f.run_id" in sql, panel["title"]
-            assert "not (r.output @> '{\"demo\": true}')" in sql, panel["title"]
-        assert "demo_seed are excluded" in panel["description"], panel["title"]
+            assert "join analysis_runs r on r.id = f.run_id" in sql, title
+            assert "not (r.output @> '{\"demo\": true}')" in sql, title
+        assert "demo_seed are excluded" in panel["description"], title
 
 
 # --- persistence ---------------------------------------------------------------

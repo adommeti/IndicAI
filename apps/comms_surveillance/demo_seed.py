@@ -646,7 +646,11 @@ def _rendering_source(call: SeededCall) -> dict[str, Any]:
     models = sorted({f.rendering_model for f in call.flags if f.rendering_model})
     if not models:
         return {}
-    return {**demo_renderings.provenance(), "models": models}
+    # The renderer and the models, and nothing else. Spreading
+    # `demo_renderings.provenance()` here copied its long explanatory note into
+    # the JSONB of every non-English call, beside `run_output`'s own -- the same
+    # paragraph twice in a hash-chained row that already says `"demo": true`.
+    return {"renderer": demo_renderings.provenance()["renderer"], "models": models}
 
 
 def transcript_sha256(call: SeededCall) -> str:

@@ -77,6 +77,17 @@ def _payload() -> dict[str, Any]:
     return dict(json.loads(STORE.read_text()))
 
 
+def untranslatable() -> dict[str, str]:
+    """Spans a run tried and could not render, with the reason.
+
+    Recorded rather than forgotten. Without this the one Hinglish turn the model
+    hands back unchanged re-enters `spans_needing_a_rendering` on every run: the
+    docstring's "costs only the new ones" stops being true, and `--write` returns
+    a permanent failure for a span that will never succeed.
+    """
+    return dict(_payload().get("untranslatable", {}))
+
+
 def load() -> dict[str, dict[str, str]]:
     """The checked-in renderings, keyed by span digest.
 
@@ -112,6 +123,7 @@ def spans_needing_a_rendering(
     a different count or a different selection is still fully rendered.
     """
     have = load() if known is None else known
+    refused = untranslatable()
     items = transcripts if transcripts is not None else load_transcripts()
     seen: set[str] = set()
     out: list[tuple[str, str]] = []
@@ -120,7 +132,7 @@ def spans_needing_a_rendering(
             continue
         for segment in item.segments:
             key = span_key(segment.text)
-            if key in have or key in seen:
+            if key in have or key in refused or key in seen:
                 continue
             seen.add(key)
             out.append((segment.text, item.language_mix))
@@ -155,7 +167,7 @@ async def generate(limit: int | None = None, client: Any = None) -> dict[str, An
     have = load()
     todo = spans_needing_a_rendering(known=have)[: limit if limit is not None else None]
     today = datetime.now(UTC).strftime("%Y-%m-%d")
-    failed: list[str] = []
+    refused = untranslatable()
     for span, _language in todo:
         rendered = await detector.render_english(
             detector.AnalysisFlag(category="conduct", severity="low", evidence_span=span),
@@ -168,17 +180,24 @@ async def generate(limit: int | None = None, client: Any = None) -> dict[str, An
         # English rendering while saying nothing the reviewer could not already
         # read. Counted as a failure, the console says so instead.
         if not text or text == span.strip():
-            failed.append(span)
+            refused[span_key(span)] = (
+                "empty" if not text else "the model returned its input unchanged"
+            )
             continue
         have[span_key(span)] = {
             "english": text,
             "model": detector.TRIAGE_MODEL,
             "generated_at": today,
         }
-    return {"spans": have, "translated": len(todo) - len(failed), "failed": len(failed)}
+    return {
+        "spans": have,
+        "untranslatable": refused,
+        "translated": len(have) - len(load()),
+        "refused": len(refused) - len(untranslatable()),
+    }
 
 
-def write(spans: dict[str, dict[str, str]]) -> None:
+def write(spans: dict[str, dict[str, str]], refused: dict[str, str] | None = None) -> None:
     STORE.parent.mkdir(parents=True, exist_ok=True)
     _payload.cache_clear()
     STORE.write_text(
@@ -192,6 +211,9 @@ def write(spans: dict[str, dict[str, str]]) -> None:
                 ),
                 "renderer": "comms_surveillance.detector.render_english",
                 "spans": dict(sorted(spans.items())),
+                # Tried, could not be rendered, and not worth retrying. Kept in
+                # the file so a re-run does not spend on them again.
+                "untranslatable": dict(sorted((refused or {}).items())),
             },
             indent=2,
             ensure_ascii=False,
@@ -213,14 +235,21 @@ async def main(argv: list[str] | None = None) -> int:
         print(f"{len(todo)} span(s) missing a rendering; pass --write to make the calls")
         return 0
     result = await generate(limit=args.limit)
-    write(result["spans"])
+    write(result["spans"], result["untranslatable"])
     print(
         json.dumps(
-            {"translated": result["translated"], "failed": result["failed"], "file": str(STORE)},
+            {
+                "translated": result["translated"],
+                "refused": result["refused"],
+                "file": str(STORE),
+            },
             indent=2,
         )
     )
-    return 1 if result["failed"] else 0
+    # Zero even when a span was refused: a span the model hands back unchanged is
+    # a recorded outcome, not a broken run, and returning 1 for it would make
+    # every future run of this command look like a failure.
+    return 0
 
 
 if __name__ == "__main__":

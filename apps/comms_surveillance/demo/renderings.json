@@ -612,5 +612,8 @@
       "model": "claude-haiku-4-5",
       "generated_at": "2026-09-19"
     }
+  },
+  "untranslatable": {
+    "span:73bedd56e5c69d5b": "the model returned its input unchanged"
   }
 }

@@ -268,11 +268,12 @@ class AnalysisRun(Base):
     row_hash: Mapped[str] = mapped_column(String(64))
 
     __table_args__ = (
-        # Three `@>` containment predicates read this column on request paths:
-        # the QA-sample statement, the demo-row exclusion every precision read
-        # applies, and the demo-row counts on the metrics responses. Without an
-        # index each is a sequential scan of the one table here designed only to
-        # grow (migration 0014).
+        # Whole-document `@>` containment reads this column on request paths:
+        # `metrics.qa_sample_statement` and the demo-row counts on both metrics
+        # responses. Without an index each is a sequential scan of the one table
+        # here designed only to grow. It does NOT serve the negated containment
+        # of the demo-row exclusion, nor a predicate on an extracted key -- see
+        # migration 0014, which is explicit about the difference.
         Index("ix_analysis_runs_output_gin", "output", postgresql_using="gin"),
     )
 
