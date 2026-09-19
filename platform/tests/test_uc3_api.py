@@ -163,6 +163,7 @@ class Wiring:
     precision_by_category: AsyncMock
     precision_over_time: AsyncMock
     false_negatives: AsyncMock
+    demo_counts: AsyncMock
     verify_all: AsyncMock
     counts: AsyncMock
     read_anchor: AsyncMock
@@ -240,6 +241,11 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(api.metrics, "precision_by_category", by_category)
     monkeypatch.setattr(api.metrics, "precision_over_time", over_time)
     monkeypatch.setattr(api.metrics, "false_negative_estimate", false_negatives)
+    # Both metrics responses report how many demo-seeded rows they left out, so
+    # a seeded database's dashboard cannot be mistaken for a real one with no
+    # reviews yet. Stubbed non-zero, so a route that dropped the field is caught.
+    demo_counts = AsyncMock(return_value={"analysis_runs": 7, "flags": 3})
+    monkeypatch.setattr(api.metrics, "demo_row_counts", demo_counts)
 
     verify_all = AsyncMock(
         return_value=[
@@ -295,6 +301,7 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Any:
         precision_by_category=by_category,
         precision_over_time=over_time,
         false_negatives=false_negatives,
+        demo_counts=demo_counts,
         verify_all=verify_all,
         counts=counts,
         read_anchor=read_anchor,
@@ -913,7 +920,7 @@ def test_the_precision_response_carries_only_the_fields_the_contract_names(
     exactly that failure, and they are dropped.
     """
     payload = client(ROLE_GOVERNANCE).get("/metrics/precision").json()
-    assert set(payload) == {"by_category", "over_time", "unmeasured"}
+    assert set(payload) == {"by_category", "over_time", "unmeasured", "demo_excluded"}
     for row in payload["by_category"]:
         assert set(row) == {"category", "confirmed", "false_positive", "decided", "precision"}
     for point in payload["over_time"]:
@@ -934,6 +941,10 @@ def test_the_false_negative_estimate_says_unmeasured_rather_than_zero(
         "flagless": 0,
         "rate": None,
         "unmeasured": True,
+        # Counts only, and they are the point: a governance reader looking at an
+        # all-zero estimate has to be able to tell "nothing sampled yet" from
+        # "every row in this database is demo data that was excluded".
+        "demo_excluded": {"analysis_runs": 7, "flags": 3},
     }
     assert payload["rate"] is None
 
@@ -956,6 +967,7 @@ def test_the_false_negative_rate_is_reported_once_there_is_a_denominator(
         "flagless": 31,
         "rate": 0.05,
         "unmeasured": False,
+        "demo_excluded": {"analysis_runs": 7, "flags": 3},
     }
     assert payload["settled"] != payload["sampled"]
 

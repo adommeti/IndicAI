@@ -63,7 +63,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from indic_platform.db.models import AnalysisRun, Disposition, Flag
-from sqlalchemy import Select, select
+from sqlalchemy import Join, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from comms_surveillance.detector import CATEGORIES
@@ -301,6 +301,80 @@ def _category_precision(category: str, counts: dict[str, int] | None) -> Categor
 # --- queries --------------------------------------------------------------------
 
 
+#: The marker `comms_surveillance.demo_seed` writes onto every `analysis_runs`
+#: row it creates. Flags hanging off such a run -- and the dispositions written
+#: against them -- are demonstration data: a seeded `confirmed` is a fabricated
+#: human verdict, and counting one would put an invented precision on the
+#: governance dashboard beside the real measured figures. That is the passing
+#: placeholder CLAUDE.md forbids, and it would be shown to exactly the audience
+#: the demo exists for.
+#:
+#: So every statement below excludes them, and `demo_row_counts` reports how
+#: many were left out: a silent exclusion is its own kind of untruth, and an
+#: operator looking at an empty dashboard needs to be able to tell "nothing
+#: happened" from "everything here was demo data".
+DEMO_MARKER: dict[str, Any] = {"demo": True}
+
+
+def _tables_in(froms: Iterable[Any]) -> set[Any]:
+    """Every table a statement selects from, joins included.
+
+    `get_final_froms` returns one `Join` for a joined statement rather than its
+    operands, so a membership test against it reports "not joined" for a
+    statement that plainly is. The walk is explicit because the alternative --
+    trusting the caller -- is what `demo_free` exists to stop trusting.
+    """
+    found: set[Any] = set()
+    for element in froms:
+        if isinstance(element, Join):
+            found |= _tables_in([element.left, element.right])
+        else:
+            found.add(element)
+    return found
+
+
+def demo_free(statement: Select[Any]) -> Select[Any]:
+    """Drop rows produced by the demo seeder. See `DEMO_MARKER`.
+
+    `~contains` rather than a `demo = false` test: a pipeline row has no `demo`
+    key at all, and an equality test against a missing key is null, not true.
+
+    Public because `api.queue_statement` needs it for the QA-sample stream,
+    which builds its own join to `analysis_runs` rather than going through any
+    statement here. Every place that *measures* must apply this; the reviewer's
+    queue must not, because showing the seeded flags is the whole point of them.
+
+    The join is required rather than added. Adding it would hide the topology
+    from the caller, and applied to a statement that has not joined
+    `analysis_runs` the bare `where` silently produces a cartesian product --
+    no SQLAlchemy warning, a compiled query that still mentions `analysis_runs`,
+    and numbers multiplied by the row count of a table designed only to grow.
+    Loud here beats wrong there.
+    """
+    if AnalysisRun.__table__ not in _tables_in(statement.get_final_froms()):
+        raise ValueError(
+            "demo_free needs the statement to join analysis_runs; applied without it "
+            "the filter becomes a cross join"
+        )
+    return statement.where(~AnalysisRun.output.contains(DEMO_MARKER))
+
+
+async def demo_row_counts(session: AsyncSession) -> dict[str, int]:
+    """How much demonstration data this database holds, so the exclusion is visible."""
+    runs = await session.scalar(
+        select(func.count())
+        .select_from(AnalysisRun)
+        .where(AnalysisRun.output.contains(DEMO_MARKER))
+    )
+    flags = await session.scalar(
+        select(func.count())
+        .select_from(Flag)
+        .join(AnalysisRun, AnalysisRun.id == Flag.run_id)
+        .where(AnalysisRun.output.contains(DEMO_MARKER))
+    )
+    return {"analysis_runs": int(runs or 0), "flags": int(flags or 0)}
+
+
 def flag_statement(since: datetime | None, until: datetime | None) -> Select[Any]:
     """Flags in `[since, until)` with every disposition written against them.
 
@@ -309,9 +383,12 @@ def flag_statement(since: datetime | None, until: datetime | None) -> Select[Any
     detector, and bucketing by decision time would smear one week's model
     behaviour across however long the queue took to drain.
     """
-    statement = (
+    statement = demo_free(
         select(Flag.id, Flag.category, Flag.created_at, Disposition.disposition, Disposition.seq)
         .select_from(Flag)
+        # An inner join: `flags.run_id` is a non-nullable foreign key, so every
+        # flag has exactly one run and none is lost by joining to it.
+        .join(AnalysisRun, AnalysisRun.id == Flag.run_id)
         .outerjoin(Disposition, Disposition.flag_id == Flag.id)
     )
     if since is not None:
@@ -344,6 +421,7 @@ def qa_sample_statement(since: datetime | None) -> Select[Any]:
         .outerjoin(Disposition, Disposition.flag_id == Flag.id)
         .where(AnalysisRun.output.contains({"escalation_reasons": [QA_SAMPLE_REASON]}))
     )
+    statement = demo_free(statement)
     if since is not None:
         statement = statement.where(AnalysisRun.created_at >= since)
     return statement

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { evidenceLocated, hasEvidence, markEvidence } from "../src/lib/evidence";
+import {
+  evidenceLocated,
+  hasEvidence,
+  markEvidence,
+  renderingOrAbsent,
+} from "../src/lib/evidence";
 
 const HINDI = "मैं आपको गारंटीड रिटर्न दे सकता हूँ, बस नकद में दीजिए।";
 const TAMIL = "இது உறுதியான லாபம், கவலைப்பட வேண்டாம்.";
@@ -72,5 +77,24 @@ describe("evidenceLocated", () => {
     // A /g/ regex carries lastIndex; two calls in a row must agree.
     expect(evidenceLocated(["cash only", "cash only"], "cash only")).toBe(true);
     expect(evidenceLocated(["cash only", "cash only"], "cash only")).toBe(true);
+  });
+});
+
+describe("renderingOrAbsent", () => {
+  it("passes a real rendering through unchanged", () => {
+    const { text, absent } = renderingOrAbsent("Tell the client it is guaranteed.");
+    expect(absent).toBe(false);
+    expect(text).toBe("Tell the client it is guaranteed.");
+  });
+
+  it("says so rather than leaving an empty box under the heading", () => {
+    // `render_english` returns "" when the translation call fails, which the
+    // detector treats as non-fatal. The reviewer must be able to tell that
+    // apart from a pane that failed to load.
+    for (const empty of ["", "   ", "\n"]) {
+      const { text, absent } = renderingOrAbsent(empty);
+      expect(absent).toBe(true);
+      expect(text).not.toHaveLength(0);
+    }
   });
 });
