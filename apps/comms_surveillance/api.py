@@ -574,6 +574,12 @@ async def precision(
         # Named, so a category with nothing decided reads as "we do not know"
         # rather than disappearing from the chart.
         "unmeasured": [row.category for row in by_category if row.precision is None],
+        # Reported, not merely filtered out. A demo database's dashboard is
+        # otherwise indistinguishable from a real one with no reviews yet, and
+        # the difference between "nobody has decided anything" and "everything
+        # here is seeded" is the difference between an honest empty chart and a
+        # misleading one.
+        "demo_excluded": await metrics.demo_row_counts(session),
     }
 
 
@@ -596,6 +602,7 @@ async def false_negative_estimate(
         "flagless": estimate.flagless,
         "rate": estimate.rate,
         "unmeasured": estimate.rate is None,
+        "demo_excluded": await metrics.demo_row_counts(session),
     }
 
 

@@ -33,7 +33,7 @@ ZAMMAD = zammad-postgresql zammad-redis zammad-memcached zammad-init \
 	zammad-railsserver zammad-nginx zammad-scheduler zammad-websocket
 .PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc1-regression eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-regression eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
         check check-quick check-full test-ticketing stack-core stack-obs stack-voice stack-sparse stack-ticketing stack-status stack-logs ship plan \
-        images image-uc1 image-uc2 image-uc3 compose-config apps-up apps-logs
+        images image-uc1 image-uc2 image-uc3 compose-config apps-up apps-logs seed-uc3
 bootstrap:
 	python3 infra/bootstrap.py
 up: bootstrap
@@ -172,5 +172,12 @@ voice-test:
 	LIVE_API_TESTS=1 $(UV) run pytest -m voice -ra -s
 migrate:
 	$(UV) run alembic upgrade head
+# A demonstration queue for the uc3 reviewer console, shaped from the golden set.
+# Needs `make stack-core && make migrate`. Every row it writes is labelled
+# `demo-seed` and carries `"demo": true`, so nothing here can be mistaken for
+# detector output -- see the module docstring. Safe to re-run; it cannot undo
+# itself, because the tables it writes are append-only.
+seed-uc3:
+	$(UV) run python -m comms_surveillance.demo_seed
 audit:
 	$(UV) run pip-audit --skip-editable --ignore-vuln PYSEC-2026-3740

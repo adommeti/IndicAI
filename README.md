@@ -157,6 +157,11 @@ schedules anything — its own beat. Prometheus scrapes the APIs *and* the worke
 is where the work happens: a spend refusal inside a task and the nightly audit-chain
 verification are recorded nowhere else. Grafana is on `127.0.0.1:3001`, Prometheus on `:9090`.
 
+UC3's queue starts empty — the ingestion pipeline that fills it is still to come. `make seed-uc3`
+puts 48 calls in front of the reviewer console so there is something to look at, shaped from the
+same golden set the evaluation scores. Every seeded row is labelled `demo-seed` and carries
+`"demo": true`, so nothing in it can be mistaken for detector output.
+
 Vendor keys come from the environment; `.env.example` lists every variable and `.env` is never
 committed. Spend caps are per app, set at 2× each PRD's own estimate, and a refused call returns
 `429` rather than a 500.
