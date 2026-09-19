@@ -58,3 +58,20 @@ export function evidenceLocated(rendered: readonly string[], span: string): bool
     return pattern.test(line);
   });
 }
+
+/**
+ * What to show where an English rendering should be, when there is none.
+ *
+ * `render_english` is allowed to come back empty: the detector treats a failed
+ * translation as non-fatal, because a reviewer who reads the language does not
+ * need one and an empty rendering is better than a wrong one. Rendered
+ * verbatim that produced an empty bordered box under a heading promising a
+ * translation, which reads as a UI that has broken rather than as a field with
+ * nothing in it. Say so instead.
+ */
+export function renderingOrAbsent(value: string): { text: string; absent: boolean } {
+  const text = value.trim();
+  return text
+    ? { text, absent: false }
+    : { text: "No English rendering was produced for this span.", absent: true };
+}

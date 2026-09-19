@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import { api } from "../lib/api";
+import { renderingOrAbsent } from "../lib/evidence";
 import { dispositionLabel, timecode } from "../lib/queue";
 import type { ScriptPref } from "../lib/script";
 import type { Disposition, FlagDetail as FlagDetailShape, Role } from "../lib/types";
@@ -102,8 +103,13 @@ export function FlagDetailPane({
             </p>
           </Field>
           <Field label="English rendering">
-            <p className="m-0 border-l-4 border-border-strong bg-surface-2 p-2" data-testid="english-rendering">
-              {data.english_rendering}
+            <p
+              className={`m-0 border-l-4 border-border-strong bg-surface-2 p-2 ${
+                renderingOrAbsent(data.english_rendering).absent ? "italic text-muted" : ""
+              }`}
+              data-testid="english-rendering"
+            >
+              {renderingOrAbsent(data.english_rendering).text}
             </p>
           </Field>
           <Field label="Why it was flagged">
