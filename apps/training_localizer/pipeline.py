@@ -539,6 +539,7 @@ async def module_status(db: AsyncSession, module_id: uuid.UUID) -> dict[str, Any
             per_stage[stage] = {
                 "version": max(r.version for r in rows.values()),
                 "segments": len(rows),
+                "created_by": sorted({r.created_by for r in rows.values()}),
                 "flagged": sorted(
                     seg_id
                     for seg_id, r in rows.items()

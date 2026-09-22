@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from starlette.authentication import AuthCredentials, BaseUser
 from starlette.concurrency import run_in_threadpool
 
+from training_localizer import auth
 from training_localizer.pipeline import (
     LANGUAGES,
     approve_quiz_item,
@@ -34,6 +35,19 @@ from training_localizer.reports import (
 )
 from training_localizer.review import OverrideRequired, review_rows, review_summary
 from training_localizer.terminology import load_glossary, resolve_locked_id
+
+
+def _refuse_dev_bypass_in_production() -> None:
+    """Fail to import rather than serve a fake identity in production.
+
+    The per-request check in `authenticated_owner` cannot be skipped, but it is
+    also not the one anybody notices. This one turns a misconfigured deployment
+    into a process that will not start. Same shape as the helpdesk app.
+    """
+    auth.check_dev_bypass()
+
+
+_refuse_dev_bypass_in_production()
 
 app = FastAPI(title="training localizer")
 serving.install(app, distribution="training-localizer")
@@ -58,7 +72,17 @@ def authenticated_owner(request: Request) -> str:
     Uploading a compliance module and spending vendor budget are both privileged;
     neither body fields nor identity headers authenticate a caller. A bare
     deployment without trusted SSO middleware refuses every write.
+
+    The one exception is the local development bypass (`training_localizer.auth`):
+    with `AUTH__DEV_BYPASS=true` in a known non-production ENV the caller is a fixed,
+    obviously fake identity. Checked on every request, and a refusal is a 500 that
+    names the misconfiguration, not a 401 that looks like an outage.
     """
+    try:
+        if auth.dev_bypass_active():
+            return auth.DEV_BYPASS_IDENTITY
+    except auth.DevBypassRefused as exc:
+        raise HTTPException(500, "Authentication is misconfigured") from exc
     user = request.scope.get("user")
     credentials = request.scope.get("auth")
     if (
