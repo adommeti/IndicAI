@@ -129,3 +129,38 @@ scores the translate stage *before* post_edit. That second number is the one
 that can fail: `enforce` implements exactly the predicate the scorer tests, so
 `terminology_adherence` on its own reaches 1.0 for any translator at all. Both
 print a cost estimate before spending anything.
+
+## Sign-in on a local stack
+
+Identity comes from the SSO claim the middleware in front of the app puts on the
+request; a bare deployment refuses every route with 401. On a laptop nothing stands in
+front of the app, so `AUTH__DEV_BYPASS=true` (`auth.py`) mints the fixed identity
+`dev-bypass@example.test` for every caller -- the same switch, same guards and same
+identity as the other two apps: refused at import and on every request unless `ENV` is
+one of dev/local/test/ci, and nothing in the browser can turn it on. An API with the
+bypass on admits anyone who reaches it; on the compose stack that is nobody off the
+machine, because every host port is bound to `127.0.0.1`. `docs/DEMO.md` says the rest.
+
+## Demo data
+
+The console needs a module behind it, and producing one the real way means uploading
+segments and running the five-stage pipeline against two vendors. `make seed-uc2`
+(`demo_seed.py`) writes the three golden modules instead: sixty segments, the human
+reference translations the golden set has for ten of each module's twenty segments
+(`translate` and `post_edit` at version 1), the thirty quiz items, and LOCKED resolved
+against `approved_renderings.yaml` the way the upload route does it. Module ids are
+stable (`module_uuid("sec-101")`), so a re-run is a no-op and the console URL does not
+change.
+
+What it deliberately does not write: a `backtranslate` row, because a QA score is a
+judgement and the console renders its absence as "not scored" rather than this file
+inventing a number; and any text a model did not produce under a model's name —
+`created_by` is `demo-seed` and `meta.model` is empty on every row, and the review and
+status responses carry `created_by` (per row, per stage, and as `producers` in the
+summary) so a console reader can tell a reference from machine output.
+
+`make demo-localize` then runs the real pipeline over the same modules through the API.
+It writes new stage versions on top, and `latest()` picks the highest per segment, so
+machine output supersedes the seed wherever the pipeline has run and the reference
+stands where it has not. Roughly ₹20 a module.
+
