@@ -43,6 +43,10 @@ class ReviewRow:
     approved_by: str | None
     locked_mismatch: bool
     stage_version: int
+    #: Who produced the text under review: the pipeline's stage writer, a reviewer,
+    #: or a seeder. Surfaced so a reader of the console can tell seeded reference
+    #: text from machine output; the database column alone told nobody.
+    created_by: str | None = None
 
     @property
     def flagged(self) -> bool:
@@ -74,6 +78,7 @@ class ReviewRow:
             "locked_mismatch": self.locked_mismatch,
             "flagged": self.flagged,
             "stage_version": self.stage_version,
+            "created_by": self.created_by,
         }
 
 
@@ -149,6 +154,9 @@ def review_rows(
                 approved_by=str(edited["created_by"]) if edited else None,
                 locked_mismatch=locked_mismatch(text, segment.get("locked_id"), language, glossary),
                 stage_version=int((edited or machine).get("version", 0)),
+                created_by=(
+                    str(producer) if (producer := (edited or machine).get("created_by")) else None
+                ),
             )
         )
     return rows
@@ -216,6 +224,9 @@ def review_summary(rows: list[ReviewRow]) -> dict[str, Any]:
         "locked": sum(1 for r in rows if r.locked),
         "locked_mismatches": sum(1 for r in rows if r.locked_mismatch),
         "glossary_misses": sum(len(r.glossary_misses) for r in rows),
+        # Every producer represented in the table, so "demo-seed" is visible at the
+        # top of the console and not only on the rows.
+        "producers": sorted({r.created_by for r in rows if r.created_by}),
         "fidelity_mean": (
             sum(r.qa_score for r in rows if r.qa_score is not None)
             / len([r for r in rows if r.qa_score is not None])

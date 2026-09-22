@@ -26,18 +26,29 @@ UC2_LIVE_ARGS ?= --translate training_localizer.eval_hook:full \
 # Sarvam only: real terminology adherence without adapt or the judge, ~Rs 28.
 UC2_SARVAM_ARGS ?= --translate training_localizer.eval_hook:translate_and_enforce \
 	--pre-edit training_localizer.eval_hook:translate_only --baseline
-COMPOSE = docker compose --env-file .env.stack
+# Two env files, not one, and the order matters. `.env.stack` holds the generated stack
+# credentials and is listed last so it wins where the two overlap (DATABASE_URL and the
+# other infra URLs); `.env` holds the vendor keys. Compose given an explicit --env-file
+# does NOT also read `.env` on its own, so before this every `${SARVAM_API_KEY:-}` in
+# docker-compose.yml resolved from the shell and was empty inside every container unless
+# the key had been exported by hand -- three apps with no vendor, silently. Conditional on
+# the file existing: a fresh checkout has none and compose refuses a missing --env-file.
+ENV_FILES = $(if $(wildcard .env),--env-file .env,) --env-file .env.stack
+COMPOSE = docker compose $(ENV_FILES)
 # The `ticketing` profile (Zammad, uc1). Named explicitly because `up` with only
 # a --profile flag would also start every unprofiled service.
 ZAMMAD = zammad-postgresql zammad-redis zammad-memcached zammad-init \
 	zammad-railsserver zammad-nginx zammad-scheduler zammad-websocket
 .PHONY: bootstrap up down logs lint typecheck test test-integration eval-uc1 eval-uc1-regression eval-uc2 eval-uc2-live eval-uc2-sarvam eval-uc3 eval-uc3-regression eval-uc3-lexicon eval-uc3-full eval-uc3-diarize ingest-golden-audio ingest-kb voice-test migrate audit \
         check check-quick check-full test-ticketing stack-core stack-obs stack-voice stack-sparse stack-ticketing stack-status stack-logs ship plan \
-        images image-uc1 image-uc2 image-uc3 compose-config apps-up apps-logs seed-uc3
+        images image-uc1 image-uc2 image-uc3 compose-config apps-up apps-logs seed-uc2 seed-uc3 seed demo demo-smoke demo-reset demo-localize
 bootstrap:
 	python3 infra/bootstrap.py
+# `--profile retrieval` because uc1 cannot serve a turn without the bge-sparse sidecar
+# (see uc1-api's depends_on in docker-compose.yml); `make stack-core` leaves it out on
+# purpose for the integration tests, which never retrieve.
 up: bootstrap
-	$(COMPOSE) up -d --build --wait --wait-timeout 1200
+	$(COMPOSE) --profile retrieval up -d --build --wait --wait-timeout 1200
 down:
 	$(COMPOSE) --profile retrieval --profile ticketing down
 stack-core stack-obs stack-voice stack-sparse: bootstrap
@@ -67,7 +78,7 @@ compose-config: bootstrap
 	$(COMPOSE) config --quiet && echo "compose config ok"
 # The three APIs, their workers and their beats, without the observability stack.
 apps-up: bootstrap
-	$(COMPOSE) up -d --build --wait --wait-timeout 1200 uc1-api uc1-worker uc1-beat uc2-api uc2-worker uc3-api uc3-worker uc3-beat
+	$(COMPOSE) --profile retrieval up -d --build --wait --wait-timeout 1200 uc1-api uc1-worker uc1-beat uc2-api uc2-worker uc3-api uc3-worker uc3-beat
 apps-logs:
 	$(COMPOSE) logs -f uc1-api uc1-worker uc1-beat uc2-api uc2-worker uc3-api uc3-worker uc3-beat
 stack-logs:
@@ -182,5 +193,35 @@ migrate:
 # Safe to re-run. `--dry-run` shapes the dataset and writes nothing.
 seed-uc3:
 	$(UV) run python -m comms_surveillance.demo_seed
+# A demonstration module set for the uc2 reviewer console: the three golden modules, their
+# human-authored reference translations where the golden set has one, and their quiz
+# items. Rows are labelled `demo-seed`. Same prerequisites as seed-uc3.
+seed-uc2:
+	$(UV) run python -m training_localizer.demo_seed
+seed: seed-uc2 seed-uc3
+# --- the demo ------------------------------------------------------------------------
+# One command from a fresh clone to three consoles with data in them: credentials, the
+# stack, migrations, the uc1 knowledge base, the uc2/uc3 demo data, then a smoke check
+# that fails loudly on the first thing that does not answer. docs/DEMO.md walks it.
+demo:
+	bash scripts/demo.sh
+# `make demo-smoke ARGS=--chat` also drives one helpdesk turn per language (spends money).
+demo-smoke:
+	bash scripts/demo-smoke.sh $(ARGS)
+# Runs the REAL uc2 pipeline (Sarvam + Claude, roughly Rs 20 per module) over the seeded
+# modules, so the reviewer console shows machine output beside the human references.
+# Needs the vendor keys in .env and the stack up.
+demo-localize:
+	$(UV) run python -m training_localizer.demo_seed --localize
+# Start the DATA over, not the stack: drops and recreates the platform schema as the
+# owner role, then migrates to head, so the next `make seed` writes into empty tables.
+# The uc3 chain is append-only and its app role holds no DELETE, which is why a re-seed
+# needs this and not a truncate. Deliberately NOT a volume drop: the tei-data volume
+# holds a model download that takes a quarter of an hour, and the repo's guard refuses
+# `down -v` for exactly that reason. Qdrant and MinIO keep their contents; ingest-kb and
+# the seeders are idempotent over them.
+demo-reset:
+	$(UV) run python scripts/db-reset.py
+	$(UV) run alembic upgrade head
 audit:
 	$(UV) run pip-audit --skip-editable --ignore-vuln PYSEC-2026-3740

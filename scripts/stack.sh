@@ -10,7 +10,10 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 [ -f .env.stack ] || python3 infra/bootstrap.py
-COMPOSE="docker compose --env-file .env.stack"
+# Both env files when both exist; see the ENV_FILES comment in the Makefile for why.
+ENV_FILES="--env-file .env.stack"
+[ -f .env ] && ENV_FILES="--env-file .env --env-file .env.stack"
+COMPOSE="docker compose $ENV_FILES"
 CORE="postgres redis qdrant minio tei"
 OBS="langfuse-postgres clickhouse langfuse langfuse-worker prometheus grafana"
 VOICE="livekit livekit-sip"
