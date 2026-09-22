@@ -37,10 +37,11 @@ if [ -n "$REPO" ]; then
   (uv sync --frozen --all-packages) || true
   # Stack credentials and image pulls/builds so `make stack-core` is fast in-session.
   [ -f .env.stack ] || python3 infra/bootstrap.py || true
-  (docker compose --env-file .env.stack pull --ignore-buildable postgres redis minio langfuse-postgres clickhouse langfuse langfuse-worker prometheus grafana livekit livekit-sip 2>/dev/null &) || true
-  (docker compose --env-file .env.stack build qdrant tei 2>/dev/null &) || true
+  ENV_FILES="--env-file .env.stack"; [ -f .env ] && ENV_FILES="--env-file .env --env-file .env.stack"
+  (docker compose $ENV_FILES pull --ignore-buildable postgres redis minio langfuse-postgres clickhouse langfuse langfuse-worker prometheus grafana livekit livekit-sip 2>/dev/null &) || true
+  (docker compose $ENV_FILES build qdrant tei 2>/dev/null &) || true
   wait || true
   # Warm the bge-m3 weights into the tei-data volume so the first TEI start is not a 15-minute download.
-  (timeout 240 docker compose --env-file .env.stack up -d tei && sleep 200 && docker compose --env-file .env.stack stop tei) || true
+  (timeout 240 docker compose $ENV_FILES up -d tei && sleep 200 && docker compose $ENV_FILES stop tei) || true
 fi
 exit 0

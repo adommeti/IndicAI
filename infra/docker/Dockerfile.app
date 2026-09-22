@@ -12,6 +12,17 @@
 # the runtime image.
 FROM node:22-slim AS ui
 ARG APP
+# Every VITE_* value is inlined into the bundle at build time, so the dev-bypass switch
+# has to be decided here and cannot be flipped on a running container. Default ON. The
+# browser half grants nothing: it only stops the bundle from attempting an MSAL sign-in
+# (uc1's ui/src/lib/auth.ts also ignores it off a loopback origin; uc2 and uc3 use it
+# only to word a 401). Whether a request is admitted is decided by the server half,
+# AUTH__DEV_BYPASS, which is refused outside ENV=dev/local/test/ci -- see the comment on
+# it in docker-compose.yml for what confines the local stack. Before this the stage set
+# nothing, so the local stack's consoles rendered their signed-out state against APIs
+# that had no identity provider to send them to.
+ARG VITE_AUTH_DEV_BYPASS=true
+ENV VITE_AUTH_DEV_BYPASS=${VITE_AUTH_DEV_BYPASS}
 WORKDIR /ui
 # Manifests first so a source-only change does not re-resolve the dependency tree.
 COPY apps/${APP}/ui/package.json apps/${APP}/ui/package-lock.json ./
@@ -69,6 +80,9 @@ ENV PATH=/srv/.venv/bin:$PATH \
 
 COPY --from=deps /srv/.venv /srv/.venv
 COPY pyproject.toml uv.lock ./
+# So a container can run `alembic upgrade head` itself: the migrations were in the image
+# (platform/db/migrations) but the config that points alembic at them was not.
+COPY alembic.ini ./
 COPY platform/ platform/
 COPY apps/ apps/
 # The bundle the ui stage built, where `<app>/api.py` looks for it.

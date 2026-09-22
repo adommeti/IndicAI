@@ -140,8 +140,18 @@ so 4.13 is weaker evidence than it looks.
 ## Running it
 
 ```bash
+make demo             # credentials, images, stack, migrations, knowledge base, demo data, smoke
+```
+
+One command from a fresh clone to three consoles with data in them; [docs/DEMO.md](docs/DEMO.md)
+walks through what you will see, which paths spend money, and how to start over. The pieces
+are also separate targets:
+
+```bash
 make bootstrap        # generate local stack credentials into .env.stack
 make up               # build the three images and start everything
+make migrate && make ingest-kb && make seed
+make demo-smoke       # prove every API, console and seeded dataset answers
 ```
 
 | | UC1 helpdesk | UC2 localizer | UC3 surveillance |
@@ -157,10 +167,12 @@ schedules anything — its own beat. Prometheus scrapes the APIs *and* the worke
 is where the work happens: a spend refusal inside a task and the nightly audit-chain
 verification are recorded nowhere else. Grafana is on `127.0.0.1:3001`, Prometheus on `:9090`.
 
-UC3's queue starts empty — the ingestion pipeline that fills it is still to come. `make seed-uc3`
-puts 48 calls in front of the reviewer console so there is something to look at, shaped from the
-same golden set the evaluation scores. Every seeded row is labelled `demo-seed` and carries
-`"demo": true`, so nothing in it can be mistaken for detector output.
+UC2's and UC3's consoles start empty — UC3's ingestion pipeline is still to come, and UC2's
+work starts when a reviewer presses a button. `make seed` puts a module with its human reference
+translations in front of the localizer console and 48 calls in front of the surveillance queue,
+both shaped from the same golden sets the evaluations score. Every seeded row is labelled
+`demo-seed` and carries `"demo": true`, so nothing in it can be mistaken for machine output, and
+UC3's metrics exclude it.
 
 Vendor keys come from the environment; `.env.example` lists every variable and `.env` is never
 committed. Spend caps are per app, set at 2× each PRD's own estimate, and a refused call returns

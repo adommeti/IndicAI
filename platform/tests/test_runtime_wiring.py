@@ -178,3 +178,114 @@ def test_the_build_context_excludes_local_secrets() -> None:
     ignored = (ROOT / ".dockerignore").read_text().splitlines()
     for secret in (".env", ".env.stack"):
         assert secret in ignored, f"{secret} would be copied into an image layer"
+
+
+# --- the demo path (build/demo-env) -------------------------------------------------
+#
+# The three defects that made a fresh `make up` unusable were all in files, not in
+# code: compose read one env file and ignored the one with the keys in it, nothing set
+# the dev bypass on either side, and the image had the migrations but not the file that
+# points alembic at them. Each is pinned here so it cannot come back quietly.
+
+
+def test_compose_reads_the_vendor_keys_file_and_the_stack_file() -> None:
+    """`.env` last-but-one, `.env.stack` last: the generated values win the overlap."""
+    makefile = (ROOT / "Makefile").read_text()
+    assert "$(if $(wildcard .env),--env-file .env,) --env-file .env.stack" in makefile
+    for script in ("scripts/stack.sh", "scripts/cloud-setup.sh"):
+        text = (ROOT / script).read_text()
+        assert "--env-file .env --env-file .env.stack" in text, script
+        assert "docker compose --env-file .env.stack" not in text, f"{script} still reads one file"
+
+
+def test_the_local_stack_enables_both_halves_of_the_dev_bypass() -> None:
+    """Server half in compose, browser half baked into the image. The consoles are
+    unusable with either missing. The server half is the one that admits a caller, and
+    it is confined by the ENV allow-list and by every host port being bound to
+    127.0.0.1 (asserted below); the browser half only stops the bundle attempting an
+    MSAL sign-in."""
+    env = compose()["x-app-env"]
+    assert env["ENV"] == "dev"
+    assert env["AUTH__DEV_BYPASS"] == "${AUTH__DEV_BYPASS:-true}"
+    dockerfile = (ROOT / "infra" / "docker" / "Dockerfile.app").read_text()
+    ui_stage = dockerfile.split("FROM python:3.12-slim AS deps")[0]
+    assert "ARG VITE_AUTH_DEV_BYPASS=true" in ui_stage
+    assert "ENV VITE_AUTH_DEV_BYPASS=${VITE_AUTH_DEV_BYPASS}" in ui_stage
+    assert ui_stage.index("ENV VITE_AUTH_DEV_BYPASS") < ui_stage.index("npm run build")
+    # And the example .env, which `make demo` copies into place, agrees with compose.
+    example = (ROOT / ".env.example").read_text()
+    assert "\nAUTH__DEV_BYPASS=true\n" in example
+    assert "\nENV=dev\n" in example
+    # A bypassed API admits any caller that reaches it, so no API may be reachable from
+    # off the machine: every published host port is bound to loopback.
+    for name, service in compose()["services"].items():
+        for port in service.get("ports") or []:
+            assert str(port).startswith("127.0.0.1:"), f"{name} publishes {port} off loopback"
+
+
+def test_the_image_can_run_its_own_migrations() -> None:
+    dockerfile = (ROOT / "infra" / "docker" / "Dockerfile.app").read_text()
+    runtime = dockerfile.split("FROM python:3.12-slim AS runtime")[1]
+    assert "COPY alembic.ini ./" in runtime
+    assert "COPY platform/ platform/" in runtime
+    assert (ROOT / "alembic.ini").read_text().startswith("[alembic]")
+
+
+def test_make_demo_runs_the_whole_path_and_every_seeder_it_names_exists() -> None:
+    makefile = (ROOT / "Makefile").read_text()
+    assert "bash scripts/demo-smoke.sh $(ARGS)" in makefile, "make demo-smoke ARGS=--chat"
+    for target in (
+        "demo:",
+        "demo-smoke:",
+        "demo-reset:",
+        "demo-localize:",
+        "seed:",
+        "seed-uc2:",
+        "seed-uc3:",
+    ):
+        assert f"\n{target}" in makefile, target
+    assert "seed: seed-uc2 seed-uc3" in makefile
+    demo = (ROOT / "scripts" / "demo.sh").read_text()
+    for step in (
+        "infra/bootstrap.py",
+        "make up",
+        "make migrate",
+        "make ingest-kb",
+        "make seed",
+        "demo-smoke.sh",
+    ):
+        assert step in demo, step
+    # The seeders the targets name are importable modules with a main.
+    import importlib
+
+    for module in ("training_localizer.demo_seed", "comms_surveillance.demo_seed"):
+        assert callable(importlib.import_module(module).main)
+
+
+def test_demo_reset_resets_the_schema_and_never_the_volumes() -> None:
+    """`tei-data` holds a fifteen-minute model download; the guard refuses a volume
+    drop and so must the target. The chain is append-only, so the reset is a schema
+    drop as the owner role followed by a migration, not a truncate."""
+    makefile = (ROOT / "Makefile").read_text()
+    body = makefile.split("\ndemo-reset:")[1].split("\n\n")[0]
+    assert "scripts/db-reset.py" in body
+    assert "alembic upgrade head" in body
+    assert " -v" not in body
+    script = (ROOT / "scripts" / "db-reset.py").read_text()
+    assert "drop schema public cascade" in script
+    assert "NON_PROD_ENVS" in script
+
+
+def test_uc1_declares_the_sparse_sidecar_it_cannot_retrieve_without() -> None:
+    """The embedder has no dense-only path: `ingest-kb` probes the sidecar's /info and
+    every query calls /embed_sparse. `bge-sparse` is profiled (memory-heavy, and the
+    integration tests never retrieve), so an API that depends on it must say so or
+    `make up` starts uc1 with a retrieval that fails on every turn."""
+    services = compose()["services"]
+    assert "bge-sparse" in services["uc1-api"]["depends_on"]
+    assert services["bge-sparse"].get("profiles") == ["retrieval"]
+    makefile = (ROOT / "Makefile").read_text()
+    up = makefile.split("\nup: bootstrap\n")[1].split("\n")[0]
+    assert "--profile retrieval" in up
+    embedder = (ROOT / "platform" / "adapters" / "embeddings.py").read_text()
+    assert "embed_sparse" in embedder and "sparse_url" in embedder

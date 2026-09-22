@@ -29,6 +29,19 @@ x-app-env: &app-env
   # default and a real deletion becomes a deliberate act. uc3's sweep already requires
   # UC3_RETENTION_ENABLED=true for the same reason (ADR 0004).
   UC1_RETENTION_DRY_RUN: ${UC1_RETENTION_DRY_RUN:-true}
+  # The local stack is a development environment and its consoles must open without an
+  # identity provider. This is the server half of the switch: every API mints its fixed
+  # test identity for ANY caller that reaches it. What confines that is (1) the server
+  # refuses the flag unless ENV is dev/local/test/ci, and (2) every host port in this
+  # file is bound to 127.0.0.1, so nothing off the machine reaches an API. Put a reverse
+  # proxy in front of this stack and it is an open API: set this to false there and run
+  # real SSO. The browser half (VITE_AUTH_DEV_BYPASS, baked into the bundle in
+  # infra/docker/Dockerfile.app) grants nothing by itself; it tells the bundle not to
+  # attempt an MSAL sign-in, and uc1's bundle additionally ignores it off loopback.
+  # Before this NEITHER half was set anywhere in the compose path, so a fresh `make up`
+  # produced three APIs answering 401 and three consoles in their signed-out state.
+  AUTH__DEV_BYPASS: ${AUTH__DEV_BYPASS:-true}
+  AUTH__DEV_BYPASS_ROLES: ${AUTH__DEV_BYPASS_ROLES:-}
   SARVAM_API_KEY: ${SARVAM_API_KEY:-}
   INDICAI_ANTHROPIC_API_KEY: ${INDICAI_ANTHROPIC_API_KEY:-}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -286,6 +299,15 @@ services:
       redis: {condition: service_healthy}
       qdrant: {condition: service_healthy}
       tei: {condition: service_healthy}
+      # uc1's retrieval is hybrid -- dense from TEI plus BGE-M3's learned sparse vectors
+      # from this sidecar -- and the embedder has no dense-only fallback
+      # (platform/adapters/embeddings.py): `ingest-kb` checks the sidecar's /info before
+      # it writes a chunk, and every chat turn calls /embed_sparse on the query. The
+      # sidecar sits behind the `retrieval` profile because it is memory-heavy and the
+      # integration tests do not need it, but an API that depends on it and starts
+      # without it answers every turn with a connection error. Declaring the dependency
+      # here is what makes `make up` bring it along.
+      bge-sparse: {condition: service_healthy}
   uc1-worker:
     <<: *app-worker
     image: indic/uc1:dev
