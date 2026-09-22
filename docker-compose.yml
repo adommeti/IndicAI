@@ -299,15 +299,16 @@ services:
       redis: {condition: service_healthy}
       qdrant: {condition: service_healthy}
       tei: {condition: service_healthy}
-      # uc1's retrieval is hybrid -- dense from TEI plus BGE-M3's learned sparse vectors
-      # from this sidecar -- and the embedder has no dense-only fallback
-      # (platform/adapters/embeddings.py): `ingest-kb` checks the sidecar's /info before
-      # it writes a chunk, and every chat turn calls /embed_sparse on the query. The
-      # sidecar sits behind the `retrieval` profile because it is memory-heavy and the
-      # integration tests do not need it, but an API that depends on it and starts
-      # without it answers every turn with a connection error. Declaring the dependency
-      # here is what makes `make up` bring it along.
-      bge-sparse: {condition: service_healthy}
+      # NOT listed, although uc1 cannot retrieve without it: bge-sparse. uc1's retrieval
+      # is hybrid -- dense from TEI plus BGE-M3's learned sparse vectors from that
+      # sidecar -- with no dense-only fallback (platform/adapters/embeddings.py), so a
+      # uc1-api that starts without the sidecar answers every turn with a connection
+      # error. The sidecar sits behind the `retrieval` profile (memory-heavy; the
+      # integration tests never retrieve), and compose rejects the whole project when a
+      # service depends on a profiled service whose profile is off -- which is what
+      # `docker compose config` in CI and `make stack-core` do. So the dependency is
+      # carried by the Makefile instead: `up` and `apps-up` pass `--profile retrieval`,
+      # and `--wait` then holds until the sidecar is healthy too.
   uc1-worker:
     <<: *app-worker
     image: indic/uc1:dev

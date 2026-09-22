@@ -279,13 +279,20 @@ def test_demo_reset_resets_the_schema_and_never_the_volumes() -> None:
 def test_uc1_declares_the_sparse_sidecar_it_cannot_retrieve_without() -> None:
     """The embedder has no dense-only path: `ingest-kb` probes the sidecar's /info and
     every query calls /embed_sparse. `bge-sparse` is profiled (memory-heavy, and the
-    integration tests never retrieve), so an API that depends on it must say so or
-    `make up` starts uc1 with a retrieval that fails on every turn."""
+    integration tests never retrieve), so `make up` must activate the profile or it
+    starts uc1 with a retrieval that fails on every turn.
+
+    The dependency lives in the Makefile and NOT in `depends_on`, on purpose: compose
+    rejects a project in which a service depends on a profiled service whose profile is
+    off, and `docker compose config` in CI runs with no profile (that is how the first
+    version of this fix turned the images job red)."""
     services = compose()["services"]
-    assert "bge-sparse" in services["uc1-api"]["depends_on"]
+    assert "bge-sparse" not in services["uc1-api"].get("depends_on", {})
     assert services["bge-sparse"].get("profiles") == ["retrieval"]
     makefile = (ROOT / "Makefile").read_text()
-    up = makefile.split("\nup: bootstrap\n")[1].split("\n")[0]
-    assert "--profile retrieval" in up
+    for target in ("up", "apps-up"):
+        recipe = makefile.split(f"\n{target}: bootstrap\n")[1].split("\n")[0]
+        assert "--profile retrieval" in recipe, target
+        assert " up " in recipe and "--wait" in recipe, target
     embedder = (ROOT / "platform" / "adapters" / "embeddings.py").read_text()
     assert "embed_sparse" in embedder and "sparse_url" in embedder
