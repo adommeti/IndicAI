@@ -1,4 +1,4 @@
 torch==2.8.0
-transformers==4.55.4
+transformers==5.10.1
 fastapi==0.116.1
 uvicorn==0.35.0
